@@ -172,6 +172,14 @@ Manual Chroma initialization (if needed):
 This project is licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)**.  
 See [LICENSE](LICENSE) for details.
 
+## 13. Support This Project
+
+If this project helps you, you are welcome to buy me a coffee. ☕️
+
+WeChat / Alipay donation QR code:
+
+![donate](docs/donate-qrcode.png)
+
 ---
 
 If you only want the fastest path:
