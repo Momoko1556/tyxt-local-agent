@@ -11,30 +11,36 @@ echo   Script: ollama_multi_agent.py
 echo ==========================================
 echo.
 
-set "PYTHON_CMD="
+set "PYTHON_EXE="
+set "PYTHON_ARGS="
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
 if exist "%VENV_PY%" (
-  set "PYTHON_CMD=%VENV_PY%"
+  set "PYTHON_EXE=%VENV_PY%"
 ) else (
   where python >nul 2>nul
   if %errorlevel%==0 (
-    set "PYTHON_CMD=python"
+    set "PYTHON_EXE=python"
   ) else (
     where py >nul 2>nul
     if %errorlevel%==0 (
-      set "PYTHON_CMD=py -3"
+      set "PYTHON_EXE=py"
+      set "PYTHON_ARGS=-3"
     )
   )
 )
 
-if "%PYTHON_CMD%"=="" (
+if "%PYTHON_EXE%"=="" (
   echo [ERROR] Python not found. Please install Python and add it to PATH.
   echo.
   pause
   exit /b 1
 )
 
-echo Using interpreter: %PYTHON_CMD%
+if "%PYTHON_ARGS%"=="" (
+  echo Using interpreter: %PYTHON_EXE%
+) else (
+  echo Using interpreter: %PYTHON_EXE% %PYTHON_ARGS%
+)
 if exist "%VENV_PY%" (
   echo [INFO] Virtual environment detected: .venv
 )
@@ -75,7 +81,7 @@ echo Browser will open after backend starts...
 start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 2; Start-Process '%UI_URL%'"
 echo.
 
-%PYTHON_CMD% "%~dp0ollama_multi_agent.py"
+"%PYTHON_EXE%" %PYTHON_ARGS% "%~dp0ollama_multi_agent.py"
 set "EXIT_CODE=%errorlevel%"
 
 echo.
