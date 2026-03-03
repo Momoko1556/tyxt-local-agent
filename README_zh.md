@@ -183,7 +183,7 @@ OCR 说明：
 
 微信 / 支付宝赞赏码：
 
-![donate](docs/donate-qrcode.png)
+<img src="docs/donate-qrcode.png" alt="donate" width="360" />
 
 ---
 

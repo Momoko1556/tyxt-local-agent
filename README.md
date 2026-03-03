@@ -183,7 +183,7 @@ You are also welcome to contact me via Xiaohongshu (RED) or email.
 
 WeChat / Alipay donation QR code:
 
-![donate](docs/donate-qrcode.png)
+<img src="docs/donate-qrcode.png" alt="donate" width="360" />
 
 ---
 
