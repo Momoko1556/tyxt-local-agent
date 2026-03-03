@@ -172,9 +172,14 @@ Manual Chroma initialization (if needed):
 This project is licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)**.  
 See [LICENSE](LICENSE) for details.
 
-## 13. Support This Project
+## 13. Support Taoyuan Xingting 🌱
 
-If this project helps you, you are welcome to buy me a coffee. ☕️
+The long-term goal of the Taoyuan Xingting project is to explore a living model where humans, AI, and nature can thrive in harmony.  
+This local deployment system is only the first step.
+
+If this project has helped you, and you would like to support this dream,  
+you are welcome to support it via the QR code below.  
+You are also welcome to contact me via Xiaohongshu (RED) or email.
 
 WeChat / Alipay donation QR code:
 
