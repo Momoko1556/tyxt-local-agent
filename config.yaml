@@ -1,0 +1,20 @@
+# config.yaml
+# 当前用于 search_engine.py 的配置（环境变量优先于本文件）。
+
+ollama:
+  # 走 OpenAI 兼容口的同时，也会自动把 /v1 去掉用于 /api/embeddings
+  base_url: http://127.0.0.1:11434/v1
+
+embedding:
+  model: bge-m3   # Ollama embeddings 默认模型
+
+chromadb:
+  persist_path: memory_db
+  collection_name: tyxt_memory
+
+search:
+  default_mode: auto   # auto|web|local
+  default_top_k: 10
+
+network:
+  timeout: 15

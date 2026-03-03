@@ -1,0 +1,30 @@
+# Local TLS assets (do not publish private keys)
+certs/lan/*
+!certs/lan/.gitkeep
+
+# Optional mkcert binary cache
+tools/mkcert/
+
+# Runtime data
+__pycache__/
+*.pyc
+.venv/
+.vscode/
+.env
+*.log
+tmp_images/
+GPT-SoVITS-1007-cu124/
+memory_db/*
+!memory_db/.gitkeep
+profiles/*
+!profiles/.gitkeep
+memory_warehouse/*
+!memory_warehouse/.gitkeep
+Ollama_agent_shared/*
+!Ollama_agent_shared/.gitkeep
+
+# User-local configs / secrets
+config.json
+tools/api_config.json
+configs/user_profiles.json
+configs/persona_config.json
