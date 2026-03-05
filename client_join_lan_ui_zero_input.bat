@@ -5,9 +5,9 @@ title TYXT LAN Client Join (Zero Input)
 cd /d "%~dp0"
 
 set "TYXT_ZERO_BAT_VERSION=20260302.7"
-set "SERVER_IP=127.0.0.1"
+set "SERVER_IP=192.168.0.105"
 set "SERVER_PORT=5000"
-set "SERVER_DOMAIN="
+set "SERVER_DOMAIN=tyxt-lida.local"
 set "PS_CMD=powershell -NoProfile -ExecutionPolicy Bypass"
 set "CURL_CMD=%SystemRoot%\System32\curl.exe"
 set "TMP_TOOLS_DIR=%TEMP%\tyxt_lan_client_tools"

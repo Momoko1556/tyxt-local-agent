@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Deque, List, Dict, Any, Optional, Tuple
 from collections import deque
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 
 import datetime  # ✅ 用模块方式，后续可用 datetime.datetime / datetime.timedelta，避免 AttributeError
 
@@ -63,6 +63,9 @@ import fitz
 
 # 多模态工具统一入口（OCR/TTS/ASR/文生图）
 import multimodal_tools
+import skills_registry
+import mcp_bridge
+import mcp_manager
 from profiles_store import (
     apply_profile_note as profiles_apply_profile_note,
     append_memory_strip as profiles_append_memory_strip,
@@ -266,6 +269,38 @@ TYXT_LAN_BOOTSTRAP_JSON = os.path.join(TYXT_CERT_DIR, "lan_bootstrap.json")
 TYXT_TOOLS_DIR = os.path.join(PROJECT_ROOT, "tools")
 TYXT_LAN_CLIENT_JOIN_PS1 = os.path.join(TYXT_TOOLS_DIR, "join_lan_ui.ps1")
 TYXT_LAN_INSTALL_ROOTCA_PS1 = os.path.join(TYXT_TOOLS_DIR, "install_lan_root_ca.ps1")
+
+# ========= TYXT Skills (local plugin system v0.1) =========
+TYXT_SKILLS_DIR = os.path.abspath(
+    str(os.getenv("TYXT_SKILLS_DIR", os.path.join(PROJECT_ROOT, "skills")))
+)
+TYXT_SKILLS_QUARANTINE_DIR = os.path.abspath(
+    str(os.getenv("TYXT_SKILLS_QUARANTINE_DIR", os.path.join(PROJECT_ROOT, "skills_quarantine")))
+)
+TYXT_SKILLS_BLACKLIST_PATH = os.path.abspath(
+    str(os.getenv("TYXT_SKILLS_BLACKLIST_PATH", os.path.join(PROJECT_ROOT, "skills_blacklist.json")))
+)
+TYXT_SKILLS_STATE_PATH = os.path.abspath(
+    str(os.getenv("TYXT_SKILLS_STATE_PATH", os.path.join(PROJECT_ROOT, "skills_state.json")))
+)
+
+# Global capability switches for skill runtime permission gates.
+TYXT_SKILLS_ALLOW_NETWORK = safe_bool(os.getenv("TYXT_SKILLS_ALLOW_NETWORK", "1"), True)
+TYXT_SKILLS_ALLOW_FILESYSTEM = safe_bool(os.getenv("TYXT_SKILLS_ALLOW_FILESYSTEM", "1"), True)
+TYXT_SKILLS_ALLOW_LLM = safe_bool(os.getenv("TYXT_SKILLS_ALLOW_LLM", "0"), False)
+
+# ========= TYXT MCP Bridge (Phase X PoC) =========
+TYXT_MCP_ENABLED = safe_bool(os.getenv("TYXT_MCP_ENABLED", "0"), False)
+TYXT_MCP_CONFIG_PATH = os.path.abspath(
+    str(os.getenv("TYXT_MCP_CONFIG_PATH", os.path.join(PROJECT_ROOT, "configs", "mcp_servers.json")))
+)
+
+skills_registry.configure(
+    skills_dir=TYXT_SKILLS_DIR,
+    quarantine_dir=TYXT_SKILLS_QUARANTINE_DIR,
+    blacklist_path=TYXT_SKILLS_BLACKLIST_PATH,
+    state_path=TYXT_SKILLS_STATE_PATH,
+)
 
 ENABLE_PROFILE_UPDATE = safe_bool(os.getenv("TYXT_ENABLE_PROFILE_UPDATE", "1"), True)
 ENABLE_MEMORY_STRIP_AUTO = safe_bool(os.getenv("TYXT_ENABLE_MEMORY_STRIP_AUTO", "1"), True)
@@ -1106,6 +1141,22 @@ IMAGE_PREVIEW_MAX_H = _safe_int(os.getenv("IMAGE_PREVIEW_MAX_H"), 360)
 
 CONFIG_FILE = os.path.abspath(str(os.getenv("CONFIG_FILE", os.path.join(PROJECT_ROOT, "config.json"))))
 
+def _normalize_web_search_provider(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s == "tavily":
+        return "tavily"
+    return "builtin"
+
+def _normalize_web_search_mode(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"off", "disabled", "disable", "0", "false", "no"}:
+        return "off"
+    if s in {"force", "always", "strict", "2"}:
+        return "force"
+    if s in {"default", "auto", "on", "enabled", "enable", "1", "true", "yes"}:
+        return "default"
+    return "off"
+
 def _load_config_file() -> Dict[str, Any]:
     cfg = {
         "max_tokens": GEN_MAX_TOKENS,
@@ -1122,6 +1173,11 @@ def _load_config_file() -> Dict[str, Any]:
         "chat_stream_enabled": CHAT_STREAM_ENABLED_DEFAULT,
         # 本地 Ollama 模型名
         "ollama_model": MODEL_NAME,
+        # 上网搜索配置（provider + key）
+        "web_search_enabled": False,
+        "web_search_mode": "off",
+        "web_search_provider": "builtin",
+        "web_search_api_key": "",
     }
     try:
         if os.path.exists(CONFIG_FILE):
@@ -1132,6 +1188,14 @@ def _load_config_file() -> Dict[str, Any]:
                 cfg.update(user_cfg)
     except Exception as e:
         print("[WARN] load config failed:", e)
+    raw_mode = str(cfg.get("web_search_mode", "") or "").strip()
+    if raw_mode:
+        cfg["web_search_mode"] = _normalize_web_search_mode(raw_mode)
+    else:
+        cfg["web_search_mode"] = "default" if safe_bool(cfg.get("web_search_enabled"), False) else "off"
+    cfg["web_search_enabled"] = bool(cfg.get("web_search_mode") != "off")
+    cfg["web_search_provider"] = _normalize_web_search_provider(cfg.get("web_search_provider", "builtin"))
+    cfg["web_search_api_key"] = str(cfg.get("web_search_api_key", "") or "").strip()
     return cfg
 
 
@@ -1146,6 +1210,20 @@ def _save_config_file(cfg: Dict[str, Any]):
 
 # 启动时加载一次，供后续 /chat / completions 使用
 MODEL_CONFIG = _load_config_file()
+try:
+    # 启动时一次性环境变量覆盖（不在每次配置请求时反复覆盖）
+    _env_web_provider = os.getenv("TYXT_WEB_SEARCH_PROVIDER")
+    if _env_web_provider is not None and str(_env_web_provider).strip():
+        MODEL_CONFIG["web_search_provider"] = _normalize_web_search_provider(_env_web_provider)
+    _env_web_mode = os.getenv("TYXT_WEB_SEARCH_MODE")
+    if _env_web_mode is not None and str(_env_web_mode).strip():
+        MODEL_CONFIG["web_search_mode"] = _normalize_web_search_mode(_env_web_mode)
+        MODEL_CONFIG["web_search_enabled"] = bool(MODEL_CONFIG["web_search_mode"] != "off")
+    _env_web_key = os.getenv("TYXT_WEB_SEARCH_API_KEY")
+    if _env_web_key is not None:
+        MODEL_CONFIG["web_search_api_key"] = str(_env_web_key or "").strip()
+except Exception as e:
+    print("[WARN] apply startup web search env override failed:", e)
 
 
 def _get_context_turn_limit() -> int:
@@ -1198,6 +1276,42 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # 模型调用互斥锁（防并发把本地模型/上游压爆）
 _model_lock = threading.Semaphore(1)
 _last_call_meta = threading.local()
+MCP_BRIDGE: Optional[mcp_bridge.MCPBridge] = None
+MCP_SERVER_CONFIGS: Dict[str, mcp_bridge.MCPServerConfig] = {}
+MCP_BRIDGE_ENABLED = bool(TYXT_MCP_ENABLED)
+MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+MCP_SERVER_RUNTIME_STATUS: Dict[str, Dict[str, Any]] = {}
+MCP_SKILL_DEBUG_ENABLED = safe_bool(os.getenv("TYXT_MCP_SKILL_DEBUG", "1"), True)
+MCP_SKILL_DEBUG_MAX = max(20, min(2000, safe_int(os.getenv("TYXT_MCP_SKILL_DEBUG_MAX"), 200)))
+_MCP_SKILL_DEBUG_LOCK = threading.RLock()
+_MCP_SKILL_DEBUG_LOGS: Deque[Dict[str, Any]] = deque(maxlen=MCP_SKILL_DEBUG_MAX)
+
+
+def _append_mcp_skill_debug(event: str, **fields: Any) -> None:
+    if not MCP_SKILL_DEBUG_ENABLED:
+        return
+    row: Dict[str, Any] = {
+        "ts": round(float(time.time()), 3),
+        "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "event": str(event or "").strip() or "event",
+    }
+    for k, v in (fields or {}).items():
+        key = str(k or "").strip()
+        if not key or (v is None):
+            continue
+        if isinstance(v, (str, int, float, bool, list, dict)):
+            row[key] = v
+        else:
+            row[key] = str(v)
+    with _MCP_SKILL_DEBUG_LOCK:
+        _MCP_SKILL_DEBUG_LOGS.append(row)
+
+
+def _get_mcp_skill_debug_logs(limit: int = 80) -> List[Dict[str, Any]]:
+    n = max(1, min(500, safe_int(limit, 80)))
+    with _MCP_SKILL_DEBUG_LOCK:
+        rows = list(_MCP_SKILL_DEBUG_LOGS)
+    return rows[-n:]
 
 
 def _set_last_call_meta(meta: Dict[str, Any]):
@@ -2909,6 +3023,28 @@ def _require_admin_session() -> Tuple[Optional[str], Optional[Any]]:
     if role != "admin":
         return None, (jsonify({"ok": False, "msg": "Permission denied"}), 403)
     return uid, None
+
+
+def _resolve_request_user_ctx(payload: Optional[Dict[str, Any]] = None) -> Tuple[str, str, str]:
+    """
+    Resolve request user context with graceful fallback:
+    1) session / explicit payload via get_current_user_ctx
+    2) user_id fallback from query/body and profile role lookup
+    Returns (user_id, role, nickname)
+    """
+    data = payload if isinstance(payload, dict) else {}
+    user_id, role, nickname = get_current_user_ctx(data)
+    uid = str(user_id or "").strip()
+    r = "admin" if str(role or "").strip().lower() == "admin" else "user"
+    nick = str(nickname or uid).strip() or uid
+    if uid:
+        return uid, r, nick
+
+    fallback_uid = _request_user_id_fallback()
+    if not fallback_uid:
+        return "", "user", ""
+    prof_role, prof_nick = _load_profile_role_nickname(fallback_uid)
+    return str(fallback_uid), ("admin" if prof_role == "admin" else "user"), (prof_nick or fallback_uid)
 
 
 def _tenant_display_name(channel_type: str, owner_id: str) -> str:
@@ -5141,6 +5277,144 @@ def _normalize_attachments(v: Any, max_items: int = 6) -> List[Dict[str, str]]:
     return out
 
 
+def _clean_search_text(value: Any, max_len: int = 260) -> str:
+    s = re.sub(r"\s+", " ", str(value or "").strip())
+    if max_len > 0 and len(s) > max_len:
+        s = s[: max(1, max_len - 1)].rstrip() + "…"
+    return s
+
+
+def _normalize_search_link(raw_link: Any) -> str:
+    link = str(raw_link or "").strip()
+    if not link:
+        return ""
+    # trim trailing punctuations copied from sentence context
+    while link and re.search(r"[),.;!?，。；！？】〕）》」]$", link):
+        link = link[:-1].rstrip()
+    if not link:
+        return ""
+    if link.startswith("//"):
+        link = "https:" + link
+    elif (not re.match(r"^https?://", link, flags=re.IGNORECASE)) and re.match(r"^www\.", link, flags=re.IGNORECASE):
+        link = "https://" + link
+    elif not re.match(r"^https?://", link, flags=re.IGNORECASE):
+        link = "http://" + link
+    try:
+        p = urlparse(link)
+        host = str(p.netloc or "").lower()
+        # DuckDuckGo redirect links usually carry the target in uddg.
+        if "duckduckgo.com" in host:
+            qs = parse_qs(str(p.query or ""))
+            uddg_vals = qs.get("uddg") or []
+            if uddg_vals:
+                target = unquote(str(uddg_vals[0] or "").strip())
+                if target:
+                    link = target
+    except Exception:
+        pass
+    return str(link or "").strip()
+
+
+def _source_label_from_link(link: Any) -> str:
+    u = _normalize_search_link(link)
+    if not u:
+        return "来源"
+    host = ""
+    try:
+        host = str(urlparse(u).netloc or "").strip().lower()
+    except Exception:
+        host = ""
+    if not host:
+        return "来源"
+    host = host.split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    source_map = {
+        "news.google.com": "Google 新闻",
+        "google.com": "Google",
+        "bing.com": "Bing News",
+        "cn.bing.com": "Bing News",
+        "toutiao.com": "今日头条",
+        "baidu.com": "百度",
+        "sina.com.cn": "新浪新闻",
+        "163.com": "网易新闻",
+        "qq.com": "腾讯新闻",
+        "thepaper.cn": "澎湃新闻",
+        "bbc.com": "BBC",
+        "bbc.co.uk": "BBC",
+        "reuters.com": "Reuters",
+    }
+    if host in source_map:
+        return source_map[host]
+    for k, v in source_map.items():
+        if host.endswith("." + k):
+            return v
+    return host
+
+
+def _looks_like_web_lookup_query(text: Any) -> bool:
+    s = str(text or "").strip().lower()
+    if not s:
+        return False
+    pats = [
+        r"上网搜|联网搜|搜索|查一下|查查|新闻|资讯|头条|热点",
+        r"web\s*search|search\s+the\s+web|news|latest|headline|headlines|breaking",
+    ]
+    for p in pats:
+        try:
+            if re.search(p, s, flags=re.IGNORECASE):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+_GENERIC_NEWS_TITLE_PATTERNS = [
+    re.compile(r"^(google|bing|百度|今日头条|新浪|网易).{0,6}(新闻|news)", re.IGNORECASE),
+    re.compile(r"搜索.{0,8}(news|新闻)", re.IGNORECASE),
+    re.compile(r"百度一下", re.IGNORECASE),
+    re.compile(r"首页", re.IGNORECASE),
+]
+
+
+def _is_generic_news_title(title: str) -> bool:
+    t = _clean_search_text(title, max_len=120)
+    if not t:
+        return True
+    for p in _GENERIC_NEWS_TITLE_PATTERNS:
+        try:
+            if p.search(t):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _normalize_search_item_row(item: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    if not isinstance(item, dict):
+        return None
+    title = _clean_search_text(item.get("title") or item.get("name") or "", max_len=160)
+    link = _normalize_search_link(item.get("url") or item.get("link") or item.get("href") or "")
+    snippet = _clean_search_text(
+        item.get("snippet")
+        or item.get("content")
+        or item.get("summary")
+        or item.get("description")
+        or item.get("text")
+        or "",
+        max_len=320,
+    )
+    if (not title) and snippet:
+        title = _clean_search_text(snippet, max_len=80)
+    if not (title or link or snippet):
+        return None
+    return {
+        "title": title or "Search Result",
+        "snippet": snippet,
+        "link": link,
+    }
+
+
 def _search_engine_items(query: str, top_k: int = 6) -> List[Dict[str, str]]:
     q = (query or "").strip()
     if not q:
@@ -5153,7 +5427,14 @@ def _search_engine_items(query: str, top_k: int = 6) -> List[Dict[str, str]]:
     # 优先结构化结果
     if hasattr(m, "_ddg_html_page"):
         items = m._ddg_html_page(q, 0) or []
-        return [x for x in items[:k] if isinstance(x, dict)]
+        out_rows: List[Dict[str, str]] = []
+        for row in items[:k]:
+            if not isinstance(row, dict):
+                continue
+            nr = _normalize_search_item_row(row)
+            if nr:
+                out_rows.append(nr)
+        return out_rows[:k]
 
     text = m.search(q, mode="web", top_k=k)
     lines = [s for s in (text or "").splitlines() if s and not s.strip().startswith("🔎")]
@@ -5162,18 +5443,160 @@ def _search_engine_items(query: str, top_k: int = 6) -> List[Dict[str, str]]:
     for ln in lines:
         if re.match(r"^\d+\.\s", ln):
             out.append({
-                "title": re.sub(r"^\d+\.\s", "", ln).strip(),
+                "title": _clean_search_text(re.sub(r"^\d+\.\s", "", ln).strip(), max_len=160),
                 "snippet": "",
-                "link": ""
+                "link": "",
             })
         elif ln.strip().startswith("http"):
             if out:
-                out[-1]["link"] = ln.strip()
+                out[-1]["link"] = _normalize_search_link(ln.strip())
         else:
             if out:
                 prev = out[-1].get("snippet", "")
-                out[-1]["snippet"] = (prev + (" " if prev else "") + ln.strip()).strip()
-    return out[:k]
+                out[-1]["snippet"] = _clean_search_text((prev + (" " if prev else "") + ln.strip()).strip(), max_len=320)
+    rows: List[Dict[str, str]] = []
+    for row in out[:k]:
+        nr = _normalize_search_item_row(row)
+        if nr:
+            rows.append(nr)
+    return rows[:k]
+
+
+_WEB_SEARCH_MCP_SKILL_IDS = (
+    "mcp_web_search",
+    "mcp-web-search",
+    "web_search_mcp",
+)
+
+
+def _find_enabled_mcp_web_search_skill_id() -> str:
+    """
+    Return an enabled MCP web-search skill id if available, otherwise empty string.
+    """
+    try:
+        skills = skills_registry.load_all_skills(force=False)
+    except Exception:
+        return ""
+    # 1) Prefer explicit known ids.
+    for sid in _WEB_SEARCH_MCP_SKILL_IDS:
+        d = skills.get(sid)
+        if d is None:
+            continue
+        if str(getattr(d, "status", "")).strip().lower() != skills_registry.SKILL_STATUS_NORMAL:
+            continue
+        if not bool(getattr(d, "enabled", False)):
+            continue
+        if str(getattr(d, "skill_type", "")).strip().lower() != skills_registry.SKILL_TYPE_MCP:
+            continue
+        return sid
+    # 2) Fallback: locate by target server/tool in any MCP skill.
+    for sid, d in skills.items():
+        if not sid or d is None:
+            continue
+        if str(getattr(d, "status", "")).strip().lower() != skills_registry.SKILL_STATUS_NORMAL:
+            continue
+        if not bool(getattr(d, "enabled", False)):
+            continue
+        if str(getattr(d, "skill_type", "")).strip().lower() != skills_registry.SKILL_TYPE_MCP:
+            continue
+        server_name = str(getattr(d, "server_name", "") or "").strip().lower()
+        tool_name = str(getattr(d, "tool_name", "") or "").strip().lower()
+        if server_name == "mcp_web_search" and tool_name in {"web_search", "search"}:
+            return str(sid).strip()
+    return ""
+
+
+def _normalize_web_items_from_mcp(data: Any, max_items: int = 8) -> List[Dict[str, str]]:
+    """
+    Normalize MCP tool result into TYXT search item rows:
+    [{title, snippet, link}]
+    """
+    rows: List[Dict[str, str]] = []
+    answer = ""
+    src_list: List[Any] = []
+    if isinstance(data, list):
+        src_list = list(data)
+    elif isinstance(data, dict):
+        answer = str(data.get("answer") or "").strip()
+        for key in ("results", "items", "result"):
+            vv = data.get(key)
+            if isinstance(vv, list):
+                src_list = vv
+                break
+        if (not src_list) and isinstance(data.get("data"), dict):
+            nested = data.get("data") or {}
+            answer = answer or str(nested.get("answer") or "").strip()
+            for key in ("results", "items", "result"):
+                vv = nested.get(key)
+                if isinstance(vv, list):
+                    src_list = vv
+                    break
+    for item in src_list[: max(1, int(max_items or 8))]:
+        if not isinstance(item, dict):
+            continue
+        nr = _normalize_search_item_row(item)
+        if nr:
+            rows.append(nr)
+    if (not rows) and answer:
+        rows.append({"title": "Answer", "snippet": _clean_search_text(answer, max_len=320), "link": ""})
+    return rows
+
+
+def _search_engine_items_with_fallback(
+    query: str,
+    top_k: int = 6,
+    meta: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
+    """
+    Web search execution strategy:
+    1) If MCP web-search skill is enabled, call MCP first.
+    2) If MCP fails or returns empty rows, fallback to built-in search_engine.py logic.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    k = max(1, min(safe_int(top_k, 6), 10))
+    m = meta if isinstance(meta, dict) else {}
+    provider = _normalize_web_search_provider(
+        m.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))
+    )
+    mcp_skill_id = _find_enabled_mcp_web_search_skill_id()
+    if mcp_skill_id:
+        try:
+            args = {
+                "query": q,
+                "max_results": k,
+            }
+            if provider == "tavily":
+                # Prefer richer Tavily search when provider is Tavily.
+                args["search_depth"] = "advanced"
+                args["include_answer"] = True
+            ctx = {
+                "user_id": str(m.get("user_id") or "").strip(),
+                "channel_type": str(m.get("scene") or m.get("channel_type") or "local").strip(),
+                "owner_id": str(m.get("owner_id") or m.get("group_id") or m.get("user_id") or "").strip(),
+                "role": str(m.get("role") or "").strip(),
+                "meta": {"source": "chat_web_search", "provider": provider},
+                "__caps": _build_skill_caps(),
+            }
+            out = skills_registry.run_skill(mcp_skill_id, args, ctx)
+            if isinstance(out, dict) and safe_bool(out.get("ok"), False):
+                rows = _normalize_web_items_from_mcp(out.get("data"), max_items=k)
+                if rows:
+                    print(f"[WEB_SEARCH] via_mcp skill={mcp_skill_id} provider={provider} items={len(rows)}")
+                    return rows[:k]
+                print(f"[WEB_SEARCH warn] mcp_empty_result skill={mcp_skill_id} provider={provider}, fallback=builtin")
+            else:
+                err = ""
+                if isinstance(out, dict):
+                    err = str(out.get("error") or "").strip()
+                print(f"[WEB_SEARCH warn] mcp_failed skill={mcp_skill_id} provider={provider} err={err or 'unknown'}, fallback=builtin")
+        except Exception as e:
+            print(f"[WEB_SEARCH warn] mcp_exception fallback=builtin err={e}")
+    else:
+        if provider == "tavily":
+            print("[WEB_SEARCH warn] provider=tavily but mcp_web_search skill is not enabled; fallback=builtin")
+    return _search_engine_items(q, top_k=k)
 
 
 def _format_search_items_for_prompt(items: List[Dict[str, str]]) -> str:
@@ -5182,19 +5605,25 @@ def _format_search_items_for_prompt(items: List[Dict[str, str]]) -> str:
     rows = []
     for i, it in enumerate(items, start=1):
         title = str(it.get("title") or "").strip()
-        link = str(it.get("link") or "").strip()
+        link = _normalize_search_link(it.get("link"))
         snippet = str(it.get("snippet") or "").strip()
         line = f"{i}. {title or '（无标题）'}"
-        if link:
-            line += f"\n   链接: {link}"
         if snippet:
-            line += f"\n   摘要: {snippet}"
+            line += f"\n   梗概: {snippet}"
+        if link:
+            src_site = ""
+            try:
+                src_site = str(urlparse(link).netloc or "").strip()
+            except Exception:
+                src_site = ""
+            if src_site:
+                line += f"\n   来源站点: {src_site}"
         rows.append(line)
     return "\n".join(rows)
 
 
-def _collect_search_links(items: List[Dict[str, str]], max_links: int = 6) -> List[str]:
-    out: List[str] = []
+def _collect_search_sources(items: List[Dict[str, str]], max_links: int = 6) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
     seen = set()
     k = max(1, min(safe_int(max_links, 6), 12))
     for it in (items or []):
@@ -5202,27 +5631,92 @@ def _collect_search_links(items: List[Dict[str, str]], max_links: int = 6) -> Li
             break
         if not isinstance(it, dict):
             continue
-        link = str(it.get("link") or "").strip()
+        link = _normalize_search_link(it.get("link"))
         if not link:
             continue
-        if not re.match(r"^https?://", link, flags=re.IGNORECASE):
-            link = "http://" + link
-        link = link.strip()
         if (not link) or (link in seen):
             continue
         seen.add(link)
-        out.append(link)
+        title = _clean_search_text(it.get("title") or "", max_len=72)
+        if not title:
+            try:
+                title = str(urlparse(link).netloc or "").strip() or "来源"
+            except Exception:
+                title = "来源"
+        out.append({"title": title, "link": link})
+    return out
+
+
+def _collect_search_links(items: List[Dict[str, str]], max_links: int = 6) -> List[str]:
+    out: List[str] = []
+    for row in _collect_search_sources(items, max_links=max_links):
+        link = str(row.get("link") or "").strip()
+        if link:
+            out.append(link)
     return out
 
 
 def _format_search_links_for_reply(items: List[Dict[str, str]], max_links: int = 6) -> str:
-    links = _collect_search_links(items, max_links=max_links)
-    if not links:
+    sources = _collect_search_sources(items, max_links=max_links)
+    if not sources:
         return ""
-    rows = ["参考链接："]
-    for i, lk in enumerate(links, start=1):
-        rows.append(f"{i}. {lk}")
+    rows = ["来源："]
+    for i, row in enumerate(sources, start=1):
+        title = _clean_search_text(row.get("title") or "来源", max_len=72)
+        lk = str(row.get("link") or "").strip()
+        if not lk:
+            continue
+        rows.append(f"{i}. （来源）[{title}]({lk})")
     return "\n".join(rows).strip()
+
+
+_WEB_ACCESS_DENY_PATTERNS = [
+    re.compile(r"无法.{0,8}(获取|访问|连接).{0,8}(实时|网络|新闻|资讯)"),
+    re.compile(r"知识库.{0,12}(截止|只到|仅到)"),
+    re.compile(r"没有.{0,6}(真正的)?网络搜索能力"),
+    re.compile(r"(cannot|can't|unable to).{0,20}(access|fetch|get).{0,12}(real[- ]?time|news|web|internet)", re.IGNORECASE),
+    re.compile(r"knowledge.{0,12}(cutoff|up to)", re.IGNORECASE),
+]
+
+
+def _reply_denies_web_access(text: Any) -> bool:
+    s = str(text or "").strip()
+    if not s:
+        return False
+    for pat in _WEB_ACCESS_DENY_PATTERNS:
+        try:
+            if pat.search(s):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _build_web_digest_for_reply(items: List[Dict[str, str]], max_items: int = 5) -> str:
+    rows = _normalize_web_items_from_mcp(items, max_items=max_items)
+    if not rows:
+        rows = [x for x in (items or []) if isinstance(x, dict)]
+    if not rows:
+        return ""
+    out: List[str] = []
+    k = max(1, min(safe_int(max_items, 5), 8))
+    for i, it in enumerate(rows[:k], start=1):
+        link = _normalize_search_link(it.get("link"))
+        source = _source_label_from_link(link)
+        title = _clean_search_text(it.get("title") or "", max_len=96)
+        snippet = _clean_search_text(it.get("snippet") or "", max_len=120)
+        text = title
+        # If title is generic portal/navigation text, fallback to snippet.
+        if (not text) or _is_generic_news_title(text):
+            if snippet:
+                text = snippet
+        if not text:
+            text = "未提取到可展示标题"
+        if link:
+            out.append(f"{i}. {text}（来源：[{source}]({link})）")
+        else:
+            out.append(f"{i}. {text}（来源：{source}）")
+    return "\n".join(out).strip()
 
 
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
@@ -5625,9 +6119,21 @@ def chat_post():
             sender_name = str(user_id or "").strip()
 
         # 前端工具开关/附件透传
-        web_search_enabled = safe_bool(
-            upstream_meta.get("web_search_enabled", data.get("web_search_enabled")),
-            default=False
+        _raw_mode = upstream_meta.get("web_search_mode", data.get("web_search_mode"))
+        if _raw_mode is None or str(_raw_mode).strip() == "":
+            web_search_enabled_legacy = safe_bool(
+                upstream_meta.get("web_search_enabled", data.get("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False))),
+                default=False
+            )
+            web_search_mode = "default" if web_search_enabled_legacy else "off"
+        else:
+            web_search_mode = _normalize_web_search_mode(_raw_mode)
+        web_search_enabled = bool(web_search_mode != "off")
+        web_search_provider = _normalize_web_search_provider(
+            upstream_meta.get(
+                "web_search_provider",
+                data.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin")),
+            )
         )
         file_tools_enabled = safe_bool(
             upstream_meta.get("file_tools_enabled", data.get("file_tools_enabled", True)),
@@ -5651,6 +6157,8 @@ def chat_post():
             "sender_name": str(sender_name).strip() or str(user_id or "anonymous"),
             "nickname": str(nickname).strip() or str(sender_name).strip() or str(user_id or "anonymous"),
             "web_search_enabled": web_search_enabled,
+            "web_search_mode": web_search_mode,
+            "web_search_provider": web_search_provider,
             "file_tools_enabled": file_tools_enabled,
             "attachments": attachments,
             "web_top_k": max(1, min(web_top_k, 10)),
@@ -5853,11 +6361,26 @@ def chat_post():
         except Exception:
             pass
 
-        # ====== 网页搜索（由前端开关控制）======
+        # ====== 网页搜索（由前端开关 + 查询意图共同控制）======
         web_items: List[Dict[str, str]] = []
-        if bool(meta.get("web_search_enabled", False)):
+        web_mode = _normalize_web_search_mode(meta.get("web_search_mode", "off"))
+        web_feature_enabled = bool(web_mode != "off")
+        wants_web_lookup = _looks_like_web_lookup_query(user_input)
+        if wants_web_lookup and (not web_feature_enabled):
+            disabled_reply = "目前上网搜索功能没有开启。请先在设置里打开“上网搜索”后再试。"
             try:
-                web_items = _search_engine_items(user_input, top_k=safe_int(meta.get("web_top_k"), 6))
+                save_chat(user_input, disabled_reply, meta=meta)
+            except Exception:
+                pass
+            return jsonify({"reply": disabled_reply}), 200
+        should_web_lookup = bool(web_mode == "force" or (web_mode == "default" and wants_web_lookup))
+        if should_web_lookup:
+            try:
+                web_items = _search_engine_items_with_fallback(
+                    user_input,
+                    top_k=safe_int(meta.get("web_top_k"), 6),
+                    meta=meta,
+                )
             except Exception as e:
                 print("[WEB_SEARCH warn]", e)
                 web_items = []
@@ -6040,6 +6563,12 @@ def chat_post():
         if web_items and (not isolate_image_context):
             web_txt = _format_search_items_for_prompt(web_items)
             if web_txt:
+                sys_lines.append(
+                    "【联网结果使用要求】\n"
+                    "已提供本轮网页搜索结果。请基于这些结果回答，不要再说“无法联网/知识截止无法获取实时信息”。\n"
+                    "输出以“标题或简短梗概”为主；每条后可附格式：`（来源）[标题](链接)`。\n"
+                    "不要在正文末尾再单独输出“来源：”链接列表。"
+                )
                 sys_lines.append("【网页搜索结果（供参考）】\n" + web_txt)
 
         if str(scene).strip() == "group":
@@ -6107,22 +6636,13 @@ def chat_post():
                 "请再发一次“只描述这张图”，我会仅基于图片回答，不引用历史记录。"
             )
 
-        # 开启网页搜索时：把命中的链接强制附在回复里，避免模型漏贴来源
-        if bool(meta.get("web_search_enabled", False)):
-            links_block = _format_search_links_for_reply(
+        if web_items and _reply_denies_web_access(reply):
+            digest = _build_web_digest_for_reply(
                 web_items,
-                max_links=safe_int(meta.get("web_top_k"), 6)
+                max_items=safe_int(meta.get("web_top_k"), 6),
             )
-            if links_block:
-                existing = _collect_search_links([{"link": x} for x in re.findall(r"https?://[^\s)]+", reply)], max_links=20)
-                need_append = True
-                if existing:
-                    for lk in _collect_search_links(web_items, max_links=12):
-                        if lk in existing:
-                            need_append = False
-                            break
-                if need_append:
-                    reply = (reply.rstrip() + "\n\n" + links_block).strip()
+            if digest:
+                reply = digest
 
         # 标注：本次是否由 Ollama 回退完成
         reply_source = ""
@@ -7948,6 +8468,7 @@ def api_chat_completions():
                 break
         if not user_input:
             user_input = (norm_msgs[-1].get("content") or "").strip()
+        stream_requested = bool(data.get("stream")) or (request.args.get("stream") == "1")
 
         # ---- 4) 记忆召回（按 Profile 选择向量库/collection 的话，你后面在 vector_search 内部处理）----
         triggered = trigger_memory_check(user_input)
@@ -7977,6 +8498,73 @@ def api_chat_completions():
                 empty = bool(empty_try)
             if triggered and empty:
                 mem_txt = "（无匹配记忆）"
+
+        # ---- 4.1) 网页搜索（支持 MCP 优先，失败回退内置）----
+        _raw_mode = meta.get("web_search_mode", data.get("web_search_mode", MODEL_CONFIG.get("web_search_mode", "")))
+        if _raw_mode is None or str(_raw_mode).strip() == "":
+            web_search_enabled = safe_bool(
+                meta.get("web_search_enabled", data.get("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False))),
+                False,
+            )
+            web_search_mode = "default" if web_search_enabled else "off"
+        else:
+            web_search_mode = _normalize_web_search_mode(_raw_mode)
+            web_search_enabled = bool(web_search_mode != "off")
+        web_search_provider = _normalize_web_search_provider(
+            meta.get("web_search_provider", data.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin")))
+        )
+        web_top_k = max(1, min(safe_int(meta.get("web_top_k", data.get("web_top_k")), 6), 10))
+        wants_web_lookup = _looks_like_web_lookup_query(user_input)
+        if wants_web_lookup and (not web_search_enabled):
+            disabled_text = "目前上网搜索功能没有开启。请先在设置里打开“上网搜索”后再试。"
+            try:
+                save_chat(user_input or "[no_user]", disabled_text, meta=meta)
+            except Exception:
+                pass
+            if stream_requested:
+                def _disabled_stream():
+                    payload = {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": MODEL_NAME,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": disabled_text},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+                return Response(
+                    stream_with_context(_disabled_stream()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+                )
+            resp = {
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": MODEL_NAME,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": disabled_text},
+                    "finish_reason": "stop"
+                }]
+            }
+            return Response(json.dumps(resp, ensure_ascii=False), status=200, mimetype="application/json; charset=utf-8")
+        web_items: List[Dict[str, str]] = []
+        should_web_lookup = bool(web_search_mode == "force" or (web_search_mode == "default" and wants_web_lookup))
+        if should_web_lookup:
+            try:
+                web_items = _search_engine_items_with_fallback(user_input, top_k=web_top_k, meta=meta)
+            except Exception as e:
+                print("[WEB_SEARCH warn]", e)
+                web_items = []
+        meta["web_search_enabled"] = bool(web_search_enabled)
+        meta["web_search_mode"] = web_search_mode
+        meta["web_search_provider"] = web_search_provider
+        meta["web_top_k"] = int(web_top_k)
 
         # ---- 5) 拼 system prompt：人格 + 时间感知 + 协议 + 临时上下文 ----
         sys_lines = []
@@ -8033,6 +8621,18 @@ def api_chat_completions():
         if mem_txt:
             sys_lines.append("【相关长期记忆片段】\n" + mem_txt)
 
+        # 5.5.1 网页搜索结果（用于联网信息补充）
+        if web_items:
+            web_txt = _format_search_items_for_prompt(web_items)
+            if web_txt:
+                sys_lines.append(
+                    "【联网结果使用要求】\n"
+                    "已提供本轮网页搜索结果。请基于这些结果回答，不要再说“无法联网/知识截止无法获取实时信息”。\n"
+                    "输出以“标题或简短梗概”为主；每条后可附格式：`（来源）[标题](链接)`。\n"
+                    "不要在正文末尾再单独输出“来源：”链接列表。"
+                )
+                sys_lines.append("【网页搜索结果（供参考）】\n" + web_txt)
+
         # 5.6 把 meta 明文塞给模型（你之前就要求它“看得到人名/ID/场景”）
         try:
             meta_dump = json.dumps(meta, ensure_ascii=False)
@@ -8054,7 +8654,7 @@ def api_chat_completions():
         top_p       = float(data.get("top_p") or MODEL_CONFIG.get("top_p", GEN_TOP_P))
         top_k       = int(data.get("top_k") or MODEL_CONFIG.get("top_k", GEN_TOP_K))
 
-        stream = bool(data.get("stream")) or (request.args.get("stream") == "1")
+        stream = bool(stream_requested)
 
         # ---- 7) 流式 ----
         if stream:
@@ -8087,6 +8687,27 @@ def api_chat_completions():
                         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
                 full = clean_reply_text("".join(buf)).strip()
+                if web_items:
+                    if web_items and _reply_denies_web_access(full):
+                        corrected = _build_web_digest_for_reply(
+                            web_items,
+                            max_items=safe_int(meta.get("web_top_k"), 6),
+                        )
+                        if corrected:
+                            addon_fix = "\n\n（已根据联网结果自动更正）\n" + corrected
+                            full = (full.rstrip() + addon_fix).strip()
+                            payload = {
+                                "id": f"chatcmpl-{int(time.time())}",
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": MODEL_NAME,
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": addon_fix},
+                                    "finish_reason": None
+                                }]
+                            }
+                            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 if full:
                     try:
                         save_chat(user_input or "[no_user]", full, meta=meta)
@@ -8113,6 +8734,14 @@ def api_chat_completions():
             )
 
         reply_text = clean_reply_text(str(reply))
+        if web_items:
+            if web_items and _reply_denies_web_access(reply_text):
+                corrected = _build_web_digest_for_reply(
+                    web_items,
+                    max_items=safe_int(meta.get("web_top_k"), 6),
+                )
+                if corrected:
+                    reply_text = corrected
         try:
             save_chat(user_input or "[no_user]", reply_text, meta=meta)
         except Exception as e:
@@ -8555,35 +9184,18 @@ def api_search_engine():
         top_k = int(data.get("top_k") or 8)
         if not query:
             return jsonify({"result": [], "error": "Empty query"}), 200
-
-        m = _load_module_from_path(SEARCH_ENGINE_PATH, "search_engine")
-
-        # 若实现了 HTML 解析函数则直接返回结构化条目
-        if hasattr(m, "_ddg_html_page"):
-            items = m._ddg_html_page(query, 0) or []
-            return jsonify({"result": items[:top_k]}), 200
-
-        # 否则走文本解析逻辑（兼容旧实现）
-        text = m.search(query, mode="web", top_k=top_k)
-        lines = [s for s in (text or "").splitlines() if s and not s.strip().startswith("🔎")]
-
-        out = []
-        for ln in lines:
-            if re.match(r"^\d+\.\s", ln):
-                out.append({
-                    "title": re.sub(r"^\d+\.\s", "", ln).strip(),
-                    "snippet": "",
-                    "link": ""
-                })
-            elif ln.strip().startswith("http"):
-                if out:
-                    out[-1]["link"] = ln.strip()
-            else:
-                if out:
-                    prev_snip = out[-1].get("snippet", "")
-                    out[-1]["snippet"] = (prev_snip + (" " if prev_snip else "") + ln.strip()).strip()
-
-        return jsonify({"result": out[:top_k]}), 200
+        provider = _normalize_web_search_provider(
+            data.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))
+        )
+        meta = {
+            "web_search_provider": provider,
+            "user_id": str(data.get("user_id") or "").strip(),
+            "scene": str(data.get("scene") or "local").strip(),
+            "owner_id": str(data.get("owner_id") or "").strip(),
+            "role": str(data.get("role") or "").strip(),
+        }
+        items = _search_engine_items_with_fallback(query, top_k=top_k, meta=meta)
+        return jsonify({"result": items[: max(1, min(int(top_k), 10))]}), 200
 
     except Exception as e:
         return jsonify({"result": [], "error": f"Search failed: {e}"}), 200
@@ -8907,6 +9519,810 @@ def tools_runtime_info():
         return jsonify({"ok": False, "error": str(e)}), 200
 
 
+def _build_mcp_skill_id(server_name: str, tool_name: str) -> str:
+    return f"mcp::{str(server_name or '').strip()}::{str(tool_name or '').strip()}"
+
+
+def _parse_mcp_skill_id(skill_id: str) -> Tuple[str, str]:
+    sid = str(skill_id or "").strip()
+    if not sid.startswith("mcp::"):
+        return "", ""
+    parts = sid.split("::", 2)
+    if len(parts) != 3:
+        return "", ""
+    return str(parts[1] or "").strip(), str(parts[2] or "").strip()
+
+
+def _refresh_runtime_mcp_skills() -> Dict[str, Any]:
+    """
+    Build runtime MCP skills from MCP bridge tools and merge into TYXT skills registry.
+    """
+    global MCP_TOOL_REGISTRY, MCP_SERVER_RUNTIME_STATUS
+    summary: Dict[str, Any] = {
+        "mcp_enabled": bool(MCP_BRIDGE_ENABLED),
+        "servers": 0,
+        "tools": 0,
+        "errors": [],
+    }
+    MCP_TOOL_REGISTRY = {}
+    MCP_SERVER_RUNTIME_STATUS = {}
+    try:
+        # Keep this source isolated so we do not affect future runtime skill providers.
+        skills_registry.clear_runtime_skills(source="mcp")
+    except Exception:
+        pass
+
+    if not MCP_BRIDGE_ENABLED:
+        app.logger.info("[MCP] disabled. runtime MCP skills cleared.")
+        return summary
+    if MCP_BRIDGE is None:
+        app.logger.warning("[MCP] bridge is not initialized.")
+        return summary
+
+    runtime_skills: List[skills_registry.SkillDescriptor] = []
+    servers = MCP_BRIDGE.list_servers()
+    summary["servers"] = len(servers)
+    for server_name in servers:
+        MCP_SERVER_RUNTIME_STATUS[str(server_name)] = {
+            "server": str(server_name),
+            "status": "ok",
+            "error": "",
+            "tool_count": 0,
+        }
+        try:
+            tools = MCP_BRIDGE.list_tools(server_name)
+        except Exception as e:
+            msg = f"list_tools failed server={server_name}: {e}"
+            summary["errors"].append(msg)
+            app.logger.error("[MCP] %s", msg)
+            MCP_SERVER_RUNTIME_STATUS[str(server_name)] = {
+                "server": str(server_name),
+                "status": "error",
+                "error": str(e),
+                "tool_count": 0,
+            }
+            continue
+        for td in tools:
+            tool_name = str(td.tool_name or "").strip()
+            if not tool_name:
+                continue
+            skill_id = _build_mcp_skill_id(server_name, tool_name)
+            schema = td.schema if isinstance(td.schema, dict) else {"type": "object"}
+            if str(schema.get("type") or "").strip().lower() != "object":
+                schema = {"type": "object", "properties": {"_input": {"type": "string"}}}
+            runtime_skills.append(
+                skills_registry.SkillDescriptor(
+                    id=skill_id,
+                    name=str(td.title or tool_name).strip() or tool_name,
+                    version="0.1.0",
+                    author=f"mcp:{server_name}",
+                    description=str(td.description or "").strip(),
+                    tags=["mcp", str(server_name)],
+                    unsafe=False,
+                    # MCP tools may perform network/file operations internally.
+                    # Set conservative capability to "network=True" by default so
+                    # global gate TYXT_SKILLS_ALLOW_NETWORK can still disable all MCP calls.
+                    permissions={"network": True, "filesystem": False, "llm": False},
+                    entry={"type": "mcp", "module": "", "function": "run"},
+                    inputs=dict(schema),
+                    outputs={"type": "object"},
+                    dir_path="",
+                    source="mcp",
+                    status=skills_registry.SKILL_STATUS_NORMAL,
+                    safe_status=skills_registry.SAFE_STATUS_SAFE,
+                    enabled=False,
+                    scan_reasons=[],
+                    has_update=False,
+                    update_url="",
+                    skill_type=skills_registry.SKILL_TYPE_MCP,
+                    server_name=str(server_name),
+                    tool_name=str(tool_name),
+                )
+            )
+            MCP_TOOL_REGISTRY[skill_id] = {
+                "id": skill_id,
+                "server": str(server_name),
+                "server_name": str(server_name),
+                "name": str(tool_name),
+                "tool_name": str(tool_name),
+                "title": str(td.title or tool_name).strip() or tool_name,
+                "description": str(td.description or "").strip(),
+                "tags": ["mcp", str(server_name)],
+                "status": "normal",
+                "enabled": False,
+            }
+        MCP_SERVER_RUNTIME_STATUS[str(server_name)]["tool_count"] = len(tools)
+    summary["tools"] = len(runtime_skills)
+    if runtime_skills:
+        skills_registry.set_runtime_skills(runtime_skills, replace=False)
+        try:
+            loaded = skills_registry.load_all_skills(force=False)
+            for sid, row in list(MCP_TOOL_REGISTRY.items()):
+                d = loaded.get(sid)
+                if d is not None:
+                    row["enabled"] = bool(getattr(d, "enabled", False))
+                    row["status"] = str(getattr(d, "status", "normal") or "normal")
+        except Exception:
+            pass
+    app.logger.info("[MCP] runtime MCP skills refreshed: servers=%s tools=%s", summary["servers"], summary["tools"])
+    return summary
+
+
+def _init_mcp_bridge(force_enable: bool = False) -> Dict[str, Any]:
+    """
+    Initialize global MCP bridge from config, then refresh runtime MCP skills.
+    """
+    global MCP_BRIDGE, MCP_SERVER_CONFIGS, MCP_BRIDGE_ENABLED, MCP_TOOL_REGISTRY, MCP_SERVER_RUNTIME_STATUS
+    cfg_obj: Dict[str, Any]
+    try:
+        cfg_obj = mcp_manager.load_mcp_config(TYXT_MCP_CONFIG_PATH, create_if_missing=True, logger=app.logger)
+    except Exception as e:
+        app.logger.error("[MCP] failed to load config from %s: %s", TYXT_MCP_CONFIG_PATH, e)
+        cfg_obj = {"mcpServers": {}}
+    cfg_map = mcp_manager.build_bridge_config_map(cfg_obj)
+
+    # Inject Tavily key from global config for MCP servers when config uses
+    # placeholder/empty key, so admin only needs to set key once in "API 设置".
+    def _is_placeholder_tavily_key(v: Any) -> bool:
+        s = str(v or "").strip()
+        if not s:
+            return True
+        low = s.lower()
+        if ("你的key" in s) or ("your key" in low) or ("your_key" in low) or ("replace_me" in low):
+            return True
+        return False
+
+    try:
+        ws_key = str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip()
+    except Exception:
+        ws_key = ""
+    if ws_key:
+        injected = 0
+        for _srv_name, _cfg in list(cfg_map.items()):
+            try:
+                env = dict(getattr(_cfg, "env", {}) or {})
+                raw_key = str(env.get("TAVILY_API_KEY") or "").strip()
+                if _is_placeholder_tavily_key(raw_key):
+                    env["TAVILY_API_KEY"] = ws_key
+                    _cfg.env = env
+                    injected += 1
+            except Exception:
+                continue
+        if injected:
+            app.logger.info("[MCP] injected TAVILY_API_KEY from global web_search_api_key into %s server(s).", injected)
+
+    # Auto-enable when config contains at least one valid MCP server, so
+    # administrators can manage MCP from UI without requiring env toggles.
+    mcp_on = bool(TYXT_MCP_ENABLED or force_enable or bool(cfg_map))
+    MCP_BRIDGE_ENABLED = bool(mcp_on)
+    if not mcp_on:
+        MCP_SERVER_CONFIGS = {}
+        MCP_BRIDGE = None
+        MCP_TOOL_REGISTRY = {}
+        MCP_SERVER_RUNTIME_STATUS = {}
+        app.logger.info("[MCP] disabled (env=%s force=%s config_servers=%s).", TYXT_MCP_ENABLED, force_enable, len(cfg_map))
+        try:
+            skills_registry.clear_runtime_skills(source="mcp")
+        except Exception:
+            pass
+        return {"ok": True, "enabled": False, "servers": 0}
+    MCP_SERVER_CONFIGS = dict(cfg_map or {})
+    MCP_BRIDGE = mcp_bridge.MCPBridge(MCP_SERVER_CONFIGS, logger=app.logger)
+    app.logger.info("[MCP] bridge initialized. config=%s servers=%s", TYXT_MCP_CONFIG_PATH, len(MCP_SERVER_CONFIGS))
+    mcp_summary = _refresh_runtime_mcp_skills()
+    return {
+        "ok": True,
+        "enabled": True,
+        "servers": len(MCP_SERVER_CONFIGS),
+        "summary": mcp_summary,
+    }
+
+
+def _list_mcp_tools_registry_rows() -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    loaded = skills_registry.load_all_skills(force=False)
+    for sid in sorted(MCP_TOOL_REGISTRY.keys()):
+        row = dict(MCP_TOOL_REGISTRY.get(sid) or {})
+        d = loaded.get(sid)
+        if d is not None:
+            row["enabled"] = bool(getattr(d, "enabled", False))
+            row["status"] = str(getattr(d, "status", "normal") or "normal")
+            row["safe_status"] = str(getattr(d, "safe_status", "unknown") or "unknown")
+        out.append(row)
+    return out
+
+
+def load_skill_config(skill_id: str) -> Dict[str, Any]:
+    """
+    Load normalized skill config from the current skills registry cache.
+    """
+    sid = str(skill_id or "").strip()
+    if not sid:
+        return {}
+    skills = skills_registry.load_all_skills(force=False)
+    d = skills.get(sid)
+    if d is None:
+        return {}
+    return {
+        "id": str(d.id or "").strip(),
+        "name": str(d.name or "").strip(),
+        "type": str(d.skill_type or skills_registry.SKILL_TYPE_PYTHON).strip().lower() or skills_registry.SKILL_TYPE_PYTHON,
+        "skill_type": str(d.skill_type or skills_registry.SKILL_TYPE_PYTHON).strip().lower() or skills_registry.SKILL_TYPE_PYTHON,
+        "mcp_server": str(d.server_name or "").strip(),
+        "mcp_tool": str(d.tool_name or "").strip(),
+        "server_name": str(d.server_name or "").strip(),
+        "tool_name": str(d.tool_name or "").strip(),
+        "input_schema": dict(d.inputs or {"type": "object"}),
+        "inputs": dict(d.inputs or {"type": "object"}),
+    }
+
+
+def _validate_mcp_input_schema(schema: Dict[str, Any], user_args: Dict[str, Any]) -> Tuple[bool, Dict[str, Any], str]:
+    if not isinstance(schema, dict):
+        return True, dict(user_args or {}), ""
+    if str(schema.get("type") or "object").strip().lower() != "object":
+        return True, dict(user_args or {}), ""
+    payload = dict(user_args or {}) if isinstance(user_args, dict) else {}
+    props = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    required = list(schema.get("required") or [])
+
+    for k, spec in props.items():
+        if not isinstance(spec, dict):
+            continue
+        if k not in payload and ("default" in spec):
+            payload[k] = spec.get("default")
+
+    for key in required:
+        if key not in payload:
+            return False, {}, f"missing required param: {key}"
+
+    for k, spec in props.items():
+        if k not in payload:
+            continue
+        if not isinstance(spec, dict):
+            continue
+        expected = str(spec.get("type") or "").strip().lower()
+        value = payload.get(k)
+        if expected == "string" and (not isinstance(value, str)):
+            return False, {}, f"invalid type for {k}: expected string"
+        if expected == "integer":
+            if isinstance(value, bool) or (not isinstance(value, int)):
+                return False, {}, f"invalid type for {k}: expected integer"
+        if expected == "number":
+            if isinstance(value, bool) or (not isinstance(value, (int, float))):
+                return False, {}, f"invalid type for {k}: expected number"
+        if expected == "boolean" and (not isinstance(value, bool)):
+            return False, {}, f"invalid type for {k}: expected boolean"
+        if expected == "object" and (not isinstance(value, dict)):
+            return False, {}, f"invalid type for {k}: expected object"
+        if expected == "array" and (not isinstance(value, list)):
+            return False, {}, f"invalid type for {k}: expected array"
+    return True, payload, ""
+
+
+def call_mcp_tool(server_name: str, tool_name: str, args: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
+    """
+    Unified MCP bridge call wrapper.
+    """
+    if (not MCP_BRIDGE_ENABLED) or MCP_BRIDGE is None:
+        _append_mcp_skill_debug(
+            "mcp_call_blocked",
+            server_name=str(server_name or "").strip(),
+            tool_name=str(tool_name or "").strip(),
+            error="mcp_not_enabled",
+        )
+        return {"ok": False, "result": None, "error": "mcp_not_enabled"}
+    s = str(server_name or "").strip()
+    t = str(tool_name or "").strip()
+    if (not s) or (not t):
+        _append_mcp_skill_debug(
+            "mcp_call_blocked",
+            server_name=s,
+            tool_name=t,
+            error="mcp_skill_missing_target",
+        )
+        return {"ok": False, "result": None, "error": "mcp_skill_missing_target"}
+    payload = dict(args or {}) if isinstance(args, dict) else {}
+    wait = max(0.5, min(300.0, float(safe_float(timeout, 30.0))))
+    try:
+        out = MCP_BRIDGE.call_tool(server_name=s, tool_name=t, args=payload, timeout=wait)
+        if not isinstance(out, dict):
+            _append_mcp_skill_debug(
+                "mcp_call_error",
+                server_name=s,
+                tool_name=t,
+                error="mcp_invalid_result",
+            )
+            return {"ok": False, "result": None, "error": "mcp_invalid_result"}
+        _append_mcp_skill_debug(
+            "mcp_call_done",
+            server_name=s,
+            tool_name=t,
+            ok=bool(out.get("ok")),
+            error=str(out.get("error") or ""),
+        )
+        return out
+    except Exception as e:
+        app.logger.error("[MCP] call_mcp_tool failed server=%s tool=%s err=%s", s, t, e)
+        _append_mcp_skill_debug(
+            "mcp_call_error",
+            server_name=s,
+            tool_name=t,
+            error=str(e),
+        )
+        return {"ok": False, "result": None, "error": str(e)}
+
+
+def handle_mcp_skill(skill_id: str, user_args: Dict[str, Any], skill_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Generic MCP skill handler (config-driven).
+    """
+    sid = str(skill_id or "").strip()
+    cfg = dict(skill_cfg or {}) if isinstance(skill_cfg, dict) else load_skill_config(sid)
+    _append_mcp_skill_debug(
+        "mcp_dispatch_start",
+        skill_id=sid,
+        arg_keys=sorted(list((user_args or {}).keys())) if isinstance(user_args, dict) else [],
+    )
+    if not cfg:
+        _append_mcp_skill_debug("mcp_dispatch_error", skill_id=sid, error="skill_not_found")
+        return {"ok": False, "data": None, "error": "skill_not_found"}
+    st = str(cfg.get("type") or cfg.get("skill_type") or "").strip().lower()
+    if st != skills_registry.SKILL_TYPE_MCP:
+        _append_mcp_skill_debug("mcp_dispatch_error", skill_id=sid, error="not_mcp_skill")
+        return {"ok": False, "data": None, "error": "not_mcp_skill"}
+
+    server_name = str(cfg.get("mcp_server") or cfg.get("server_name") or "").strip()
+    tool_name = str(cfg.get("mcp_tool") or cfg.get("tool_name") or "").strip()
+    if (not server_name) or (not tool_name):
+        sid_server, sid_tool = _parse_mcp_skill_id(sid)
+        server_name = server_name or sid_server
+        tool_name = tool_name or sid_tool
+    if (not server_name) or (not tool_name):
+        _append_mcp_skill_debug("mcp_dispatch_error", skill_id=sid, error="mcp_skill_missing_target")
+        return {"ok": False, "data": None, "error": "mcp_skill_missing_target"}
+
+    payload = dict(user_args or {}) if isinstance(user_args, dict) else {}
+    timeout = safe_float(payload.pop("__timeout", 30.0), 30.0)
+    timeout = max(0.5, min(300.0, float(timeout)))
+    input_schema = cfg.get("input_schema") if isinstance(cfg.get("input_schema"), dict) else cfg.get("inputs")
+    ok_inputs, clean_args, input_err = _validate_mcp_input_schema(input_schema if isinstance(input_schema, dict) else {"type": "object"}, payload)
+    if not ok_inputs:
+        _append_mcp_skill_debug(
+            "mcp_dispatch_error",
+            skill_id=sid,
+            server_name=server_name,
+            tool_name=tool_name,
+            error=input_err or "invalid_params",
+        )
+        return {"ok": False, "data": None, "error": input_err or "invalid_params"}
+
+    app.logger.info("[MCP] unified handler skill=%s server=%s tool=%s", sid, server_name, tool_name)
+    _append_mcp_skill_debug(
+        "mcp_dispatch_call",
+        skill_id=sid,
+        server_name=server_name,
+        tool_name=tool_name,
+    )
+    result = call_mcp_tool(server_name=server_name, tool_name=tool_name, args=clean_args, timeout=timeout)
+    if not isinstance(result, dict):
+        _append_mcp_skill_debug(
+            "mcp_dispatch_error",
+            skill_id=sid,
+            server_name=server_name,
+            tool_name=tool_name,
+            error="mcp_invalid_result",
+        )
+        return {"ok": False, "data": None, "error": "mcp_invalid_result"}
+    if not safe_bool(result.get("ok"), False):
+        err = str(result.get("error") or "mcp_call_failed")
+        app.logger.warning("[MCP] tool failed server=%s tool=%s err=%s", server_name, tool_name, err)
+        _append_mcp_skill_debug(
+            "mcp_dispatch_error",
+            skill_id=sid,
+            server_name=server_name,
+            tool_name=tool_name,
+            error=err,
+        )
+        return {"ok": False, "data": result.get("result"), "error": err}
+    _append_mcp_skill_debug(
+        "mcp_dispatch_ok",
+        skill_id=sid,
+        server_name=server_name,
+        tool_name=tool_name,
+    )
+    return {"ok": True, "data": result.get("result"), "error": ""}
+
+
+def _run_mcp_skill(
+    skill_desc: skills_registry.SkillDescriptor,
+    params: Dict[str, Any],
+    context: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Skills registry runner for MCP skill type.
+    """
+    del context
+    cfg = {
+        "id": str(skill_desc.id or "").strip(),
+        "type": skills_registry.SKILL_TYPE_MCP,
+        "skill_type": skills_registry.SKILL_TYPE_MCP,
+        "mcp_server": str(skill_desc.server_name or "").strip(),
+        "mcp_tool": str(skill_desc.tool_name or "").strip(),
+        "server_name": str(skill_desc.server_name or "").strip(),
+        "tool_name": str(skill_desc.tool_name or "").strip(),
+        "input_schema": dict(skill_desc.inputs or {"type": "object"}),
+        "inputs": dict(skill_desc.inputs or {"type": "object"}),
+    }
+    return handle_mcp_skill(str(skill_desc.id or "").strip(), params if isinstance(params, dict) else {}, skill_cfg=cfg)
+
+
+skills_registry.register_skill_runner(skills_registry.SKILL_TYPE_MCP, _run_mcp_skill)
+try:
+    _init_mcp_bridge()
+except Exception as _mcp_init_e:
+    app.logger.error("[MCP] init failed: %s", _mcp_init_e)
+
+
+def _build_skill_caps() -> Dict[str, bool]:
+    return {
+        "network": bool(TYXT_SKILLS_ALLOW_NETWORK),
+        "filesystem": bool(TYXT_SKILLS_ALLOW_FILESYSTEM),
+        "llm": bool(TYXT_SKILLS_ALLOW_LLM),
+    }
+
+
+def _build_skill_exec_context(payload: Dict[str, Any], user_id: str, role: str) -> Dict[str, Any]:
+    p = payload if isinstance(payload, dict) else {}
+    meta = p.get("meta") if isinstance(p.get("meta"), dict) else {}
+    scene = str(
+        p.get("scene")
+        or p.get("channel_type")
+        or (meta.get("scene") if isinstance(meta, dict) else "")
+        or "local"
+    ).strip().lower() or "local"
+    owner_id = str(
+        p.get("owner_id")
+        or p.get("group_id")
+        or (meta.get("owner_id") if isinstance(meta, dict) else "")
+        or (meta.get("group_id") if isinstance(meta, dict) else "")
+        or user_id
+    ).strip() or user_id
+    return {
+        "user_id": str(user_id or "").strip(),
+        "role": "admin" if str(role or "").strip().lower() == "admin" else "user",
+        "scene": scene,
+        "channel_type": scene,
+        "owner_id": owner_id,
+        "meta": dict(meta) if isinstance(meta, dict) else {},
+        "shared_root": str(ALLOWED_DIR or ""),
+        "import_dir": str(IMPORT_DROP_DIR or ""),
+        "__caps": _build_skill_caps(),
+    }
+
+
+@app.route("/tools/skills/list", methods=["GET", "OPTIONS"])
+def tools_skills_list():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        req_payload = request.args.to_dict(flat=True) if request.args else {}
+        uid, role, _nick = _resolve_request_user_ctx(req_payload)
+        if not uid:
+            return jsonify({"ok": False, "msg": "Not logged in", "skills": []}), 401
+        admin_view = str(role or "").strip().lower() == "admin"
+        rows = skills_registry.list_skills(admin_view=admin_view)
+        out: Dict[str, Any] = {"ok": True, "skills": rows, "admin_view": bool(admin_view)}
+        if admin_view:
+            out["summary"] = skills_registry.get_scan_summary()
+        return jsonify(out), 200
+    except Exception as e:
+        print(f"[tools/skills/list error] {e}")
+        return jsonify({"ok": False, "msg": f"Failed to load skills: {e}", "skills": []}), 200
+
+
+@app.route("/admin/mcp/config", methods=["GET", "OPTIONS"])
+def admin_mcp_config_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        cfg = mcp_manager.load_mcp_config(TYXT_MCP_CONFIG_PATH, create_if_missing=True, logger=app.logger)
+        text = mcp_manager.dump_mcp_config_text(cfg)
+        return jsonify(
+            {
+                "ok": True,
+                "config_path": TYXT_MCP_CONFIG_PATH,
+                "config_text": text,
+            }
+        ), 200
+    except Exception as e:
+        app.logger.error("[MCP] /admin/mcp/config error: %s", e)
+        return jsonify({"ok": False, "error": f"Load config failed: {e}", "detail": str(e)}), 200
+
+
+@app.route("/admin/mcp/config/save", methods=["POST", "OPTIONS"])
+def admin_mcp_config_save():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_text = str(data.get("config_text") or "").strip()
+        if not raw_text:
+            return jsonify({"ok": False, "error": "config_text is empty", "detail": ""}), 200
+
+        parsed = mcp_manager.save_mcp_config(raw_text, TYXT_MCP_CONFIG_PATH, logger=app.logger)
+        init_result = _init_mcp_bridge()
+        skills_registry.reload_skills()
+        tool_rows = _list_mcp_tools_registry_rows()
+        return jsonify(
+            {
+                "ok": True,
+                "message": "保存并重载成功",
+                "server_count": int(len(MCP_SERVER_CONFIGS)),
+                "tool_count": int(len(tool_rows)),
+                "config_text": mcp_manager.dump_mcp_config_text(parsed),
+                "result": init_result,
+            }
+        ), 200
+    except json.JSONDecodeError as e:
+        return jsonify({"ok": False, "error": f"JSON 解析失败: {e}", "detail": str(e)}), 200
+    except Exception as e:
+        app.logger.error("[MCP] /admin/mcp/config/save error: %s", e)
+        return jsonify({"ok": False, "error": f"保存失败: {e}", "detail": str(e)}), 200
+
+
+@app.route("/admin/mcp/tools", methods=["GET", "OPTIONS"])
+def admin_mcp_tools():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        tools = _list_mcp_tools_registry_rows()
+        servers = [dict(v or {}) for _, v in sorted(MCP_SERVER_RUNTIME_STATUS.items(), key=lambda x: str(x[0]))]
+        return jsonify(
+            {
+                "ok": True,
+                "enabled": bool(MCP_BRIDGE_ENABLED),
+                "tools": tools,
+                "server_status": servers,
+            }
+        ), 200
+    except Exception as e:
+        app.logger.error("[MCP] /admin/mcp/tools error: %s", e)
+        return jsonify({"ok": False, "error": f"Load MCP tools failed: {e}", "tools": []}), 200
+
+
+@app.route("/tools/mcp/status", methods=["GET", "OPTIONS"])
+def tools_mcp_status():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        servers = sorted(list(MCP_SERVER_CONFIGS.keys()))
+        return jsonify(
+            {
+                "ok": True,
+                "enabled": bool(MCP_BRIDGE_ENABLED),
+                "env_enabled": bool(TYXT_MCP_ENABLED),
+                "config_path": TYXT_MCP_CONFIG_PATH,
+                "servers": servers,
+                "server_count": len(servers),
+            }
+        ), 200
+    except Exception as e:
+        app.logger.error("[MCP] /tools/mcp/status error: %s", e)
+        return jsonify({"ok": False, "msg": f"MCP status failed: {e}"}), 200
+
+
+@app.route("/tools/mcp/reload", methods=["POST", "OPTIONS"])
+def tools_mcp_reload():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        init_result = _init_mcp_bridge()
+        skills_registry.reload_skills()
+        return jsonify({"ok": True, "result": init_result}), 200
+    except Exception as e:
+        app.logger.error("[MCP] /tools/mcp/reload error: %s", e)
+        return jsonify({"ok": False, "msg": f"MCP reload failed: {e}"}), 200
+
+
+@app.route("/tools/mcp/tools", methods=["GET", "OPTIONS"])
+def tools_mcp_tools():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        if not MCP_BRIDGE_ENABLED:
+            return jsonify({"ok": False, "msg": "MCP not enabled", "tools": []}), 200
+        if MCP_BRIDGE is None:
+            return jsonify({"ok": False, "msg": "MCP bridge not initialized", "tools": []}), 200
+        q = request.args.to_dict(flat=True) if request.args else {}
+        server_name = str((q or {}).get("server_name") or "").strip()
+        if not server_name:
+            return jsonify({"ok": False, "msg": "Missing server_name", "tools": []}), 200
+        rows = MCP_BRIDGE.list_tools(server_name)
+        tools = [
+            {
+                "server_name": str(x.server_name),
+                "tool_name": str(x.tool_name),
+                "title": str(x.title),
+                "description": str(x.description),
+                "schema": dict(x.schema or {"type": "object"}),
+            }
+            for x in rows
+        ]
+        return jsonify({"ok": True, "server_name": server_name, "tools": tools}), 200
+    except Exception as e:
+        app.logger.error("[MCP] /tools/mcp/tools error: %s", e)
+        return jsonify({"ok": False, "msg": f"List MCP tools failed: {e}", "tools": []}), 200
+
+
+@app.route("/tools/mcp/call", methods=["POST", "OPTIONS"])
+def tools_mcp_call():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        if not MCP_BRIDGE_ENABLED:
+            return jsonify({"ok": False, "msg": "MCP not enabled", "result": {"ok": False, "result": None, "error": "mcp_not_enabled"}}), 200
+        if MCP_BRIDGE is None:
+            return jsonify({"ok": False, "msg": "MCP bridge not initialized", "result": {"ok": False, "result": None, "error": "mcp_not_initialized"}}), 200
+        data = request.get_json(silent=True) or {}
+        server_name = str(data.get("server_name") or "").strip()
+        tool_name = str(data.get("tool_name") or "").strip()
+        args = data.get("args") if isinstance(data.get("args"), dict) else {}
+        timeout = safe_float(data.get("timeout"), 30.0)
+        timeout = max(0.5, min(300.0, float(timeout)))
+        if not server_name or not tool_name:
+            return jsonify({"ok": False, "msg": "Missing server_name or tool_name", "result": {"ok": False, "result": None, "error": "missing_target"}}), 200
+        result = MCP_BRIDGE.call_tool(server_name=server_name, tool_name=tool_name, args=args, timeout=timeout)
+        return jsonify({"ok": True, "server_name": server_name, "tool_name": tool_name, "result": result}), 200
+    except Exception as e:
+        app.logger.error("[MCP] /tools/mcp/call error: %s", e)
+        return jsonify({"ok": False, "msg": f"Call MCP tool failed: {e}", "result": {"ok": False, "result": None, "error": str(e)}}), 200
+
+
+@app.route("/tools/mcp/skill_debug_logs", methods=["GET", "OPTIONS"])
+def tools_mcp_skill_debug_logs():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        q = request.args.to_dict(flat=True) if request.args else {}
+        limit = max(1, min(500, safe_int((q or {}).get("limit"), 80)))
+        logs = _get_mcp_skill_debug_logs(limit)
+        return jsonify(
+            {
+                "ok": True,
+                "enabled": bool(MCP_SKILL_DEBUG_ENABLED),
+                "limit": limit,
+                "count": len(logs),
+                "logs": logs,
+            }
+        ), 200
+    except Exception as e:
+        app.logger.error("[MCP] /tools/mcp/skill_debug_logs error: %s", e)
+        return jsonify({"ok": False, "msg": f"Load MCP debug logs failed: {e}", "logs": []}), 200
+
+
+@app.route("/tools/skills/toggle", methods=["POST", "OPTIONS"])
+def tools_skills_toggle():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        skill_id = str(data.get("skill_id") or "").strip()
+        enabled = safe_bool(data.get("enabled"), False)
+        if not skill_id:
+            return jsonify({"ok": False, "msg": "Missing skill_id"}), 200
+        ok, reason, skill_row = skills_registry.set_skill_enabled(skill_id, enabled)
+        if not ok:
+            return jsonify({"ok": False, "msg": reason or "toggle_failed", "skill": skill_row}), 200
+        warning = ""
+        if enabled and isinstance(skill_row, dict):
+            if str(skill_row.get("safe_status") or "").strip().lower() == "warning":
+                warning = "This skill has warning-level risk signals."
+        return jsonify({"ok": True, "skill": skill_row, "warning": warning}), 200
+    except Exception as e:
+        print(f"[tools/skills/toggle error] {e}")
+        return jsonify({"ok": False, "msg": f"Toggle failed: {e}"}), 200
+
+
+@app.route("/tools/skills/uninstall", methods=["POST", "OPTIONS"])
+def tools_skills_uninstall():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        skill_id = str(data.get("skill_id") or "").strip()
+        if not skill_id:
+            return jsonify({"ok": False, "msg": "Missing skill_id"}), 200
+        ok, reason = skills_registry.uninstall_skill(skill_id)
+        if not ok:
+            return jsonify({"ok": False, "msg": reason or "uninstall_failed"}), 200
+        return jsonify({"ok": True, "skill_id": skill_id}), 200
+    except Exception as e:
+        print(f"[tools/skills/uninstall error] {e}")
+        return jsonify({"ok": False, "msg": f"Uninstall failed: {e}"}), 200
+
+
+@app.route("/tools/skills/run", methods=["POST", "OPTIONS"])
+def tools_skills_run():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(silent=True) or {}
+        skill_id = str(data.get("skill_id") or "").strip()
+        params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        uid, role, _nick = _resolve_request_user_ctx(data)
+        if not uid:
+            return jsonify({"ok": False, "msg": "Not logged in", "result": {"ok": False, "data": None, "error": "not_logged_in"}}), 401
+        if not skill_id:
+            return jsonify({"ok": False, "msg": "Missing skill_id", "result": {"ok": False, "data": None, "error": "missing_skill_id"}}), 200
+
+        skill_ctx = _build_skill_exec_context(data, uid, role)
+        result = skills_registry.run_skill(skill_id=skill_id, params=params, context=skill_ctx)
+        return jsonify({"ok": True, "skill_id": skill_id, "result": result}), 200
+    except Exception as e:
+        print(f"[tools/skills/run error] {e}")
+        return jsonify({"ok": False, "msg": f"Skill run failed: {e}", "result": {"ok": False, "data": None, "error": str(e)}}), 200
+
+
+@app.route("/tools/skills/rescan", methods=["POST", "OPTIONS"])
+def tools_skills_rescan():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        mcp_summary = _refresh_runtime_mcp_skills() if MCP_BRIDGE_ENABLED else {"mcp_enabled": False, "servers": 0, "tools": 0, "errors": []}
+        skills_registry.reload_skills()
+        rows = skills_registry.list_skills(admin_view=True)
+        summary = skills_registry.get_scan_summary()
+        return jsonify({"ok": True, "skills": rows, "summary": summary, "mcp_summary": mcp_summary}), 200
+    except Exception as e:
+        print(f"[tools/skills/rescan error] {e}")
+        return jsonify({"ok": False, "msg": f"Rescan failed: {e}"}), 200
+
+
 @app.route("/tools/list_chat_contexts", methods=["GET", "OPTIONS"])
 def tools_list_chat_contexts():
     if request.method == "OPTIONS":
@@ -9155,6 +10571,7 @@ def api_save_params():
     try:
         global MODEL_NAME
         data = request.get_json(silent=True) or {}
+        prev_web_search_api_key = str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip()
 
         def _as_int(k, default):
             try:
@@ -9184,6 +10601,13 @@ def api_save_params():
         next_ollama_model = _as_str("ollama_model", MODEL_CONFIG.get("ollama_model", MODEL_NAME))
         if not next_ollama_model:
             next_ollama_model = str(MODEL_NAME or "").strip()
+        raw_mode_in = data.get("web_search_mode", None)
+        if raw_mode_in is None or str(raw_mode_in).strip() == "":
+            next_web_search_mode = "default" if _as_bool("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False)) else "off"
+        else:
+            next_web_search_mode = _normalize_web_search_mode(
+                _as_str("web_search_mode", MODEL_CONFIG.get("web_search_mode", "off"))
+            )
 
         MODEL_CONFIG.update({
             "top_k": _as_int("top_k", MODEL_CONFIG.get("top_k", GEN_TOP_K)),
@@ -9194,11 +10618,21 @@ def api_save_params():
             "context_turn_limit": _as_int("context_turn_limit", MODEL_CONFIG.get("context_turn_limit", CONTEXT_TURN_LIMIT_DEFAULT)),
             "window_display_turn_limit": _as_int("window_display_turn_limit", MODEL_CONFIG.get("window_display_turn_limit", WINDOW_DISPLAY_TURN_LIMIT_DEFAULT)),
             "chat_stream_enabled": _as_bool("chat_stream_enabled", MODEL_CONFIG.get("chat_stream_enabled", CHAT_STREAM_ENABLED_DEFAULT)),
+            "web_search_enabled": bool(next_web_search_mode != "off"),
+            "web_search_mode": next_web_search_mode,
+            "web_search_provider": _normalize_web_search_provider(_as_str("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))),
+            "web_search_api_key": _as_str("web_search_api_key", MODEL_CONFIG.get("web_search_api_key", "")),
             "ollama_model": next_ollama_model,
         })
         MODEL_NAME = next_ollama_model
 
         _save_config_file(MODEL_CONFIG)
+        if prev_web_search_api_key != str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip():
+            try:
+                _init_mcp_bridge()
+                skills_registry.reload_skills()
+            except Exception as e:
+                print("[WARN] mcp reload after web_search_api_key change failed:", e)
         # 同步到 api_config，避免重启后回退到旧模型
         try:
             api_cfg = _read_api_config_file()
@@ -9219,7 +10653,9 @@ def api_load_params():
     if request.method == "OPTIONS":
         return ("", 204)
     try:
-        cfg = _load_config_file()
+        cfg = dict(MODEL_CONFIG or {})
+        if not cfg:
+            cfg = _load_config_file()
         return jsonify({"ok": True, "config": cfg}), 200
     except Exception as e:
         print("[ERROR] api_load_params:", e)
@@ -9233,6 +10669,7 @@ def api_update_config():
     try:
         global MODEL_NAME
         data = request.get_json(silent=True) or {}
+        prev_web_search_api_key = str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip()
 
         def _get_int(k, default):
             try:
@@ -9262,6 +10699,13 @@ def api_update_config():
         next_ollama_model = _get_str("ollama_model", MODEL_CONFIG.get("ollama_model", MODEL_NAME))
         if not next_ollama_model:
             next_ollama_model = str(MODEL_NAME or "").strip()
+        raw_mode_in = data.get("web_search_mode", None)
+        if raw_mode_in is None or str(raw_mode_in).strip() == "":
+            next_web_search_mode = "default" if _get_bool("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False)) else "off"
+        else:
+            next_web_search_mode = _normalize_web_search_mode(
+                _get_str("web_search_mode", MODEL_CONFIG.get("web_search_mode", "off"))
+            )
 
         MODEL_CONFIG.update({
             "top_k": _get_int("top_k", MODEL_CONFIG.get("top_k", GEN_TOP_K)),
@@ -9272,11 +10716,21 @@ def api_update_config():
             "context_turn_limit": _get_int("context_turn_limit", MODEL_CONFIG.get("context_turn_limit", CONTEXT_TURN_LIMIT_DEFAULT)),
             "window_display_turn_limit": _get_int("window_display_turn_limit", MODEL_CONFIG.get("window_display_turn_limit", WINDOW_DISPLAY_TURN_LIMIT_DEFAULT)),
             "chat_stream_enabled": _get_bool("chat_stream_enabled", MODEL_CONFIG.get("chat_stream_enabled", CHAT_STREAM_ENABLED_DEFAULT)),
+            "web_search_enabled": bool(next_web_search_mode != "off"),
+            "web_search_mode": next_web_search_mode,
+            "web_search_provider": _normalize_web_search_provider(_get_str("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))),
+            "web_search_api_key": _get_str("web_search_api_key", MODEL_CONFIG.get("web_search_api_key", "")),
             "ollama_model": next_ollama_model,
         })
         MODEL_NAME = next_ollama_model
 
         _save_config_file(MODEL_CONFIG)
+        if prev_web_search_api_key != str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip():
+            try:
+                _init_mcp_bridge()
+                skills_registry.reload_skills()
+            except Exception as e:
+                print("[WARN] mcp reload after web_search_api_key change failed:", e)
         try:
             api_cfg = _read_api_config_file()
             api_cfg["ollama_model"] = MODEL_NAME

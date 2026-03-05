@@ -1,0 +1,104 @@
+{
+  "id": "mcp_web_search",
+  "name": "mcp_web_search",
+  "version": "0.1.0",
+  "author": "TYXT",
+  "description": "MCP web search tool wrapper. Driven by skill.json config and dispatched through unified MCP skill handler.",
+  "type": "mcp",
+  "mcp_server": "mcp_web_search",
+  "mcp_tool": "web_search",
+  "entry": {
+    "type": "mcp",
+    "module": "",
+    "function": "run"
+  },
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "query"
+    ],
+    "properties": {
+      "query": {
+        "type": "string",
+        "title": "Search Query",
+        "description": "Natural language query text."
+      },
+      "max_results": {
+        "type": "integer",
+        "title": "Max Results",
+        "description": "Top K search results.",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20
+      },
+      "search_depth": {
+        "type": "string",
+        "title": "Search Depth",
+        "description": "Search depth mode.",
+        "enum": [
+          "basic",
+          "advanced"
+        ],
+        "default": "advanced"
+      },
+      "include_answer": {
+        "type": "boolean",
+        "title": "Include Answer",
+        "description": "Whether MCP tool should return short answer summary."
+      }
+    }
+  },
+  "inputs": {
+    "type": "object",
+    "required": [
+      "query"
+    ],
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "max_results": {
+        "type": "integer",
+        "default": 5,
+        "minimum": 1,
+        "maximum": 20
+      },
+      "search_depth": {
+        "type": "string",
+        "enum": [
+          "basic",
+          "advanced"
+        ],
+        "default": "advanced"
+      },
+      "include_answer": {
+        "type": "boolean"
+      }
+    }
+  },
+  "outputs": {
+    "type": "object",
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "data": {
+        "type": "object"
+      },
+      "error": {
+        "type": "string"
+      }
+    }
+  },
+  "permissions": {
+    "network": true,
+    "filesystem": false,
+    "llm": false
+  },
+  "tags": [
+    "web-search",
+    "mcp",
+    "tavily"
+  ],
+  "unsafe": false
+}

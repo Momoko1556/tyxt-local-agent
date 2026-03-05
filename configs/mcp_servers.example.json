@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "fake_local_mcp",
+      "command": "python",
+      "args": ["tools/mcp_fake_server.py"],
+      "cwd": ".",
+      "env": {},
+      "tools_whitelist": ["echo"]
+    }
+  ]
+}

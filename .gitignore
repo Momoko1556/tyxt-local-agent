@@ -28,3 +28,9 @@ config.json
 tools/api_config.json
 configs/user_profiles.json
 configs/persona_config.json
+configs/mcp_servers.json
+
+# TYXT skills runtime state (keep skill source folders, ignore generated state)
+skills_state.json
+skills_blacklist.json
+skills_quarantine/

@@ -1,5 +1,4 @@
-# config.yaml
-# 当前用于 search_engine.py 的配置（环境变量优先于本文件）。
+# Runtime config for search_engine.py (environment variables override this file).
 
 ollama:
   # 走 OpenAI 兼容口的同时，也会自动把 /v1 去掉用于 /api/embeddings
@@ -9,7 +8,7 @@ embedding:
   model: bge-m3   # Ollama embeddings 默认模型
 
 chromadb:
-  persist_path: memory_db
+  persist_path: ./memory_db
   collection_name: tyxt_memory
 
 search:

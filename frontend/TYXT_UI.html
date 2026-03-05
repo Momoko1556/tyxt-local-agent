@@ -2,7 +2,7 @@
 <html lang="zh-CN" class="notranslate" translate="no">
 <head>
   <meta charset="utf-8"/>
-  <title>桃子🍑本地部署Agent</title>
+  <title>TYXT Local Agent v1.1.0</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <meta name="google" content="notranslate"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1622,6 +1622,67 @@
       justify-content:center;
       padding:16px;
     }
+    /* Keep MCP API settings modal above tools settings modal when both are open. */
+    #web-search-api-modal{
+      z-index:220;
+    }
+    #web-search-api-modal .settings-card{
+      position:relative;
+      z-index:221;
+    }
+    #mcp-config-modal{
+      z-index:240;
+    }
+    #mcp-config-modal .settings-card{
+      position:relative;
+      z-index:241;
+      width:min(980px, 98vw);
+      max-height:92vh;
+    }
+    .mcp-config-card textarea{
+      min-height:220px;
+      resize:vertical;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      line-height:1.45;
+    }
+    .mcp-config-error{
+      border:1px solid #fca5a5;
+      background:#fff1f2;
+      color:#b91c1c;
+      border-radius:10px;
+      padding:10px 12px;
+      font-size:13px;
+      line-height:1.45;
+      margin-bottom:10px;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    .mcp-tool-item{
+      border:1px solid var(--line);
+      border-radius:10px;
+      padding:10px;
+      background:var(--panel);
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    .mcp-tool-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .mcp-tool-title{
+      font-size:14px;
+      font-weight:700;
+      color:var(--text);
+    }
+    .mcp-tool-id{
+      font-size:12px;
+      color:var(--sub);
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
     .settings-card{
       width:min(760px, 96vw);
       max-height:90vh;
@@ -2029,6 +2090,176 @@
       color:var(--muted);
       font-size:13px;
       padding:10px 6px;
+    }
+    .skill-item{
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:12px;
+      background:var(--panel);
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .skill-head{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .skill-title{
+      font-size:15px;
+      font-weight:800;
+      color:var(--text);
+      display:flex;
+      align-items:center;
+      gap:6px;
+      flex-wrap:wrap;
+    }
+    .skill-id{
+      font-size:12px;
+      color:var(--sub);
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    }
+    .skill-badges{
+      display:flex;
+      align-items:center;
+      gap:6px;
+      flex-wrap:wrap;
+    }
+    .skill-badge{
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:2px 8px;
+      font-size:12px;
+      color:var(--sub);
+      background:var(--panel);
+    }
+    .skill-badge.ok{
+      border-color:#86efac;
+      background:#f0fdf4;
+      color:#166534;
+    }
+    .skill-badge.warn{
+      border-color:#fcd34d;
+      background:#fffbeb;
+      color:#92400e;
+    }
+    .skill-badge.block{
+      border-color:#fca5a5;
+      background:#fff1f2;
+      color:#b91c1c;
+    }
+    .skill-desc{
+      font-size:13px;
+      color:var(--text);
+      line-height:1.55;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    .skill-meta{
+      font-size:12px;
+      color:var(--sub);
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+    }
+    .skill-actions{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .skill-actions .mem-mini-btn,
+    .skill-actions .settings-save-btn{
+      min-width:96px;
+    }
+    .skill-danger{
+      border-color:#fca5a5 !important;
+      color:#b91c1c !important;
+      background:#fff1f2 !important;
+    }
+    .skill-reasons{
+      font-size:12px;
+      color:var(--sub);
+      background:color-mix(in srgb, var(--panel) 80%, #f59e0b 20%);
+      border:1px dashed var(--line);
+      border-radius:10px;
+      padding:8px 10px;
+      line-height:1.45;
+      word-break:break-word;
+      white-space:pre-wrap;
+    }
+    /* Tools Settings: keep inner skill entries white for clearer hierarchy */
+    #tools-settings-modal #tools-skills-list .skill-item{
+      background:#ffffff;
+      border-color:#d9e0ea;
+      box-shadow:0 1px 3px rgba(15,23,42,.06);
+    }
+    #tools-settings-modal #tools-skills-list .skill-title,
+    #tools-settings-modal #tools-skills-list .skill-desc{
+      color:#0f172a;
+    }
+    #tools-settings-modal #tools-skills-list .skill-id,
+    #tools-settings-modal #tools-skills-list .skill-meta{
+      color:#64748b;
+    }
+    #tools-settings-modal #tools-skills-list .skill-badge{
+      background:#ffffff;
+      border-color:#d6dde8;
+      color:#475569;
+    }
+    #tools-settings-modal #tools-skills-list .skill-badge.ok{
+      color:#16a34a;
+      border-color:#86efac;
+      background:#ffffff;
+    }
+    #tools-settings-modal #tools-skills-list .skill-reasons{
+      background:#fff8e8;
+      border-color:#f7d7a2;
+      color:#7a4a00;
+    }
+    #tools-settings-modal #tools-skills-list .skill-actions .mem-mini-btn{
+      background:#ffffff;
+      border-color:#d6dde8;
+      color:#0f172a;
+    }
+    .skill-debug-panel{
+      margin-top:10px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:var(--panel);
+      padding:10px;
+    }
+    .skill-debug-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      margin-bottom:8px;
+    }
+    .skill-debug-title{
+      font-size:13px;
+      color:var(--sub);
+      font-weight:600;
+    }
+    .skill-debug-log{
+      margin:0;
+      width:100%;
+      min-height:72px;
+      max-height:220px;
+      overflow:auto;
+      padding:10px;
+      border-radius:10px;
+      border:1px solid #d9e0ea;
+      background:#ffffff;
+      color:#0f172a;
+      font-size:12px;
+      line-height:1.45;
+      font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space:pre-wrap;
+      word-break:break-word;
     }
     .memory-strip-list{
       display:flex;
@@ -2778,6 +3009,8 @@
             <div class="mi" id="mi-open-share"><i class="fa-solid fa-folder-open"></i><span>共享文件夹</span></div><div class="mi" id="mi-export"><i class="fa-solid fa-download"></i><span>导出聊天</span></div>
             <div class="mi" id="mi-memory-import" title="记忆库导入" style="display:none;"><i class="fa-solid fa-database"></i><span>记忆库导入</span></div>
             <div class="sep"></div>
+            <div class="mi" id="mi-open-tools-settings" style="display:none;"><i class="fa-solid fa-screwdriver-wrench"></i><span>工具设置</span></div>
+            <div class="mi" id="mi-open-mcp-config" style="display:none;"><i class="fa-solid fa-diagram-project"></i><span>MCP</span></div>
             <div class="mi" id="mi-open-params-drawer" style="display:none;"><i class="fa-solid fa-sliders"></i><span>参数设置</span></div>
             <div class="mi" id="mi-open-ui-drawer" style="display:none;"><i class="fa-solid fa-palette"></i><span>界面设置</span></div>
             <div class="mi" id="mi-open-language-drawer"><i class="fa-solid fa-language"></i><span>语言设置</span></div>
@@ -3388,6 +3621,96 @@
     </div>
   </div>
 
+  <div id="web-search-api-modal" class="settings-modal hidden">
+    <div class="settings-card" style="width:min(520px, 96vw); max-height:none;">
+      <div class="settings-head">
+        <span id="web-search-api-title">API 设置</span>
+        <button type="button" id="web-search-api-close-btn" class="settings-close" title="关闭">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-panel">
+          <div class="settings-form-row">
+            <label for="input-web-search-provider">搜索提供方</label>
+            <select id="input-web-search-provider">
+              <option value="builtin">系统内置</option>
+              <option value="tavily">Tavily API</option>
+            </select>
+          </div>
+          <div class="settings-form-row">
+            <label for="input-web-search-api-key">API Key</label>
+            <input id="input-web-search-api-key" type="password" placeholder="请输入 Tavily API Key" />
+          </div>
+          <div class="settings-actions">
+            <button type="button" id="web-search-api-cancel-btn" class="mem-mini-btn">取消</button>
+            <button type="button" id="web-search-api-save-btn" class="settings-save-btn">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mcp-config-modal" class="settings-modal hidden">
+    <div class="settings-card mcp-config-card">
+      <div class="settings-head">
+        <span id="mcp-config-title">MCP 配置</span>
+        <button type="button" id="mcp-config-close-btn" class="settings-close" title="关闭">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-panel">
+          <div class="settings-form-row">
+            <small id="mcp-config-guide" class="settings-muted">在此粘贴带 mcpServers 字段的 JSON 配置（支持 Claude Desktop / Smithery 同款格式）。保存后会自动重载 MCP servers 并重新注册工具。</small>
+          </div>
+          <div id="mcp-config-error" class="mcp-config-error hidden"></div>
+          <div class="settings-form-row">
+            <label for="mcp-config-textarea" id="mcp-config-text-label">MCP JSON</label>
+            <textarea id="mcp-config-textarea" rows="10" placeholder="在此粘贴包含 &quot;mcpServers&quot; 的 JSON 配置..."></textarea>
+          </div>
+          <div class="settings-actions">
+            <button type="button" id="mcp-config-format-btn" class="mem-mini-btn">格式化/校验</button>
+            <button type="button" id="mcp-config-cancel-btn" class="mem-mini-btn">取消</button>
+            <button type="button" id="mcp-config-save-btn" class="settings-save-btn">保存配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tools-settings-modal" class="settings-modal hidden">
+    <div class="settings-card mem-import-card">
+      <div class="settings-head">
+        <span id="tools-settings-title">工具设置</span>
+        <button type="button" id="tools-settings-close-btn" class="settings-close" title="关闭">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-panel">
+          <div class="settings-form-row">
+            <small id="tools-settings-guide" class="settings-muted">安装新技能：将技能文件夹放入 skills 目录后，点击“重新扫描”。</small>
+          </div>
+          <div class="settings-actions">
+            <button type="button" id="tools-skills-refresh-btn" class="mem-mini-btn">刷新</button>
+            <button type="button" id="tools-skills-rescan-btn" class="settings-save-btn">重新扫描</button>
+          </div>
+          <div id="tools-skills-tabs" class="settings-tabs" style="padding:0; margin:8px 0 4px 0;">
+            <button type="button" id="tools-skills-tab-all" class="settings-tab active">全部</button>
+            <button type="button" id="tools-skills-tab-local" class="settings-tab">本地</button>
+            <button type="button" id="tools-skills-tab-mcp" class="settings-tab">MCP</button>
+          </div>
+          <div id="tools-skills-summary" class="mem-import-summary">尚未加载技能列表。</div>
+          <div id="tools-skills-debug-panel" class="skill-debug-panel hidden">
+            <div class="skill-debug-head">
+              <span id="tools-skills-debug-title" class="skill-debug-title">MCP 调试日志</span>
+              <button type="button" id="tools-skills-debug-refresh-btn" class="mem-mini-btn">刷新日志</button>
+            </div>
+            <pre id="tools-skills-debug-log" class="skill-debug-log">暂无日志</pre>
+          </div>
+          <div id="tools-skills-list" class="mem-record-list mem-search-results-large">
+            <div class="mem-empty">暂无技能</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // ===== [API 地址配置] =====
     const API_BASE = window.location.origin;
@@ -3437,6 +3760,14 @@
     const PROFILE_LOCATION_GET_URL = `${API_BASE}/profile/location`;
     const PROFILE_LOCATION_SAVE_URL = `${API_BASE}/profile/location/save`;
     const WEATHER_TOOL_URL = `${API_BASE}/tools/weather`;
+    const TOOLS_SKILLS_LIST_URL = `${API_BASE}/tools/skills/list`;
+    const TOOLS_SKILLS_TOGGLE_URL = `${API_BASE}/tools/skills/toggle`;
+    const TOOLS_SKILLS_UNINSTALL_URL = `${API_BASE}/tools/skills/uninstall`;
+    const TOOLS_SKILLS_RUN_URL = `${API_BASE}/tools/skills/run`;
+    const TOOLS_SKILLS_RESCAN_URL = `${API_BASE}/tools/skills/rescan`;
+    const TOOLS_MCP_SKILL_DEBUG_LOGS_URL = `${API_BASE}/tools/mcp/skill_debug_logs`;
+    const API_ADMIN_MCP_CONFIG = `${API_BASE}/admin/mcp/config`;
+    const API_ADMIN_MCP_CONFIG_SAVE = `${API_BASE}/admin/mcp/config/save`;
 
     const $ = s => document.querySelector(s);
     const log=$("#log"),ipt=$("#ipt"),toast=$("#toast"),btnCancel=$("#btn-cancel"),btnVoice=$("#btn-voice");
@@ -3565,6 +3896,8 @@
     const menuOpenParamsDrawerBtn = $("#mi-open-params-drawer");
     const menuOpenUiDrawerBtn = $("#mi-open-ui-drawer");
     const menuOpenLanguageBtn = $("#mi-open-language-drawer");
+    const menuOpenToolsSettingsBtn = $("#mi-open-tools-settings");
+    const menuOpenMcpConfigBtn = $("#mi-open-mcp-config");
     const drawerTitleEl = $("#drawer-title");
     const drawerTitleIconEl = $("#drawer-title-icon");
     const cardParamsEl = $("#card-params");
@@ -3577,6 +3910,33 @@
     const languageCancelBtn = $("#language-cancel-btn");
     const languageSaveBtn = $("#language-save-btn");
     const inputUiLanguage = $("#input-ui-language");
+    const webSearchApiModal = $("#web-search-api-modal");
+    const webSearchApiCloseBtn = $("#web-search-api-close-btn");
+    const webSearchApiCancelBtn = $("#web-search-api-cancel-btn");
+    const webSearchApiSaveBtn = $("#web-search-api-save-btn");
+    const inputWebSearchProvider = $("#input-web-search-provider");
+    const inputWebSearchApiKey = $("#input-web-search-api-key");
+    const mcpConfigModal = $("#mcp-config-modal");
+    const mcpConfigCloseBtn = $("#mcp-config-close-btn");
+    const mcpConfigCancelBtn = $("#mcp-config-cancel-btn");
+    const mcpConfigFormatBtn = $("#mcp-config-format-btn");
+    const mcpConfigSaveBtn = $("#mcp-config-save-btn");
+    const mcpConfigErrorEl = $("#mcp-config-error");
+    const mcpConfigTextarea = $("#mcp-config-textarea");
+    const toolsSettingsModal = $("#tools-settings-modal");
+    const toolsSettingsCloseBtn = $("#tools-settings-close-btn");
+    const toolsSkillsRefreshBtn = $("#tools-skills-refresh-btn");
+    const toolsSkillsRescanBtn = $("#tools-skills-rescan-btn");
+    const toolsSkillsTabsEl = $("#tools-skills-tabs");
+    const toolsSkillsTabAllBtn = $("#tools-skills-tab-all");
+    const toolsSkillsTabLocalBtn = $("#tools-skills-tab-local");
+    const toolsSkillsTabMcpBtn = $("#tools-skills-tab-mcp");
+    const toolsSkillsSummaryEl = $("#tools-skills-summary");
+    const toolsSkillsDebugPanelEl = $("#tools-skills-debug-panel");
+    const toolsSkillsDebugTitleEl = $("#tools-skills-debug-title");
+    const toolsSkillsDebugRefreshBtn = $("#tools-skills-debug-refresh-btn");
+    const toolsSkillsDebugLogEl = $("#tools-skills-debug-log");
+    const toolsSkillsListEl = $("#tools-skills-list");
 
     const healthDot = $("#health-dot");
     const healthText = $("#health-text");
@@ -3604,6 +3964,9 @@
     let currentModelDisplayName = "";
     let drawerMode = "params";
     let webSearchEnabled = false;
+    let webSearchMode = "off"; // off | default | force
+    let webSearchProvider = "builtin";
+    let webSearchApiKey = "";
 
     let ttsAudio = null;         // 全局 Audio 对象
     let ttsCurrentRow = null;    // 当前绑定的消息 row
@@ -3673,6 +4036,21 @@
       saving: false,
       menuOpenIndex: -1,
     };
+    const toolsSkillsState = {
+      items: [],
+      loading: false,
+      adminView: false,
+      summary: null,
+      debugLogs: [],
+      debugLoading: false,
+      filterTab: "all", // all | local | mcp
+    };
+    const mcpConfigState = {
+      loading: false,
+      saving: false,
+      configText: "",
+      lastError: "",
+    };
     let currentUiLanguage = "zh";
 
     const UI_I18N = {
@@ -3682,6 +4060,8 @@
         no_chats: "（暂无聊天）",
         menu: "菜单",
         account_settings: "账号设置",
+        tools_settings: "工具设置",
+        mcp_settings: "MCP",
         logout: "退出登录",
         shared_folder: "共享文件夹",
         export_chat: "导出聊天",
@@ -3689,6 +4069,44 @@
         params_settings: "参数设置",
         ui_settings: "界面设置",
         language_settings: "语言设置",
+        skills_settings_title: "工具设置",
+        skills_guide: "安装新技能：本地技能放入 skills/local，MCP 技能放入 skills/mcp，然后点击“重新扫描”。",
+        skills_rescan: "重新扫描",
+        skills_refresh: "刷新",
+        skills_tab_all: "全部",
+        skills_tab_local: "本地",
+        skills_tab_mcp: "MCP",
+        skills_not_loaded: "尚未加载技能列表。",
+        skills_empty: "暂无技能",
+        skills_loading: "正在加载技能列表...",
+        skills_admin_only: "仅管理员可管理技能；当前为只读视图。",
+        skills_update_todo: "暂未实现自动更新，请手动从 GitHub 下载新版技能并替换目录。",
+        skills_confirm_warning_enable: "该技能存在风险提示，仍要启用吗？",
+        skills_confirm_uninstall: "确认卸载该技能？将移入隔离目录并加入黑名单。",
+        skill_enable: "启用",
+        skill_disable: "禁用",
+        skill_uninstall: "卸载",
+        skill_check_update: "检查更新",
+        skill_status_enabled: "已启用",
+        skill_status_disabled: "未启用",
+        skill_status_normal: "正常",
+        skill_status_quarantined: "已隔离",
+        skill_status_blacklisted: "黑名单",
+        skill_safe_safe: "安全",
+        skill_safe_warning: "风险",
+        skill_safe_unknown: "未知",
+        skill_safe_quarantined: "已隔离",
+        skill_safe_blacklisted: "黑名单",
+        skill_permissions: "权限",
+        perm_network: "网络",
+        perm_filesystem: "文件系统",
+        perm_llm: "LLM",
+        skill_scan_reasons: "风险命中",
+        skills_debug_title: "MCP 调试日志（统一 Handler）",
+        skills_debug_refresh: "刷新日志",
+        skills_debug_empty: "暂无调试日志",
+        skills_debug_loading: "加载调试日志中...",
+        skills_debug_load_failed: "加载调试日志失败",
         agent_info: "Agent 信息",
         model_prefix: "模型：",
         model_unset: "未设置模型",
@@ -3696,6 +4114,41 @@
         weather_click_tip: "点击设置天气",
         chat_welcome: "你好。",
         tool_search: "网页搜索",
+        web_search_tool_name: "网页搜索（MCP工具）",
+        web_search_tool_desc: "用于配置网页搜索的提供方与 API Key（当前阶段仅保存配置，检索逻辑仍走现有实现）。",
+        web_search_api_settings: "API设置（MCP工具）",
+        web_search_provider_label: "搜索提供方",
+        web_search_provider_builtin: "系统内置",
+        web_search_provider_tavily: "Tavily API",
+        web_search_api_key_label: "API Key",
+        web_search_api_key_ph: "请输入 Tavily API Key",
+        web_search_mode_off: "离线",
+        web_search_mode_default: "默认",
+        web_search_mode_force: "强制",
+        configure: "设置",
+        web_search_enabled_toast: "网页搜索：已开启",
+        web_search_disabled_toast: "网页搜索：已关闭",
+        web_search_api_saved: "已保存 Web 搜索设置",
+        admin_only: "仅管理员可操作",
+        mcp_config_title: "MCP 配置",
+        mcp_config_guide: "在此粘贴带 mcpServers 字段的 JSON 配置（支持 Claude Desktop / Smithery 同款格式）。保存后会自动重载 MCP servers 并重新注册工具。",
+        mcp_json_label: "MCP JSON",
+        mcp_json_placeholder: "在此粘贴包含 \"mcpServers\" 的 JSON 配置...",
+        mcp_format_validate: "格式化/校验",
+        mcp_save_config: "保存配置",
+        mcp_tools_preview_title: "当前 MCP 工具",
+        mcp_tools_refresh: "刷新",
+        mcp_tools_not_loaded: "尚未加载。",
+        mcp_tools_empty: "暂无 MCP 工具",
+        mcp_save_ok: "MCP 配置已保存并重载",
+        mcp_load_failed: "加载 MCP 配置失败",
+        mcp_save_failed: "保存 MCP 配置失败",
+        mcp_format_error: "JSON 格式不正确，请检查后重试",
+        mcp_preview_server_status: "服务器状态",
+        mcp_preview_server: "服务器",
+        mcp_preview_tool: "工具",
+        mcp_preview_status_ok: "正常",
+        mcp_preview_status_error: "错误",
         tool_add_image: "添加图片",
         search: "搜索",
         on: "开",
@@ -3841,6 +4294,8 @@
         no_chats: "(No chats yet)",
         menu: "Menu",
         account_settings: "Account Settings",
+        tools_settings: "Tools Settings",
+        mcp_settings: "MCP",
         logout: "Log Out",
         shared_folder: "Shared Folder",
         export_chat: "Export Chat",
@@ -3848,6 +4303,44 @@
         params_settings: "Parameter Settings",
         ui_settings: "Interface Settings",
         language_settings: "Language",
+        skills_settings_title: "Tools Settings",
+        skills_guide: "Install new skills by placing local skills in skills/local and MCP skills in skills/mcp, then click Rescan.",
+        skills_rescan: "Rescan",
+        skills_refresh: "Refresh",
+        skills_tab_all: "All",
+        skills_tab_local: "Local",
+        skills_tab_mcp: "MCP",
+        skills_not_loaded: "Skills are not loaded yet.",
+        skills_empty: "No skills found.",
+        skills_loading: "Loading skills...",
+        skills_admin_only: "Admin can manage skills; current view is read-only.",
+        skills_update_todo: "Auto update is not implemented yet. Please download a new skill version from GitHub and replace the folder manually.",
+        skills_confirm_warning_enable: "This skill has warning-level risk signals. Enable anyway?",
+        skills_confirm_uninstall: "Uninstall this skill? It will be moved to quarantine and added to blacklist.",
+        skill_enable: "Enable",
+        skill_disable: "Disable",
+        skill_uninstall: "Uninstall",
+        skill_check_update: "Check Update",
+        skill_status_enabled: "Enabled",
+        skill_status_disabled: "Disabled",
+        skill_status_normal: "Normal",
+        skill_status_quarantined: "Quarantined",
+        skill_status_blacklisted: "Blacklisted",
+        skill_safe_safe: "Safe",
+        skill_safe_warning: "Warning",
+        skill_safe_unknown: "Unknown",
+        skill_safe_quarantined: "Quarantined",
+        skill_safe_blacklisted: "Blacklisted",
+        skill_permissions: "Permissions",
+        perm_network: "Network",
+        perm_filesystem: "Filesystem",
+        perm_llm: "LLM",
+        skill_scan_reasons: "Risk hits",
+        skills_debug_title: "MCP Debug Logs (Unified Handler)",
+        skills_debug_refresh: "Refresh Logs",
+        skills_debug_empty: "No debug logs yet.",
+        skills_debug_loading: "Loading debug logs...",
+        skills_debug_load_failed: "Failed to load debug logs.",
         agent_info: "Agent Info",
         model_prefix: "Model:",
         model_unset: "Model not set",
@@ -3855,6 +4348,41 @@
         weather_click_tip: "Click to set weather",
         chat_welcome: "Hello.",
         tool_search: "Web Search",
+        web_search_tool_name: "Web Search (MCP Tool)",
+        web_search_tool_desc: "Configure web-search provider and API key (this phase stores settings only; runtime search stays on existing implementation).",
+        web_search_api_settings: "API Settings (MCP Tools)",
+        web_search_provider_label: "Search Provider",
+        web_search_provider_builtin: "Built-in",
+        web_search_provider_tavily: "Tavily API",
+        web_search_api_key_label: "API Key",
+        web_search_api_key_ph: "Enter Tavily API Key",
+        web_search_mode_off: "Off",
+        web_search_mode_default: "Default",
+        web_search_mode_force: "Force",
+        configure: "Settings",
+        web_search_enabled_toast: "Web search: enabled",
+        web_search_disabled_toast: "Web search: disabled",
+        web_search_api_saved: "Web search settings saved",
+        admin_only: "Admin only",
+        mcp_config_title: "MCP Configuration",
+        mcp_config_guide: "Paste JSON with mcpServers here (compatible with Claude Desktop / Smithery style). Saving will reload MCP servers and re-register tools.",
+        mcp_json_label: "MCP JSON",
+        mcp_json_placeholder: "Paste JSON that contains \"mcpServers\" here...",
+        mcp_format_validate: "Format / Validate",
+        mcp_save_config: "Save Config",
+        mcp_tools_preview_title: "Current MCP Tools",
+        mcp_tools_refresh: "Refresh",
+        mcp_tools_not_loaded: "Not loaded yet.",
+        mcp_tools_empty: "No MCP tools",
+        mcp_save_ok: "MCP config saved and reloaded",
+        mcp_load_failed: "Failed to load MCP config",
+        mcp_save_failed: "Failed to save MCP config",
+        mcp_format_error: "Invalid JSON format. Please check and retry.",
+        mcp_preview_server_status: "Server Status",
+        mcp_preview_server: "Server",
+        mcp_preview_tool: "Tool",
+        mcp_preview_status_ok: "OK",
+        mcp_preview_status_error: "Error",
         tool_add_image: "Add Image",
         search: "Search",
         on: "On",
@@ -4105,7 +4633,7 @@
 
     function applyUiLanguageTexts(){
       document.documentElement.setAttribute("lang", currentUiLanguage === "en" ? "en" : "zh-CN");
-      document.title = currentUiLanguage === "en" ? "Peach Local Agent" : "桃子🍑本地部署Agent";
+      document.title = "TYXT Local Agent v1.1.0";
 
       setTextBySelector("#sb-new-chat strong", "new_chat");
       clearTitleBySelector("#sb-new-chat");
@@ -4125,6 +4653,8 @@
       clearTitleBySelector("#mi-memory-import");
       setTextBySelector("#mi-open-params-drawer span", "params_settings");
       setTextBySelector("#mi-open-ui-drawer span", "ui_settings");
+      setTextBySelector("#mi-open-tools-settings span", "tools_settings");
+      setTextBySelector("#mi-open-mcp-config span", "mcp_settings");
       setTextBySelector("#mi-open-language-drawer span", "language_settings");
       clearTitleBySelector("#mi-open-language-drawer");
 
@@ -4136,11 +4666,26 @@
       setTextBySelector("#mi-tool-web span", "tool_search");
       setTextBySelector("#mi-tool-image span", "tool_add_image");
       setTextBySelector("#btn-web-toggle b", "search");
-      setTextBySelector("#web-toggle-state", webSearchEnabled ? "on" : "off");
+      setTextBySelector("#web-toggle-state", webSearchModeText(webSearchMode));
       setTitleBySelector("#btn-tools", "tools");
       setTitleBySelector("#btn-voice", "voice_to_text");
       setPlaceholderBySelector("#ipt", "composer_placeholder");
       setTextBySelector("#btn-cancel span", "stop");
+      setTextBySelector("#web-search-api-title", "web_search_api_settings");
+      setTextBySelector('label[for="input-web-search-provider"]', "web_search_provider_label");
+      setSelectOptionText("#input-web-search-provider", "builtin", "web_search_provider_builtin");
+      setSelectOptionText("#input-web-search-provider", "tavily", "web_search_provider_tavily");
+      setTextBySelector('label[for="input-web-search-api-key"]', "web_search_api_key_label");
+      setPlaceholderBySelector("#input-web-search-api-key", "web_search_api_key_ph");
+      setTextBySelector("#web-search-api-cancel-btn", "cancel");
+      setTextBySelector("#web-search-api-save-btn", "save");
+      setTextBySelector("#mcp-config-title", "mcp_config_title");
+      setTextBySelector("#mcp-config-guide", "mcp_config_guide");
+      setTextBySelector('label[for="mcp-config-textarea"]', "mcp_json_label");
+      setPlaceholderBySelector("#mcp-config-textarea", "mcp_json_placeholder");
+      setTextBySelector("#mcp-config-format-btn", "mcp_format_validate");
+      setTextBySelector("#mcp-config-cancel-btn", "cancel");
+      setTextBySelector("#mcp-config-save-btn", "mcp_save_config");
 
       const h4Params = document.querySelector("#card-params h4");
       if(h4Params) h4Params.innerHTML = `<i class="fa-solid fa-gear"></i>${tr("params")}`;
@@ -4334,6 +4879,25 @@
       setSelectOptionText("#input-ui-language", "zh", "chinese");
       setSelectOptionText("#input-ui-language", "en", "english");
 
+      setTextBySelector("#tools-settings-title", "skills_settings_title");
+      setTextBySelector("#tools-settings-guide", "skills_guide");
+      setTextBySelector("#tools-skills-refresh-btn", "skills_refresh");
+      setTextBySelector("#tools-skills-rescan-btn", "skills_rescan");
+      setTextBySelector("#tools-skills-tab-all", "skills_tab_all");
+      setTextBySelector("#tools-skills-tab-local", "skills_tab_local");
+      setTextBySelector("#tools-skills-tab-mcp", "skills_tab_mcp");
+      setToolsSkillsFilterTab(toolsSkillsState.filterTab || "all");
+      setTextBySelector("#tools-skills-debug-title", "skills_debug_title");
+      setTextBySelector("#tools-skills-debug-refresh-btn", "skills_debug_refresh");
+      if(toolsSkillsSummaryEl && !String(toolsSkillsSummaryEl.textContent || "").trim()){
+        toolsSkillsSummaryEl.textContent = tr("skills_not_loaded");
+      }
+      if(toolsSkillsDebugLogEl && !String(toolsSkillsDebugLogEl.textContent || "").trim()){
+        toolsSkillsDebugLogEl.textContent = tr("skills_debug_empty");
+      }
+      const skillsEmpty = toolsSkillsListEl ? toolsSkillsListEl.querySelector(".mem-empty") : null;
+      if(skillsEmpty) skillsEmpty.textContent = tr("skills_empty");
+
       if(inputUiLanguage){
         inputUiLanguage.value = currentUiLanguage;
       }
@@ -4371,6 +4935,7 @@
       renderAdminRecordList();
       renderImportScanDetails();
       renderMemorySearchResults();
+      renderToolsSkillsList();
       updateMemoryImportActionButtons();
       ping();
       if(!(options && options.skipStorage)){
@@ -4533,7 +5098,19 @@
 
     function aiTextToHtml(text){
       const src = sanitize(text || "");
-      const esc = escapeHtml(src);
+      const mdLinks = [];
+      let mdIdx = 0;
+      const withTokens = src.replace(/\[([^\]\n]{1,160})\]\((https?:\/\/[^\s)]+)\)/gi, (_, label, rawUrl)=>{
+        const token = `__TYXT_MD_LINK_${mdIdx++}__`;
+        const safeLabel = escapeHtml(label || "");
+        const safeUrl = String(rawUrl || "").replace(/"/g, "%22");
+        mdLinks.push({
+          token,
+          html: `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>`
+        });
+        return token;
+      });
+      const esc = escapeHtml(withTokens);
       const urlRegex = /(https?:\/\/[^\s<>"']+)/gi;
       const linked = esc.replace(urlRegex, (m)=>{
         let url = m;
@@ -4545,7 +5122,12 @@
         if(!url) return m;
         return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>${tail}`;
       });
-      return linked.replace(/\n/g, "<br>");
+      let out = linked;
+      for(const row of mdLinks){
+        if(!row || !row.token) continue;
+        out = out.split(row.token).join(row.html || "");
+      }
+      return out.replace(/\n/g, "<br>");
     }
 
     function apiFetch(url, options = {}){
@@ -6514,8 +7096,26 @@
         menuOpenLanguageBtn.style.display = "flex";
         menuOpenLanguageBtn.title = "";
       }
+      if(menuOpenToolsSettingsBtn){
+        menuOpenToolsSettingsBtn.style.display = loggedIn ? "flex" : "none";
+        menuOpenToolsSettingsBtn.classList.remove("is-disabled");
+        menuOpenToolsSettingsBtn.setAttribute("aria-disabled", "false");
+        menuOpenToolsSettingsBtn.title = "";
+      }
+      if(menuOpenMcpConfigBtn){
+        menuOpenMcpConfigBtn.style.display = (loggedIn && allowAdmin) ? "flex" : "none";
+        menuOpenMcpConfigBtn.classList.toggle("is-disabled", !(loggedIn && allowAdmin));
+        menuOpenMcpConfigBtn.setAttribute("aria-disabled", (loggedIn && allowAdmin) ? "false" : "true");
+        menuOpenMcpConfigBtn.title = "";
+      }
       if(agentChipEl){
         agentChipEl.classList.toggle("hide-model-slide", !allowAdmin);
+      }
+      if((!loggedIn || !allowAdmin) && webSearchApiModal && !webSearchApiModal.classList.contains("hidden")){
+        closeWebSearchApiModal();
+      }
+      if((!loggedIn || !allowAdmin) && mcpConfigModal && !mcpConfigModal.classList.contains("hidden")){
+        closeMcpConfigModal();
       }
       if(!loggedIn){
         if(userChipName) userChipName.textContent = "";
@@ -8238,6 +8838,7 @@
       }catch(_){}
       setCurrentUser({});
       closeSettingsPanel();
+      closeToolsSettingsModal();
       setAuthModalVisible(true);
       switchAuthTab("login");
       showToast("已退出登录");
@@ -9267,7 +9868,8 @@
           role,
           chat_id: activeChat ? String(activeChat.id || "") : "",
           chat_title: activeChat ? String(activeChat.name || "") : "",
-          web_search_enabled: !!webSearchEnabled,
+          web_search_enabled: !!(normalizeWebSearchMode(webSearchMode) !== "off"),
+          web_search_mode: normalizeWebSearchMode(webSearchMode),
           file_tools_enabled: true,
           attachments: arr.map(a=>({name:a.name, path:a.path, url:a.url || ""}))
         }
@@ -9726,6 +10328,10 @@
       const winTurns = cfg.window_display_turn_limit ?? cfg.windowDisplayTurnLimit;
       const ollamaModel = cfg.ollama_model ?? (cfg.api_config && cfg.api_config.ollama_model);
       const streamEnabled = cfg.chat_stream_enabled ?? cfg.stream_output ?? cfg.streamEnabled;
+      const wsEnabled = cfg.web_search_enabled ?? cfg.webSearchEnabled;
+      const wsModeRaw = cfg.web_search_mode ?? cfg.webSearchMode;
+      const wsProvider = normalizeWebSearchProvider(cfg.web_search_provider ?? cfg.webSearchProvider);
+      const wsApiKey = String(cfg.web_search_api_key ?? cfg.webSearchApiKey ?? "").trim();
       if(Number.isFinite(Number(topk)))inputTopK.value=Number(topk);
       if(Number.isFinite(Number(temp)))inputTemp.value=Number(temp);
       if(Number.isFinite(Number(maxt)))inputMaxTokens.value=Number(maxt);
@@ -9737,6 +10343,15 @@
       if(inputChatStreamEnabled){
         inputChatStreamEnabled.value = asBool(streamEnabled, true) ? "1" : "0";
       }
+      webSearchProvider = wsProvider;
+      webSearchApiKey = wsApiKey;
+      const wsMode = normalizeWebSearchMode(
+        (wsModeRaw !== undefined && wsModeRaw !== null && String(wsModeRaw).trim() !== "")
+          ? wsModeRaw
+          : (asBool(wsEnabled, false) ? "default" : "off")
+      );
+      setWebSearchMode(wsMode);
+      syncWebSearchApiInputsFromState();
     }
 
     async function loadParamsFromBackend(options = {}){
@@ -9779,7 +10394,11 @@
         context_turn_limit:getIntInputValue(inputContextTurnLimit, 20, 1, 500),
         window_display_turn_limit:getIntInputValue(inputWindowDisplayTurnLimit, 60, 1, 5000),
         ollama_model:String((inputOllamaModelParam && inputOllamaModelParam.value) || "").trim(),
-        chat_stream_enabled:isStreamOutputEnabled()
+        chat_stream_enabled:isStreamOutputEnabled(),
+        web_search_enabled: !!(normalizeWebSearchMode(webSearchMode) !== "off"),
+        web_search_mode: normalizeWebSearchMode(webSearchMode),
+        web_search_provider: normalizeWebSearchProvider(webSearchProvider),
+        web_search_api_key: String(webSearchApiKey || "").trim()
       };
 
       try{
@@ -9810,6 +10429,39 @@
 
       showToast(currentUiLanguage === "en" ? "Save failed" : "保存失败",2400);
       return false;
+    }
+
+    async function saveWebSearchApiSettings(){
+      if(!isAdminUser()){
+        showToast(tr("admin_only"), 1800);
+        return false;
+      }
+      webSearchProvider = normalizeWebSearchProvider(inputWebSearchProvider ? inputWebSearchProvider.value : webSearchProvider);
+      webSearchApiKey = String((inputWebSearchApiKey && inputWebSearchApiKey.value) || webSearchApiKey || "").trim();
+      const ok = await saveParamsToBackend();
+      if(!ok) return false;
+      closeWebSearchApiModal();
+      showToast(tr("web_search_api_saved"), 1400);
+      renderToolsSkillsList();
+      return true;
+    }
+
+    async function toggleWebSearchFromTools(shouldEnable){
+      if(!isAdminUser()){
+        showToast(tr("admin_only"), 1800);
+        return false;
+      }
+      const prev = normalizeWebSearchMode(webSearchMode);
+      const nextMode = shouldEnable ? "default" : "off";
+      setWebSearchMode(nextMode);
+      const ok = await saveParamsToBackend();
+      if(!ok){
+        setWebSearchMode(prev);
+        return false;
+      }
+      showToast((currentUiLanguage === "en" ? "Web search mode: " : "网页搜索模式：") + webSearchModeText(nextMode), 1400);
+      renderToolsSkillsList();
+      return true;
     }
 
     function onUiLogoUploadClicked(){
@@ -10432,6 +11084,493 @@
       if(!languageModal) return;
       languageModal.classList.add("hidden");
     }
+
+    function skillSafeLabel(status){
+      const s = String(status || "").trim().toLowerCase();
+      if(s === "safe") return tr("skill_safe_safe");
+      if(s === "warning") return tr("skill_safe_warning");
+      if(s === "quarantined") return tr("skill_safe_quarantined");
+      if(s === "blacklisted") return tr("skill_safe_blacklisted");
+      return tr("skill_safe_unknown");
+    }
+
+    function skillRuntimeStatusLabel(status){
+      const s = String(status || "").trim().toLowerCase();
+      if(s === "quarantined") return tr("skill_status_quarantined");
+      if(s === "blacklisted") return tr("skill_status_blacklisted");
+      return tr("skill_status_normal");
+    }
+
+    function skillBadgeClass(status){
+      const s = String(status || "").trim().toLowerCase();
+      if(s === "safe") return "ok";
+      if(s === "warning") return "warn";
+      if(s === "quarantined" || s === "blacklisted") return "block";
+      return "";
+    }
+
+    function formatSkillPermissions(perms){
+      const p = (perms && typeof perms === "object") ? perms : {};
+      const out = [];
+      if(p.network) out.push(tr("perm_network"));
+      if(p.filesystem) out.push(tr("perm_filesystem"));
+      if(p.llm) out.push(tr("perm_llm"));
+      return out.length ? out.join(", ") : "-";
+    }
+
+    function formatMcpDebugLogLine(row){
+      const item = (row && typeof row === "object") ? row : {};
+      const t = String(item.time || item.ts || "").trim() || "-";
+      const event = String(item.event || "").trim() || "event";
+      const parts = [];
+      if(item.skill_id) parts.push(`skill=${item.skill_id}`);
+      if(item.server_name) parts.push(`server=${item.server_name}`);
+      if(item.tool_name) parts.push(`tool=${item.tool_name}`);
+      if(typeof item.ok === "boolean") parts.push(`ok=${item.ok ? "1" : "0"}`);
+      if(item.error) parts.push(`error=${item.error}`);
+      return `[${t}] ${event}${parts.length ? " | " + parts.join(" | ") : ""}`;
+    }
+
+    function renderToolsSkillsDebugLogs(){
+      if(!toolsSkillsDebugPanelEl || !toolsSkillsDebugLogEl) return;
+      const canShow = isAdminUser();
+      const showForTab = (toolsSkillsState.filterTab !== "local");
+      toolsSkillsDebugPanelEl.classList.toggle("hidden", !(canShow && showForTab));
+      if(!canShow){
+        return;
+      }
+      if(!showForTab){
+        return;
+      }
+      if(toolsSkillsState.debugLoading){
+        toolsSkillsDebugLogEl.textContent = tr("skills_debug_loading");
+        return;
+      }
+      const rows = Array.isArray(toolsSkillsState.debugLogs) ? toolsSkillsState.debugLogs : [];
+      if(!rows.length){
+        toolsSkillsDebugLogEl.textContent = tr("skills_debug_empty");
+        return;
+      }
+      toolsSkillsDebugLogEl.textContent = rows.map(formatMcpDebugLogLine).join("\n");
+      toolsSkillsDebugLogEl.scrollTop = toolsSkillsDebugLogEl.scrollHeight;
+    }
+
+    async function loadMcpSkillDebugLogs(options = {}){
+      const silent = !!(options && options.silent);
+      if(!isAdminUser()){
+        toolsSkillsState.debugLoading = false;
+        toolsSkillsState.debugLogs = [];
+        renderToolsSkillsDebugLogs();
+        return false;
+      }
+      toolsSkillsState.debugLoading = true;
+      renderToolsSkillsDebugLogs();
+      try{
+        const resp = await apiFetch(`${TOOLS_MCP_SKILL_DEBUG_LOGS_URL}?limit=120`, {method: "GET", cache: "no-store"});
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          toolsSkillsState.debugLoading = false;
+          toolsSkillsState.debugLogs = [];
+          renderToolsSkillsDebugLogs();
+          if(!silent){
+            showToast(currentUiLanguage === "en" ? "Session expired. Please log in again." : "登录已失效，请重新登录", 2200);
+          }
+          return false;
+        }
+        if(resp.status === 403){
+          toolsSkillsState.debugLoading = false;
+          toolsSkillsState.debugLogs = [];
+          renderToolsSkillsDebugLogs();
+          if(!silent){
+            showToast(tr("admin_only"), 1800);
+          }
+          return false;
+        }
+        if(!resp.ok || !data || !data.ok){
+          toolsSkillsState.debugLoading = false;
+          toolsSkillsState.debugLogs = [];
+          renderToolsSkillsDebugLogs();
+          if(!silent){
+            showToast((data && data.msg) ? data.msg : tr("skills_debug_load_failed"), 2200);
+          }
+          return false;
+        }
+        toolsSkillsState.debugLoading = false;
+        toolsSkillsState.debugLogs = Array.isArray(data.logs) ? data.logs : [];
+        renderToolsSkillsDebugLogs();
+        return true;
+      }catch(err){
+        console.error("loadMcpSkillDebugLogs error", err);
+        toolsSkillsState.debugLoading = false;
+        toolsSkillsState.debugLogs = [];
+        renderToolsSkillsDebugLogs();
+        if(!silent){
+          showToast(tr("skills_debug_load_failed"), 2200);
+        }
+        return false;
+      }
+    }
+
+    function normalizeToolsSkillsFilterTab(v){
+      const s = String(v || "").trim().toLowerCase();
+      return (s === "local" || s === "mcp") ? s : "all";
+    }
+
+    function getToolsSkillCategory(item){
+      const row = (item && typeof item === "object") ? item : {};
+      const sid = String(row.id || "").trim().toLowerCase();
+      const skillType = String(row.type || row.skill_type || "").trim().toLowerCase();
+      const source = String(row.source || "").trim().toLowerCase();
+      if(
+        skillType === "mcp" ||
+        sid.startsWith("mcp::") ||
+        sid === "mcp_web_search" ||
+        sid === "mcp-web-search" ||
+        source === "mcp"
+      ){
+        return "mcp";
+      }
+      return "local";
+    }
+
+    function setToolsSkillsFilterTab(tab){
+      const next = normalizeToolsSkillsFilterTab(tab);
+      toolsSkillsState.filterTab = next;
+      if(toolsSkillsTabAllBtn) toolsSkillsTabAllBtn.classList.toggle("active", next === "all");
+      if(toolsSkillsTabLocalBtn) toolsSkillsTabLocalBtn.classList.toggle("active", next === "local");
+      if(toolsSkillsTabMcpBtn) toolsSkillsTabMcpBtn.classList.toggle("active", next === "mcp");
+      renderToolsSkillsList();
+    }
+
+    function getFilteredToolsSkillsRows(){
+      const rows = Array.isArray(toolsSkillsState.items) ? toolsSkillsState.items : [];
+      const tab = normalizeToolsSkillsFilterTab(toolsSkillsState.filterTab);
+      if(tab === "all") return rows;
+      return rows.filter((row)=>getToolsSkillCategory(row) === tab);
+    }
+
+    function buildToolsSkillsSummaryText(){
+      if(toolsSkillsState.loading) return tr("skills_loading");
+      const tab = normalizeToolsSkillsFilterTab(toolsSkillsState.filterTab);
+      const count = getFilteredToolsSkillsRows().length;
+      if(toolsSkillsState.adminView){
+        const s = (toolsSkillsState.summary && typeof toolsSkillsState.summary === "object") ? toolsSkillsState.summary : {};
+        const loaded = Number(s.loaded || 0);
+        const warnings = Number(s.warnings || 0);
+        const quarantined = Number(s.quarantined || 0);
+        const blacklisted = Number(s.blacklisted || 0);
+        const tabText = tab === "local" ? tr("skills_tab_local") : (tab === "mcp" ? tr("skills_tab_mcp") : tr("skills_tab_all"));
+        if(currentUiLanguage === "en"){
+          return `Tab ${tabText} | Visible ${count} | loaded ${loaded} | warning ${warnings} | quarantined ${quarantined} | blacklisted ${blacklisted}`;
+        }
+        return `标签 ${tabText} | 显示 ${count} 个 | 已加载 ${loaded} | 风险 ${warnings} | 隔离 ${quarantined} | 黑名单 ${blacklisted}`;
+      }
+      return currentUiLanguage === "en" ? `Available (${tr(tab === "local" ? "skills_tab_local" : tab === "mcp" ? "skills_tab_mcp" : "skills_tab_all")}): ${count}.` : `可用技能（${tr(tab === "local" ? "skills_tab_local" : tab === "mcp" ? "skills_tab_mcp" : "skills_tab_all")}）：${count} 个。`;
+    }
+
+    function renderToolsSkillsList(){
+      if(toolsSkillsRescanBtn){
+        toolsSkillsRescanBtn.style.display = isAdminUser() ? "inline-flex" : "none";
+      }
+      renderToolsSkillsDebugLogs();
+      if(toolsSkillsSummaryEl){
+        toolsSkillsSummaryEl.textContent = buildToolsSkillsSummaryText() || tr("skills_not_loaded");
+      }
+      if(!toolsSkillsListEl) return;
+
+      if(toolsSkillsState.loading){
+        toolsSkillsListEl.innerHTML = `<div class="mem-empty">${escapeHtml(tr("skills_loading"))}</div>`;
+        return;
+      }
+
+      const rows = getFilteredToolsSkillsRows();
+      if(!rows.length){
+        toolsSkillsListEl.innerHTML = `<div class="mem-empty">${escapeHtml(tr("skills_empty"))}</div>`;
+        return;
+      }
+
+      const canManage = !!isAdminUser();
+      const adminNotice = canManage
+        ? ""
+        : `<div class="mem-empty" style="padding:0 0 8px 0;">${escapeHtml(tr("skills_admin_only"))}</div>`;
+
+      const html = rows.map((row)=>{
+        const item = row && typeof row === "object" ? row : {};
+        const skillId = String(item.id || "").trim();
+        const isWebSearchSkill = (skillId === "mcp_web_search" || skillId === "mcp-web-search" || skillId === "web_search_mcp");
+        const name = String(item.name || (isWebSearchSkill ? tr("web_search_tool_name") : skillId) || "unknown").trim();
+        const version = String(item.version || "").trim();
+        const desc = String(item.description || (isWebSearchSkill ? tr("web_search_tool_desc") : "")).trim();
+        const enabled = !!item.enabled;
+        const status = String(item.status || "normal").trim().toLowerCase();
+        const safeStatus = String(item.safe_status || "unknown").trim().toLowerCase();
+        const skillType = String(item.type || "python").trim().toLowerCase();
+        const tags = Array.isArray(item.tags) ? item.tags.filter(Boolean).map((x)=>String(x)) : [];
+        const perms = formatSkillPermissions(item.permissions);
+        const reasons = Array.isArray(item.scan_reasons) ? item.scan_reasons.filter(Boolean).map((x)=>String(x).trim()).filter(Boolean) : [];
+
+        const toggleText = enabled ? tr("skill_disable") : tr("skill_enable");
+        const enabledText = enabled ? tr("skill_status_enabled") : tr("skill_status_disabled");
+        const tagsText = tags.length ? tags.join(", ") : "-";
+
+        let actions = "";
+        if(canManage){
+          if(isWebSearchSkill){
+            actions = `
+              <div class="skill-actions">
+                <button type="button" class="${enabled ? "mem-mini-btn" : "settings-save-btn"}" data-action="toggle" data-skill-id="${escapeHtml(skillId)}" data-enable="${enabled ? "0" : "1"}" data-safe-status="${escapeHtml(safeStatus)}">${escapeHtml(toggleText)}</button>
+                <button type="button" class="mem-mini-btn" data-action="web-api-settings" data-skill-id="${escapeHtml(skillId)}">${escapeHtml(tr("configure"))}</button>
+              </div>
+            `;
+          }else{
+            actions = `
+              <div class="skill-actions">
+                <button type="button" class="${enabled ? "mem-mini-btn" : "settings-save-btn"}" data-action="toggle" data-skill-id="${escapeHtml(skillId)}" data-enable="${enabled ? "0" : "1"}" data-safe-status="${escapeHtml(safeStatus)}">${escapeHtml(toggleText)}</button>
+                <button type="button" class="mem-mini-btn skill-danger" data-action="uninstall" data-skill-id="${escapeHtml(skillId)}">${escapeHtml(tr("skill_uninstall"))}</button>
+                <button type="button" class="mem-mini-btn" data-action="check-update" data-skill-id="${escapeHtml(skillId)}">${escapeHtml(tr("skill_check_update"))}</button>
+              </div>
+            `;
+          }
+        }
+
+        return `
+          <div class="skill-item">
+            <div class="skill-head">
+              <div>
+                <div class="skill-title">
+                  <span>${escapeHtml(name)}</span>
+                  ${skillType === "mcp" ? `<span class="skill-id">[MCP]</span>` : ""}
+                  ${version ? `<span class="skill-id">v${escapeHtml(version)}</span>` : ""}
+                </div>
+                <div class="skill-id">${escapeHtml(skillId || "-")}</div>
+              </div>
+              <div class="skill-badges">
+                <span class="skill-badge ${enabled ? "ok" : ""}">${escapeHtml(enabledText)}</span>
+                <span class="skill-badge ${skillBadgeClass(safeStatus)}">${escapeHtml(skillSafeLabel(safeStatus))}</span>
+                <span class="skill-badge ${skillBadgeClass(status)}">${escapeHtml(skillRuntimeStatusLabel(status))}</span>
+              </div>
+            </div>
+            ${desc ? `<div class="skill-desc">${escapeHtml(desc)}</div>` : ""}
+            <div class="skill-meta">
+              <span>tags: ${escapeHtml(tagsText)}</span>
+              <span>${escapeHtml(tr("skill_permissions"))}: ${escapeHtml(perms)}</span>
+            </div>
+            ${reasons.length ? `<div class="skill-reasons">${escapeHtml(tr("skill_scan_reasons"))}: ${escapeHtml(reasons.join(" | "))}</div>` : ""}
+            ${actions}
+          </div>
+        `;
+      }).join("");
+
+      toolsSkillsListEl.innerHTML = `${adminNotice}${html}`;
+    }
+
+    async function loadToolsSkillsList(options = {}){
+      const silent = !!(options && options.silent);
+      toolsSkillsState.loading = true;
+      renderToolsSkillsList();
+      try{
+        const resp = await apiFetch(TOOLS_SKILLS_LIST_URL, {method:"GET", cache:"no-store"});
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          toolsSkillsState.items = [];
+          toolsSkillsState.adminView = false;
+          toolsSkillsState.summary = null;
+          renderToolsSkillsList();
+          if(!silent){
+            showToast(currentUiLanguage === "en" ? "Please log in first." : "请先登录");
+          }
+          await refreshAuthState();
+          return false;
+        }
+        if(!resp.ok || !data || !data.ok){
+          toolsSkillsState.loading = false;
+          toolsSkillsState.items = [];
+          toolsSkillsState.adminView = false;
+          toolsSkillsState.summary = null;
+          renderToolsSkillsList();
+          if(!silent){
+            if(resp.status === 404){
+              showToast(
+                currentUiLanguage === "en"
+                  ? "Skills API is not available in current backend. Please restart/update backend."
+                  : "当前后端未加载技能接口，请重启或更新后端。",
+                2600
+              );
+            }else{
+              showToast((data && data.msg) ? data.msg : (currentUiLanguage === "en" ? "Failed to load skills." : "加载技能失败"), 2200);
+            }
+          }
+          return false;
+        }
+        toolsSkillsState.items = Array.isArray(data.skills) ? data.skills : [];
+        toolsSkillsState.adminView = !!data.admin_view;
+        toolsSkillsState.summary = (data.summary && typeof data.summary === "object") ? data.summary : null;
+        toolsSkillsState.loading = false;
+        renderToolsSkillsList();
+        if(isAdminUser()){
+          loadMcpSkillDebugLogs({silent:true});
+        }
+        return true;
+      }catch(err){
+        console.error("loadToolsSkillsList error", err);
+        toolsSkillsState.loading = false;
+        toolsSkillsState.items = [];
+        toolsSkillsState.adminView = false;
+        toolsSkillsState.summary = null;
+        renderToolsSkillsList();
+        if(!silent){
+          showToast(currentUiLanguage === "en" ? "Failed to load skills." : "加载技能失败", 2200);
+        }
+        return false;
+      }
+    }
+
+    async function toggleSkillEnabled(skillId, shouldEnable, safeStatus){
+      if(!isAdminUser()){
+        showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+        return;
+      }
+      const sid = String(skillId || "").trim();
+      if(!sid) return;
+      if(shouldEnable && String(safeStatus || "").trim().toLowerCase() === "warning"){
+        const ok = window.confirm(tr("skills_confirm_warning_enable"));
+        if(!ok) return;
+      }
+      try{
+        const resp = await apiFetch(TOOLS_SKILLS_TOGGLE_URL, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({skill_id: sid, enabled: !!shouldEnable}),
+        });
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          showToast(currentUiLanguage === "en" ? "Session expired. Please log in again." : "登录已失效，请重新登录", 2200);
+          return;
+        }
+        if(resp.status === 403){
+          showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+          return;
+        }
+        if(!resp.ok || !data || !data.ok){
+          showToast((data && data.msg) ? data.msg : (currentUiLanguage === "en" ? "Skill operation failed." : "技能操作失败"), 2400);
+          return;
+        }
+        if(data.warning){
+          showToast(String(data.warning), 2600);
+        }else{
+          showToast(currentUiLanguage === "en" ? "Updated" : "已更新", 1500);
+        }
+        await loadToolsSkillsList({silent:true});
+      }catch(err){
+        console.error("toggleSkillEnabled error", err);
+        showToast(currentUiLanguage === "en" ? "Skill operation failed." : "技能操作失败", 2200);
+      }
+    }
+
+    async function uninstallSkillById(skillId){
+      if(!isAdminUser()){
+        showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+        return;
+      }
+      const sid = String(skillId || "").trim();
+      if(!sid) return;
+      if(!window.confirm(tr("skills_confirm_uninstall"))){
+        return;
+      }
+      try{
+        const resp = await apiFetch(TOOLS_SKILLS_UNINSTALL_URL, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({skill_id: sid}),
+        });
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          showToast(currentUiLanguage === "en" ? "Session expired. Please log in again." : "登录已失效，请重新登录", 2200);
+          return;
+        }
+        if(resp.status === 403){
+          showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+          return;
+        }
+        if(!resp.ok || !data || !data.ok){
+          showToast((data && data.msg) ? data.msg : (currentUiLanguage === "en" ? "Uninstall failed." : "卸载失败"), 2400);
+          return;
+        }
+        showToast(currentUiLanguage === "en" ? "Uninstalled" : "已卸载", 1500);
+        await loadToolsSkillsList({silent:true});
+      }catch(err){
+        console.error("uninstallSkillById error", err);
+        showToast(currentUiLanguage === "en" ? "Uninstall failed." : "卸载失败", 2200);
+      }
+    }
+
+    async function rescanAllSkills(){
+      if(!isAdminUser()){
+        showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+        return;
+      }
+      if(toolsSkillsRescanBtn) toolsSkillsRescanBtn.disabled = true;
+      try{
+        const resp = await apiFetch(TOOLS_SKILLS_RESCAN_URL, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: "{}",
+        });
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          showToast(currentUiLanguage === "en" ? "Session expired. Please log in again." : "登录已失效，请重新登录", 2200);
+          return;
+        }
+        if(resp.status === 403){
+          showToast(currentUiLanguage === "en" ? "Admin only" : "仅管理员可操作", 1800);
+          return;
+        }
+        if(!resp.ok || !data || !data.ok){
+          showToast((data && data.msg) ? data.msg : (currentUiLanguage === "en" ? "Rescan failed." : "重扫失败"), 2400);
+          return;
+        }
+        toolsSkillsState.items = Array.isArray(data.skills) ? data.skills : [];
+        toolsSkillsState.adminView = true;
+        toolsSkillsState.summary = (data.summary && typeof data.summary === "object") ? data.summary : null;
+        toolsSkillsState.loading = false;
+        renderToolsSkillsList();
+        showToast(currentUiLanguage === "en" ? "Rescan completed." : "重扫完成", 1500);
+      }catch(err){
+        console.error("rescanAllSkills error", err);
+        showToast(currentUiLanguage === "en" ? "Rescan failed." : "重扫失败", 2200);
+      }finally{
+        if(toolsSkillsRescanBtn) toolsSkillsRescanBtn.disabled = false;
+      }
+    }
+
+    function openToolsSettingsModal(){
+      if(!String(currentUser.userId || "").trim()){
+        setAuthModalVisible(true);
+        switchAuthTab("login");
+        showToast(currentUiLanguage === "en" ? "Please log in first." : "请先登录", 1800);
+        return;
+      }
+      if(!toolsSettingsModal) return;
+      toolsSettingsModal.classList.remove("hidden");
+      setToolsSkillsFilterTab(toolsSkillsState.filterTab || "all");
+      loadParamsFromBackend({silent:true}).catch(()=>{});
+      loadToolsSkillsList({silent:true});
+      if(isAdminUser()){
+        loadMcpSkillDebugLogs({silent:true});
+      }else{
+        renderToolsSkillsDebugLogs();
+      }
+    }
+
+    function closeToolsSettingsModal(){
+      if(!toolsSettingsModal) return;
+      toolsSettingsModal.classList.add("hidden");
+    }
+
     if(menuOpenLanguageBtn){
       menuOpenLanguageBtn.onclick = (e)=>{
         e.stopPropagation();
@@ -10452,6 +11591,74 @@
     if(languageModal){
       languageModal.addEventListener("click", (ev)=>{
         if(ev.target === languageModal) closeLanguageModal();
+      });
+    }
+    if(menuOpenToolsSettingsBtn){
+      menuOpenToolsSettingsBtn.onclick = (e)=>{
+        e.stopPropagation();
+        document.querySelectorAll(".menu").forEach((m)=>m.classList.remove("show"));
+        openToolsSettingsModal();
+      };
+    }
+    if(toolsSettingsCloseBtn) toolsSettingsCloseBtn.onclick = closeToolsSettingsModal;
+    if(toolsSettingsModal){
+      toolsSettingsModal.addEventListener("click", (ev)=>{
+        if(ev.target === toolsSettingsModal) closeToolsSettingsModal();
+      });
+    }
+    if(toolsSkillsRefreshBtn){
+      toolsSkillsRefreshBtn.onclick = ()=>{
+        loadToolsSkillsList({silent:false});
+      };
+    }
+    if(toolsSkillsRescanBtn){
+      toolsSkillsRescanBtn.onclick = ()=>{
+        rescanAllSkills();
+      };
+    }
+    if(toolsSkillsTabAllBtn){
+      toolsSkillsTabAllBtn.onclick = ()=>setToolsSkillsFilterTab("all");
+    }
+    if(toolsSkillsTabLocalBtn){
+      toolsSkillsTabLocalBtn.onclick = ()=>setToolsSkillsFilterTab("local");
+    }
+    if(toolsSkillsTabMcpBtn){
+      toolsSkillsTabMcpBtn.onclick = ()=>setToolsSkillsFilterTab("mcp");
+    }
+    if(toolsSkillsDebugRefreshBtn){
+      toolsSkillsDebugRefreshBtn.onclick = ()=>{
+        loadMcpSkillDebugLogs({silent:false});
+      };
+    }
+    if(toolsSkillsListEl){
+      toolsSkillsListEl.addEventListener("click", (e)=>{
+        const btn = e.target && e.target.closest ? e.target.closest("button[data-action]") : null;
+        if(!btn) return;
+        const action = String(btn.getAttribute("data-action") || "").trim();
+        const sid = String(btn.getAttribute("data-skill-id") || "").trim();
+        if(!sid && action !== "check-update") return;
+        if(action === "toggle-web-search"){
+          const shouldEnable = String(btn.getAttribute("data-enable") || "0") === "1";
+          toggleWebSearchFromTools(shouldEnable);
+          return;
+        }
+        if(action === "web-api-settings"){
+          openWebSearchApiModal();
+          return;
+        }
+        if(action === "toggle"){
+          const shouldEnable = String(btn.getAttribute("data-enable") || "0") === "1";
+          const safeStatus = String(btn.getAttribute("data-safe-status") || "").trim();
+          toggleSkillEnabled(sid, shouldEnable, safeStatus);
+          return;
+        }
+        if(action === "uninstall"){
+          uninstallSkillById(sid);
+          return;
+        }
+        if(action === "check-update"){
+          showToast(tr("skills_update_todo"), 2800);
+        }
       });
     }
     hookClick("#mi-open-share", "#btn-open-share");
@@ -10477,13 +11684,214 @@
 
     let attachments = []; // {name, path, url, display_width, display_height}
 
-    function setWebToggle(on){
-      webSearchEnabled = !!on;
-      webToggleState.textContent = webSearchEnabled ? tr("on") : tr("off");
-      webToggleState.style.color = webSearchEnabled ? "var(--ok)" : "var(--sub)";
-      btnWebToggle.classList.toggle("active", webSearchEnabled);
+    function normalizeWebSearchProvider(v){
+      const s = String(v || "").trim().toLowerCase();
+      return s === "tavily" ? "tavily" : "builtin";
     }
-    setWebToggle(false);
+
+    function normalizeWebSearchMode(v){
+      const s = String(v || "").trim().toLowerCase();
+      if(["off","disabled","disable","0","false","no"].includes(s)) return "off";
+      if(["force","always","strict","2"].includes(s)) return "force";
+      if(["default","auto","on","enabled","enable","1","true","yes"].includes(s)) return "default";
+      return "off";
+    }
+
+    function webSearchModeText(mode){
+      const m = normalizeWebSearchMode(mode);
+      if(m === "force") return tr("web_search_mode_force");
+      if(m === "default") return tr("web_search_mode_default");
+      return tr("web_search_mode_off");
+    }
+
+    function getNextWebSearchMode(mode){
+      const m = normalizeWebSearchMode(mode);
+      if(m === "off") return "default";
+      if(m === "default") return "force";
+      return "off";
+    }
+
+    function syncWebSearchApiInputsFromState(){
+      if(inputWebSearchProvider){
+        inputWebSearchProvider.value = normalizeWebSearchProvider(webSearchProvider);
+      }
+      if(inputWebSearchApiKey){
+        inputWebSearchApiKey.value = String(webSearchApiKey || "");
+      }
+    }
+
+    function closeWebSearchApiModal(){
+      if(!webSearchApiModal) return;
+      webSearchApiModal.classList.add("hidden");
+    }
+
+    function openWebSearchApiModal(){
+      if(!isAdminUser()){
+        showToast(tr("admin_only"), 1800);
+        return;
+      }
+      syncWebSearchApiInputsFromState();
+      if(webSearchApiModal){
+        ensureOverlayOnBody(webSearchApiModal, 260);
+        webSearchApiModal.classList.remove("hidden");
+      }
+    }
+
+    function setMcpConfigError(msg){
+      const text = String(msg || "").trim();
+      mcpConfigState.lastError = text;
+      if(!mcpConfigErrorEl) return;
+      if(!text){
+        mcpConfigErrorEl.classList.add("hidden");
+        mcpConfigErrorEl.textContent = "";
+        return;
+      }
+      mcpConfigErrorEl.textContent = text;
+      mcpConfigErrorEl.classList.remove("hidden");
+    }
+
+    async function loadMcpConfigFromBackend(options = {}){
+      const silent = !!(options && options.silent);
+      setMcpConfigError("");
+      try{
+        const resp = await apiFetch(API_ADMIN_MCP_CONFIG, {method:"GET", cache:"no-store"});
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          if(!silent) showToast(currentUiLanguage === "en" ? "Please log in first." : "请先登录", 1800);
+          return false;
+        }
+        if(resp.status === 403){
+          if(!silent) showToast(tr("admin_only"), 1800);
+          return false;
+        }
+        if(!resp.ok || !data || !data.ok){
+          const msg = (data && (data.error || data.msg)) || tr("mcp_load_failed");
+          setMcpConfigError(msg);
+          if(!silent) showToast(msg, 2400);
+          return false;
+        }
+        const txt = String(data.config_text || "").trim();
+        mcpConfigState.configText = txt;
+        if(mcpConfigTextarea){
+          mcpConfigTextarea.value = txt;
+        }
+        return true;
+      }catch(err){
+        console.error("loadMcpConfigFromBackend error", err);
+        const msg = tr("mcp_load_failed");
+        setMcpConfigError(msg);
+        if(!silent) showToast(msg, 2200);
+        return false;
+      }
+    }
+
+    function formatMcpConfigText(){
+      const text = String((mcpConfigTextarea && mcpConfigTextarea.value) || "").trim();
+      if(!text){
+        setMcpConfigError("");
+        return true;
+      }
+      try{
+        const obj = JSON.parse(text);
+        const next = JSON.stringify(obj, null, 2);
+        if(mcpConfigTextarea) mcpConfigTextarea.value = next;
+        setMcpConfigError("");
+        return true;
+      }catch(err){
+        setMcpConfigError(`${tr("mcp_format_error")}\n${err}`);
+        return false;
+      }
+    }
+
+    async function saveMcpConfigToBackend(){
+      if(!isAdminUser()){
+        showToast(tr("admin_only"), 1800);
+        return false;
+      }
+      if(!formatMcpConfigText()){
+        return false;
+      }
+      const configText = String((mcpConfigTextarea && mcpConfigTextarea.value) || "").trim();
+      if(!configText){
+        setMcpConfigError(currentUiLanguage === "en" ? "Config text is empty." : "配置内容为空。");
+        return false;
+      }
+      setMcpConfigError("");
+      if(mcpConfigSaveBtn) mcpConfigSaveBtn.disabled = true;
+      try{
+        const resp = await apiFetch(API_ADMIN_MCP_CONFIG_SAVE, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({config_text: configText}),
+        });
+        const data = await resp.json().catch(()=>null);
+        if(resp.status === 401){
+          await refreshAuthState();
+          showToast(currentUiLanguage === "en" ? "Session expired. Please log in again." : "登录已失效，请重新登录", 2200);
+          return false;
+        }
+        if(resp.status === 403){
+          showToast(tr("admin_only"), 1800);
+          return false;
+        }
+        if(!resp.ok || !data || !data.ok){
+          const msg = (data && (data.error || data.msg)) || tr("mcp_save_failed");
+          const detail = data && data.detail ? `\n${data.detail}` : "";
+          setMcpConfigError(`${msg}${detail}`);
+          showToast(msg, 2400);
+          return false;
+        }
+        const nextText = String(data.config_text || "").trim();
+        if(nextText && mcpConfigTextarea){
+          mcpConfigTextarea.value = nextText;
+        }
+        setMcpConfigError("");
+        showToast(tr("mcp_save_ok"), 1800);
+        await loadToolsSkillsList({silent:true});
+        return true;
+      }catch(err){
+        console.error("saveMcpConfigToBackend error", err);
+        const msg = tr("mcp_save_failed");
+        setMcpConfigError(`${msg}\n${err}`);
+        showToast(msg, 2200);
+        return false;
+      }finally{
+        if(mcpConfigSaveBtn) mcpConfigSaveBtn.disabled = false;
+      }
+    }
+
+    function closeMcpConfigModal(){
+      if(!mcpConfigModal) return;
+      mcpConfigModal.classList.add("hidden");
+    }
+
+    function openMcpConfigModal(){
+      if(!isAdminUser()){
+        showToast(tr("admin_only"), 1800);
+        return;
+      }
+      if(!mcpConfigModal) return;
+      ensureOverlayOnBody(mcpConfigModal, 280);
+      setMcpConfigError("");
+      mcpConfigModal.classList.remove("hidden");
+      loadMcpConfigFromBackend({silent:true});
+    }
+
+    function setWebSearchMode(mode){
+      webSearchMode = normalizeWebSearchMode(mode);
+      webSearchEnabled = (webSearchMode !== "off");
+      if(webToggleState){
+        webToggleState.textContent = webSearchModeText(webSearchMode);
+        webToggleState.style.color = webSearchMode === "off"
+          ? "var(--sub)"
+          : (webSearchMode === "force" ? "var(--accent)" : "var(--ok)");
+      }
+      if(btnWebToggle){
+        btnWebToggle.classList.toggle("active", webSearchMode !== "off");
+      }
+    }
+    setWebSearchMode("off");
 
     function toggleToolMenu(){
       toolMenu.classList.toggle("show");
@@ -10501,10 +11909,15 @@
     miToolWeb.onclick = (e)=>{
       e.stopPropagation();
       toolMenu.classList.remove("show");
-      setWebToggle(!webSearchEnabled);
-      showToast(webSearchEnabled ? "网页搜索：已开启" : "网页搜索：已关闭");
+      const nextMode = getNextWebSearchMode(webSearchMode);
+      setWebSearchMode(nextMode);
+      showToast((currentUiLanguage === "en" ? "Web search mode: " : "网页搜索模式：") + webSearchModeText(nextMode), 1400);
     };
-    btnWebToggle.onclick = ()=>{ setWebToggle(!webSearchEnabled); };
+    btnWebToggle.onclick = ()=>{
+      const nextMode = getNextWebSearchMode(webSearchMode);
+      setWebSearchMode(nextMode);
+      showToast((currentUiLanguage === "en" ? "Web search mode: " : "网页搜索模式：") + webSearchModeText(nextMode), 1400);
+    };
 
     function refreshAttachChips(){
       if(!attachments.length){
@@ -10755,6 +12168,62 @@
 
     btnLoadApi.onclick = async ()=>{ btnLoadApi.disabled=true; await loadApiCfg(); btnLoadApi.disabled=false; };
     btnSaveApi.onclick = async ()=>{ btnSaveApi.disabled=true; await saveApiCfg(); btnSaveApi.disabled=false; };
+
+    if(webSearchApiCloseBtn){
+      webSearchApiCloseBtn.onclick = closeWebSearchApiModal;
+    }
+    if(webSearchApiCancelBtn){
+      webSearchApiCancelBtn.onclick = closeWebSearchApiModal;
+    }
+    if(webSearchApiSaveBtn){
+      webSearchApiSaveBtn.onclick = async ()=>{
+        webSearchApiSaveBtn.disabled = true;
+        await saveWebSearchApiSettings();
+        webSearchApiSaveBtn.disabled = false;
+      };
+    }
+    if(webSearchApiModal){
+      webSearchApiModal.addEventListener("click", (ev)=>{
+        if(ev.target === webSearchApiModal){
+          closeWebSearchApiModal();
+        }
+      });
+    }
+    if(menuOpenMcpConfigBtn){
+      menuOpenMcpConfigBtn.onclick = (e)=>{
+        e.stopPropagation();
+        document.querySelectorAll(".menu").forEach((m)=>m.classList.remove("show"));
+        openMcpConfigModal();
+      };
+    }
+    if(mcpConfigCloseBtn){
+      mcpConfigCloseBtn.onclick = closeMcpConfigModal;
+    }
+    if(mcpConfigCancelBtn){
+      mcpConfigCancelBtn.onclick = closeMcpConfigModal;
+    }
+    if(mcpConfigFormatBtn){
+      mcpConfigFormatBtn.onclick = ()=>{
+        const ok = formatMcpConfigText();
+        if(ok){
+          showToast(currentUiLanguage === "en" ? "Config format is valid." : "配置格式正确。", 1400);
+        }
+      };
+    }
+    if(mcpConfigSaveBtn){
+      mcpConfigSaveBtn.onclick = async ()=>{
+        mcpConfigSaveBtn.disabled = true;
+        await saveMcpConfigToBackend();
+        mcpConfigSaveBtn.disabled = false;
+      };
+    }
+    if(mcpConfigModal){
+      mcpConfigModal.addEventListener("click", (ev)=>{
+        if(ev.target === mcpConfigModal){
+          closeMcpConfigModal();
+        }
+      });
+    }
 
     if(weatherWidgetEl){
       weatherWidgetEl.addEventListener("click", onWeatherWidgetClick);

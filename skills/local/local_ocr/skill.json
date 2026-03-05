@@ -1,0 +1,58 @@
+{
+  "id": "local_ocr",
+  "name": "本地图片文字识别（OCR）",
+  "version": "0.1.0",
+  "author": "TYXT",
+  "description": "使用本地多模态引擎，对指定图片进行文字识别并返回纯文本结果。",
+  "entry": {
+    "type": "python",
+    "module": "handler",
+    "function": "run"
+  },
+  "inputs": {
+    "type": "object",
+    "required": [
+      "image_path"
+    ],
+    "properties": {
+      "image_path": {
+        "type": "string",
+        "description": "图片路径，可以是绝对路径，或共享目录下的相对路径。"
+      }
+    }
+  },
+  "outputs": {
+    "type": "object",
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "data": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "image_path": {
+            "type": "string"
+          }
+        }
+      },
+      "error": {
+        "type": "string"
+      }
+    }
+  },
+  "permissions": {
+    "network": false,
+    "filesystem": true,
+    "llm": false
+  },
+  "tags": [
+    "ocr",
+    "multimodal",
+    "local"
+  ],
+  "unsafe": false
+}
+
