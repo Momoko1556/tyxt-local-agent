@@ -136,9 +136,3 @@ MCP 桥接配置：
 
 本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**。
 详见 [LICENSE](LICENSE)。
-
-## 支持桃源星庭 🌱
-
-如果这个项目对你有帮助，欢迎支持后续开发：
-
-<img src="docs/donate-qrcode.png" alt="donate" width="320" />

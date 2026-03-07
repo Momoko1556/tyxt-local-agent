@@ -136,9 +136,3 @@ Do **not** commit private files such as:
 
 Licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 See [LICENSE](LICENSE).
-
-## Support Taoyuan Xingting 🌱
-
-If this project helps you and you want to support future development:
-
-<img src="docs/donate-qrcode.png" alt="donate" width="320" />

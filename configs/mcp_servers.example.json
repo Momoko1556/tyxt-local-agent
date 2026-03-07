@@ -1,12 +1,29 @@
 {
-  "servers": [
-    {
-      "name": "fake_local_mcp",
+  "mcpServers": {
+    "fake_local_mcp": {
       "command": "python",
-      "args": ["tools/mcp_fake_server.py"],
+      "args": [
+        "tools/mcp_fake_server.py"
+      ],
       "cwd": ".",
       "env": {},
-      "tools_whitelist": ["echo"]
+      "tools_whitelist": [
+        "echo"
+      ]
+    },
+    "mcp_qqbot_simple": {
+      "command": "python",
+      "args": [
+        "-m",
+        "mcp_qqbot_simple.server"
+      ],
+      "cwd": "PATH/TO/mcp_qqbot_simple",
+      "env": {
+        "QQBOT_SIMPLE_BACKEND_CHAT": "http://127.0.0.1:5000/chat",
+        "QQBOT_SIMPLE_WS_HOST": "127.0.0.1",
+        "QQBOT_SIMPLE_WS_PORT": "6199",
+        "QQBOT_SIMPLE_WS_PATH": "/ws"
+      }
     }
-  ]
+  }
 }

@@ -26,6 +26,8 @@
       --ui-main-bg:#ffffff;
       --logo-size:110px;
       --logo-size-collapsed:40px;
+      --chat-inner-max:760px;
+      --chat-col-max:760px;
     }
     *{box-sizing:border-box;margin:0;padding:0}
     body{
@@ -34,6 +36,9 @@
       font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
       line-height:1.55;
       overflow:hidden;
+    }
+    body.reasoning-open{
+      --reasoning-panel-offset:min(360px, 80vw);
     }
 
     /* ===== 布局：左侧栏 + 主区 ===== */
@@ -499,8 +504,23 @@
       display:flex;
       flex-direction:column;
       height:100vh;
-      overflow:hidden;
+      overflow-y:auto;
+      overflow-x:hidden;
       background:var(--ui-main-bg, var(--bg));
+      margin-right:0;
+      transition:margin-right .22s ease;
+      scrollbar-width:thin;
+      scrollbar-color:rgba(100,116,139,.55) transparent;
+    }
+    .main::-webkit-scrollbar{ width:6px; }
+    .main::-webkit-scrollbar-track{ background:transparent; }
+    .main::-webkit-scrollbar-thumb{
+      background:rgba(100,116,139,.52);
+      border-radius:999px;
+    }
+    .main::-webkit-scrollbar-thumb:hover{ background:rgba(100,116,139,.72); }
+    body.reasoning-open .main{
+      margin-right:var(--reasoning-panel-offset, 0px);
     }
     .topbar{
       height:54px;
@@ -510,16 +530,19 @@
       padding:0 16px;
       border-bottom:1px solid var(--line);
       background:var(--ui-main-bg, var(--panel));
+      position:sticky;
+      top:0;
+      z-index:12;
     }
     .model-chip{
       display:inline-flex;
       align-items:center;
       gap:8px;
       padding:8px 12px;
-      border:1px solid var(--line);
+      border:0;
       border-radius:999px;
-      background:var(--panel);
-      box-shadow:var(--shadow);
+      background:transparent;
+      box-shadow:none;
       font-size:14px;
       cursor:default;
       position:relative;
@@ -634,20 +657,20 @@
     }
 
     .chat{
-      flex:1;
-      overflow:auto;
+      flex:1 0 auto;
+      overflow:visible;
       background:var(--ui-main-bg, var(--bg));
     }
     .chat-inner{
-      max-width: 920px;
+      max-width: var(--chat-col-max);
       margin: 0 auto;
-      padding: 18px 18px 120px 18px;
+      padding: 18px 0 120px 0;
     }
     .chat-welcome{
       display:none;
-      max-width:920px;
+      max-width:var(--chat-col-max);
       margin:0 auto;
-      padding:0 18px;
+      padding:0;
       text-align:center;
       font-size:50px;
       line-height:1.2;
@@ -675,11 +698,20 @@
       padding: 0 16px 46px 16px;
     }
     .main.home-mode .composer-area{
-      max-width: 1040px !important;
+      max-width: var(--chat-col-max) !important;
     }
     .main.home-mode .composer{
       border-radius: 24px;
-      padding: 12px 12px;
+      padding: 8px 10px;
+      background:#ffffff;
+    }
+    .main.home-mode textarea{
+      min-height:52px;
+      max-height:140px;
+      padding: 6px 6px 34px 6px;
+    }
+    .main.home-mode .toolbar{
+      bottom:8px;
     }
 
     .row{
@@ -729,19 +761,27 @@
       bottom:0;
       background:linear-gradient(to top, var(--ui-main-bg, var(--bg)) 70%, transparent);
       padding: 14px 16px 18px 16px;
+      z-index:10;
+    }
+    .composer-area{
+      width:100%;
+      max-width:var(--chat-col-max) !important;
+      margin:0 auto;
+      position:relative;
     }
     .composer{
-      max-width: 920px;
+      max-width: var(--chat-col-max);
       margin: 0 auto;
       display:flex;
       align-items:flex-end;
       gap:10px;
       position:relative;
-      background:var(--panel);
+      background:#ffffff;
       border:1px solid var(--line);
       border-radius: 18px;
       box-shadow: var(--shadow);
       padding: 10px 10px;
+      color:#111827;
     }
     textarea{
       flex:1;
@@ -755,9 +795,9 @@
       font-size:15px;
       line-height:1.5;
       background:transparent;
-      color:var(--text);
+      color:#111827;
     }
-    textarea::placeholder{ color:var(--muted); }
+    textarea::placeholder{ color:#9ca3af; }
 
     .send-btn{
       width:40px;
@@ -785,8 +825,8 @@
       padding:0 12px;
       border-radius: 14px;
       border:1px solid var(--line);
-      background:var(--panel);
-      color:var(--text);
+      background:#ffffff;
+      color:#111827;
       cursor:pointer;
       transition:var(--t);
       display:flex;
@@ -795,7 +835,7 @@
       user-select:none;
     }
     .ghost-btn:hover{ background:rgba(0,0,0,.03); }
-    .ghost-btn i{ color:var(--sub); }
+    .ghost-btn i{ color:#64748b; }
 
     .mic-btn{
       width:40px;
@@ -851,7 +891,7 @@
       align-items:center;
       gap:14px;
       padding:0;
-      color: var(--sub);
+      color:#64748b;
       font-size:14px;
       user-select:none;
       z-index: 3;
@@ -867,7 +907,7 @@
       cursor:pointer;
       transition:var(--t);
       box-shadow:none;
-      color:var(--text);
+      color:#111827;
       padding:0;
     }
     .tool-btn:hover{ background:transparent; color:#111827; }
@@ -892,7 +932,7 @@
     .tool-label b{ font-weight:700; color:#0b66d9; }
     .tool-label i{ font-size:14px; }
     .tool-label #web-toggle-state{
-      color:var(--sub) !important;
+      color:#64748b !important;
       font-size:14px;
     }
     .tool-label.active #web-toggle-state{
@@ -947,7 +987,7 @@
     .row.user .msg-attachments{ justify-content:flex-end; }
     .row.user .bubble.has-media{
       width:fit-content;
-      max-width:min(72%, 620px);
+      max-width:min(64%, 620px);
     }
     .msg-attach-item{
       border:1px solid var(--line);
@@ -1201,6 +1241,12 @@
     .row{ display:flex; gap:12px; align-items:flex-start; margin: 14px 0; }
     .row.ai{ justify-content:flex-start; }
     .row.user{ justify-content:flex-end; }
+    .row .msg-col{
+      width:100%;
+      max-width:var(--chat-col-max);
+    }
+    .row.ai .msg-col{ margin-right:auto; }
+    .row.user .msg-col{ margin-left:auto; }
 
     /* 头像 */
     .row.ai .avatar{ display:none; }
@@ -1208,7 +1254,7 @@
 
     /* 气泡 */
     .row .bubble{
-      max-width: 72%;
+      max-width: 100%;
       white-space: pre-wrap;
       word-break: break-word;
       line-height: 1.65;
@@ -1220,6 +1266,7 @@
       border-radius: 0;
       padding: 0;
       box-shadow:none;
+      width:100%;
     }
     .row.user .bubble{
       background:var(--panel);
@@ -1228,6 +1275,7 @@
       padding: 12px 14px;
       box-shadow:none;
       margin-left:auto;
+      max-width: min(72%, 680px);
     }
 
     .row .meta{ color: var(--muted); font-size:12px; margin-top:6px; }
@@ -1243,6 +1291,83 @@
       user-select:none;
       text-align:left;
     }
+    .tyxt-think-badge{
+      display:block;
+      margin:0 0 6px 2px;
+      font-size:15px;
+      color:#9ca3af;
+      line-height:1.5;
+      user-select:none;
+      text-align:left;
+      cursor:pointer;
+    }
+    .tyxt-think-badge:hover{
+      color:#6b7280;
+      text-decoration:underline;
+      text-decoration-style:dotted;
+      text-underline-offset:2px;
+    }
+    #tyxt-reasoning-panel{
+      position:fixed;
+      top:0;
+      right:0;
+      width:360px;
+      max-width:80vw;
+      height:100%;
+      background:#fff;
+      box-shadow:-4px 0 12px rgba(0,0,0,.08);
+      display:none;
+      flex-direction:column;
+      z-index:9999;
+      border-left:1px solid var(--line);
+      transition:transform .22s ease;
+      overflow-y:auto;
+      scrollbar-width:thin;
+      scrollbar-color:rgba(100,116,139,.40) transparent;
+    }
+    #tyxt-reasoning-panel::-webkit-scrollbar{ width:6px; }
+    #tyxt-reasoning-panel::-webkit-scrollbar-track{ background:transparent; }
+    #tyxt-reasoning-panel::-webkit-scrollbar-thumb{
+      background:rgba(100,116,139,.40);
+      border-radius:999px;
+    }
+    #tyxt-reasoning-panel-header{
+      padding:12px 16px;
+      border-bottom:1px solid #eee;
+      font-size:14px;
+      font-weight:600;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      color:var(--text);
+      position:sticky;
+      top:0;
+      z-index:2;
+      background:#fff;
+    }
+    #tyxt-reasoning-panel-close-btn{
+      width:30px;
+      height:30px;
+      border-radius:8px;
+      border:1px solid var(--line);
+      background:var(--panel);
+      color:var(--sub);
+      cursor:pointer;
+    }
+    #tyxt-reasoning-panel-body{
+      padding:12px 16px;
+      font-size:13px;
+      line-height:1.6;
+      white-space:pre-wrap;
+      overflow:visible;
+      color:var(--text);
+      flex:1 0 auto;
+      min-height:calc(100% - 58px);
+    }
+    #tools-settings-modal .settings-body{
+      padding-top:0;
+      padding-bottom:0;
+    }
     .row.user .msg-toolbar{
       display:flex;
       width:100%;
@@ -1250,6 +1375,9 @@
     }
     .row.user .msg-col{
       position:relative;
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
     }
     .row.user .user-msg-toolbar{
       opacity:0;
@@ -3047,7 +3175,7 @@
       </div>
 
       <div class="composer-wrap">
-        <div class="composer-area" style="max-width: 920px; margin: 0 auto; position:relative;">
+        <div class="composer-area" style="max-width: var(--chat-col-max); margin: 0 auto; position:relative;">
           <div class="tool-menu" id="tool-menu">
             <div class="mi" id="mi-tool-web"><i class="fa-solid fa-globe"></i><span>网页搜索</span></div>
             <div class="mi" id="mi-tool-image"><i class="fa-regular fa-image"></i><span>添加图片</span></div>
@@ -3711,6 +3839,14 @@
     </div>
   </div>
 
+  <div id="tyxt-reasoning-panel">
+    <div id="tyxt-reasoning-panel-header">
+      <span id="tyxt-reasoning-panel-title">本轮思考</span>
+      <button id="tyxt-reasoning-panel-close-btn" type="button">✕</button>
+    </div>
+    <div id="tyxt-reasoning-panel-body"></div>
+  </div>
+
   <script>
     // ===== [API 地址配置] =====
     const API_BASE = window.location.origin;
@@ -3924,6 +4060,10 @@
     const mcpConfigErrorEl = $("#mcp-config-error");
     const mcpConfigTextarea = $("#mcp-config-textarea");
     const toolsSettingsModal = $("#tools-settings-modal");
+    const tyxtReasoningPanel = $("#tyxt-reasoning-panel");
+    const tyxtReasoningPanelBody = $("#tyxt-reasoning-panel-body");
+    const tyxtReasoningPanelCloseBtn = $("#tyxt-reasoning-panel-close-btn");
+    const tyxtReasoningPanelTitle = $("#tyxt-reasoning-panel-title");
     const toolsSettingsCloseBtn = $("#tools-settings-close-btn");
     const toolsSkillsRefreshBtn = $("#tools-skills-refresh-btn");
     const toolsSkillsRescanBtn = $("#tools-skills-rescan-btn");
@@ -3937,6 +4077,7 @@
     const toolsSkillsDebugRefreshBtn = $("#tools-skills-debug-refresh-btn");
     const toolsSkillsDebugLogEl = $("#tools-skills-debug-log");
     const toolsSkillsListEl = $("#tools-skills-list");
+    ensureOverlayOnBody(tyxtReasoningPanel, 9999);
 
     const healthDot = $("#health-dot");
     const healthText = $("#health-text");
@@ -3946,6 +4087,8 @@
 
     let messageSeq=0;
     const messageMap = new Map(); // id -> {id, role, content, fromUserText}
+    const tyxtReasoningMap = {}; // messageId -> reasoning text
+    let tyxtReasoningActiveMsgId = "";
     let editingUserMsgId = "";
     const userInlineEditState = new Map(); // msgId -> {html, hadMedia}
     let deletedStateSyncing = false;
@@ -4936,6 +5079,12 @@
       renderImportScanDetails();
       renderMemorySearchResults();
       renderToolsSkillsList();
+      if(tyxtReasoningPanelTitle){
+        tyxtReasoningPanelTitle.textContent = currentUiLanguage === "en" ? "Reasoning" : "本轮思考";
+      }
+      document.querySelectorAll(".tyxt-think-badge").forEach((el)=>{
+        el.textContent = currentUiLanguage === "en" ? "Reasoned" : "已思考";
+      });
       updateMemoryImportActionButtons();
       ping();
       if(!(options && options.skipStorage)){
@@ -8879,6 +9028,148 @@
       return normalizeMemoryInfo(mm);
     }
 
+    function parseReasoningMetaFromResponse(obj){
+      if(!obj || typeof obj !== "object"){
+        return {text:"", delta:"", append:false, state:""};
+      }
+      const rr = (obj.meta && obj.meta.reasoning && typeof obj.meta.reasoning === "object")
+        ? obj.meta.reasoning
+        : null;
+      if(!rr){
+        return {text:"", delta:"", append:false, state:""};
+      }
+      const text = (rr.text == null) ? "" : String(rr.text);
+      const delta = (rr.delta == null) ? "" : String(rr.delta);
+      const append = !!rr.append;
+      const state = (rr.state == null) ? "" : String(rr.state);
+      return {text, delta, append, state};
+    }
+
+    function parseReasoningTextFromResponse(obj){
+      const meta = parseReasoningMetaFromResponse(obj);
+      if(meta.text) return meta.text;
+      if(meta.delta) return meta.delta;
+      return "";
+    }
+
+    function isLikelyReasoningModelName(name){
+      const s = String(name || "").trim().toLowerCase();
+      if(!s) return false;
+      if(s.includes("thinking")) return true;
+      if(s.includes("reasoning")) return true;
+      if(s.includes("deepseek-r1")) return true;
+      if(s.includes("r1")) return true;
+      return false;
+    }
+
+    function setReasoningPanelOpenState(open){
+      const shouldOpen = !!open;
+      if(document && document.body){
+        document.body.classList.toggle("reasoning-open", shouldOpen);
+      }
+      if(!shouldOpen && tyxtReasoningPanel){
+        tyxtReasoningPanel.dataset.msgId = "";
+      }
+    }
+
+    function isReasoningPanelOpen(){
+      return !!(tyxtReasoningPanel && tyxtReasoningPanel.style.display === "flex");
+    }
+
+    function getReasoningPlaceholderText(){
+      return currentUiLanguage === "en" ? "Thinking..." : "思考中...";
+    }
+
+    function bindReasoningPanelToMessage(messageId, keepPlaceholder = true){
+      const mid = String(messageId || "").trim();
+      if(!mid || !tyxtReasoningPanel || !tyxtReasoningPanelBody) return;
+      const txtRaw = String(tyxtReasoningMap[mid] || "");
+      const txt = txtRaw.trim();
+      if(tyxtReasoningPanelTitle){
+        tyxtReasoningPanelTitle.textContent = currentUiLanguage === "en" ? "Reasoning" : "本轮思考";
+      }
+      tyxtReasoningPanel.dataset.msgId = mid;
+      tyxtReasoningActiveMsgId = mid;
+      tyxtReasoningPanel.style.display = "flex";
+      if(txt){
+        tyxtReasoningPanelBody.textContent = txt;
+      }else if(keepPlaceholder){
+        tyxtReasoningPanelBody.textContent = getReasoningPlaceholderText();
+      }else{
+        tyxtReasoningPanelBody.textContent = "";
+      }
+      setReasoningPanelOpenState(true);
+    }
+
+    function openReasoningPanel(messageId){
+      const mid = String(messageId || "").trim();
+      if(!mid) return;
+      const openedMid = String((tyxtReasoningPanel && tyxtReasoningPanel.dataset && tyxtReasoningPanel.dataset.msgId) || "").trim();
+      if(isReasoningPanelOpen() && openedMid && openedMid === mid){
+        closeReasoningPanel();
+        return;
+      }
+      bindReasoningPanelToMessage(mid, true);
+    }
+
+    function closeReasoningPanel(){
+      if(!tyxtReasoningPanel) return;
+      tyxtReasoningPanel.style.display = "none";
+      if(tyxtReasoningPanelBody){
+        tyxtReasoningPanelBody.textContent = "";
+      }
+      tyxtReasoningActiveMsgId = "";
+      setReasoningPanelOpenState(false);
+    }
+
+    function setAssistantReasoningHint(row, msgId, reasoningText, options = {}){
+      if(!row) return;
+      const col = row.querySelector(".bubble") ? row.querySelector(".bubble").parentElement : null;
+      if(!col) return;
+      const mid = String(msgId || "").trim();
+      const textRaw = String(reasoningText || "");
+      const text = textRaw.trim();
+      const forceVisible = !!(options && options.forceVisible);
+      let badge = col.querySelector(".tyxt-think-badge");
+      if((!textRaw && !forceVisible) || !mid){
+        if(badge) badge.remove();
+        if(mid) delete tyxtReasoningMap[mid];
+        if(
+          mid
+          && tyxtReasoningPanel
+          && isReasoningPanelOpen()
+          && tyxtReasoningActiveMsgId
+          && tyxtReasoningActiveMsgId === mid
+        ){
+          closeReasoningPanel();
+        }
+        return;
+      }
+      tyxtReasoningMap[mid] = textRaw;
+      if(!badge){
+        badge = document.createElement("div");
+        badge.className = "tyxt-think-badge";
+        badge.addEventListener("click", ()=>{
+          const clickMid = String((badge && badge.dataset && badge.dataset.msgId) || "").trim();
+          if(clickMid) openReasoningPanel(clickMid);
+        });
+      }
+      badge.dataset.msgId = mid;
+      badge.textContent = currentUiLanguage === "en" ? "Reasoned" : "已思考";
+      const bubbleEl = col.querySelector(".bubble");
+      if(bubbleEl){
+        col.insertBefore(badge, bubbleEl);
+      }else{
+        col.appendChild(badge);
+      }
+      if(isReasoningPanelOpen()){
+        const openedMid = String((tyxtReasoningPanel.dataset && tyxtReasoningPanel.dataset.msgId) || "").trim();
+        if(openedMid && openedMid === mid && tyxtReasoningPanelBody){
+          tyxtReasoningPanelBody.textContent = text || getReasoningPlaceholderText();
+        }
+      }
+    }
+
     function setMessageMemoryInfo(msgId, info){
       const rec = getMessageRecord(msgId);
       if(!rec) return;
@@ -9713,7 +10004,7 @@
       if(role==="user"){
         avatar.innerHTML = "<i class='fa-solid fa-user'></i>";
       }else{
-        avatar.innerHTML = "<img src='/frontend/chatgpt_logo_transparent.png' alt='ChatGPT'>";
+        avatar.innerHTML = "<img src='/frontend/Peach.png' alt='ChatGPT'>";
       }
 
       const col=document.createElement("div");
@@ -9755,7 +10046,7 @@
       log.appendChild(row);
       if(mainEl) mainEl.classList.remove("home-mode");
 
-      const chatScroll = $("#chat-scroll");
+      const chatScroll = getChatScrollContainer();
       if(chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
       updateRetryButtonsState();
       return{row,bubble,meta,msgId};
@@ -9771,7 +10062,7 @@
       if(role==="user"){
         avatar.innerHTML = "<i class='fa-solid fa-user'></i>";
       }else{
-        avatar.innerHTML = "<img src='/frontend/chatgpt_logo_transparent.png' alt='ChatGPT'>";
+        avatar.innerHTML = "<img src='/frontend/Peach.png' alt='ChatGPT'>";
       }
 
       const col=document.createElement("div");
@@ -9812,7 +10103,7 @@
       log.appendChild(row);
       if(mainEl) mainEl.classList.remove("home-mode");
 
-      const chatScroll = $("#chat-scroll");
+      const chatScroll = getChatScrollContainer();
       if(chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
       updateRetryButtonsState();
       return{row,bubble,meta,msgId};
@@ -9825,7 +10116,7 @@
 
       const avatar=document.createElement("div");
       avatar.className="avatar";
-      avatar.innerHTML = "<img src='/frontend/chatgpt_logo_transparent.png' alt='ChatGPT'>";
+      avatar.innerHTML = "<img src='/frontend/Peach.png' alt='ChatGPT'>";
 
       const col=document.createElement("div");
       col.className = "msg-col";
@@ -9846,10 +10137,14 @@
 
       log.appendChild(row);
 
-      const chatScroll = $("#chat-scroll");
+      const chatScroll = getChatScrollContainer();
       if(chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
     }
     function rmThinking(){const r=$("#thinking-row");if(r)r.remove();}
+
+    function getChatScrollContainer(){
+      return document.querySelector(".main") || $("#chat-scroll");
+    }
 
     function buildChatPayload(message, atts){
       const arr = Array.isArray(atts) ? atts : attachments;
@@ -9932,6 +10227,7 @@
               setTtsToolbarExpanded(aiRow, false);
               setRowTtsState(aiRow, "idle", "");
               setAssistantMemoryHint(aiRow, {stripAdded:false, profileUpdated:false});
+              setAssistantReasoningHint(aiRow, overwriteMsgId, "");
             }
             setAiBubbleText(aiBubble, "");
         }
@@ -9942,7 +10238,56 @@
         }
 
         let total="",replyNote="",replySource="";
+        let reasoningText = "";
+        let reasoningStarted = false;
+        let reasoningEnded = false;
+        let pendingAnswerBeforeReasoningEnd = "";
         let memoryInfo = {stripAdded:false, profileUpdated:false, hasMemoryWrite:false};
+        let reasoningRendered = "";
+        let panelBoundToCurrentReasoning = false;
+
+        const _scrollChatToBottom = ()=>{
+          const chatScroll = getChatScrollContainer();
+          if(chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
+        };
+
+        // 2026-03: 打字机效果已移除，改为“流式 chunk 直出”。
+        const appendReasoningDelta = (deltaText)=>{
+          const s = String(deltaText || "");
+          if(!s) return;
+          reasoningRendered += s;
+          const mid = String((aiBubble && aiBubble.dataset && aiBubble.dataset.msgId) || "").trim();
+          if(aiRow && mid){
+            setAssistantReasoningHint(aiRow, mid, reasoningRendered, {forceVisible:true});
+          }
+          _scrollChatToBottom();
+        };
+
+        const applyReasoningSnapshot = (fullText)=>{
+          const full = String(fullText || "");
+          if(!full){
+            reasoningText = "";
+            reasoningRendered = "";
+            return;
+          }
+          reasoningText = full;
+          reasoningRendered = full;
+          const mid = String((aiBubble && aiBubble.dataset && aiBubble.dataset.msgId) || "").trim();
+          if(aiRow && mid){
+            setAssistantReasoningHint(aiRow, mid, reasoningRendered, {forceVisible:true});
+          }
+          _scrollChatToBottom();
+        };
+
+        const appendAnswerDelta = (deltaText)=>{
+          const s = String(deltaText || "");
+          if(!s) return;
+          total += s;
+          setAiBubbleText(aiBubble, total);
+          _scrollChatToBottom();
+        };
+
+        const panelWasOpenAtSendStart = isReasoningPanelOpen();
 
         if(useStream){
           if(!res.ok){
@@ -9968,6 +10313,45 @@
               if(obj && obj.meta && obj.meta.memory){
                 memoryInfo = parseMemoryInfoFromResponse(obj);
               }
+              const streamReasoningMeta = parseReasoningMetaFromResponse(obj);
+              const hasReasoningContentSignal = (
+                streamReasoningMeta.text !== ""
+                || streamReasoningMeta.delta !== ""
+              );
+              if(streamReasoningMeta.state === "start"){
+                reasoningStarted = true;
+                reasoningEnded = false;
+              }else if(streamReasoningMeta.state === "end"){
+                reasoningEnded = true;
+                if(pendingAnswerBeforeReasoningEnd){
+                  appendAnswerDelta(pendingAnswerBeforeReasoningEnd);
+                  pendingAnswerBeforeReasoningEnd = "";
+                }
+              }
+              if(streamReasoningMeta.text){
+                applyReasoningSnapshot(streamReasoningMeta.text);
+              }else if(streamReasoningMeta.delta){
+                if(streamReasoningMeta.append){
+                  reasoningText += streamReasoningMeta.delta;
+                }else{
+                  reasoningText = streamReasoningMeta.delta;
+                }
+                if(streamReasoningMeta.append){
+                  appendReasoningDelta(streamReasoningMeta.delta);
+                }else{
+                  applyReasoningSnapshot(reasoningText);
+                }
+              }
+              if(hasReasoningContentSignal || reasoningRendered || reasoningText){
+                const streamMsgId = String((aiBubble && aiBubble.dataset && aiBubble.dataset.msgId) || "").trim();
+                if(aiRow && streamMsgId){
+                  setAssistantReasoningHint(aiRow, streamMsgId, reasoningRendered || reasoningText, {forceVisible:true});
+                  if(panelWasOpenAtSendStart && !panelBoundToCurrentReasoning){
+                    bindReasoningPanelToMessage(streamMsgId, true);
+                    panelBoundToCurrentReasoning = true;
+                  }
+                }
+              }
               let delta = "";
               if(typeof obj.reply === "string"){
                 delta = obj.reply;
@@ -9977,10 +10361,11 @@
                 if(typeof d === "string") delta = d;
               }
               if(delta){
-                total+=delta;
-                setAiBubbleText(aiBubble, total);
-                const chatScroll = $("#chat-scroll");
-                if(chatScroll) chatScroll.scrollTop = chatScroll.scrollHeight;
+                if(reasoningStarted && !reasoningEnded){
+                  pendingAnswerBeforeReasoningEnd += delta;
+                }else{
+                  appendAnswerDelta(delta);
+                }
               }
             }catch(_){}
           };
@@ -9998,6 +10383,10 @@
           if(String(buffer || "").trim()){
             consumeLine(buffer);
           }
+          if(pendingAnswerBeforeReasoningEnd){
+            appendAnswerDelta(pendingAnswerBeforeReasoningEnd);
+            pendingAnswerBeforeReasoningEnd = "";
+          }
         }else{
           if(!res.ok){
             throw new Error(`HTTP ${res.status}`);
@@ -10012,6 +10401,10 @@
           replySource = (once && once.reply_source) ? String(once.reply_source || "") : "";
           if(once && once.meta && once.meta.memory){
             memoryInfo = parseMemoryInfoFromResponse(once);
+          }
+          const onceReasoningText = parseReasoningTextFromResponse(once);
+          if(onceReasoningText){
+            reasoningText = onceReasoningText;
           }
           if(total){
             setAiBubbleText(aiBubble, total);
@@ -10054,8 +10447,12 @@
           const onceNote = (once && once.reply_note) ? String(once.reply_note) : "";
           const onceSource = (once && once.reply_source) ? String(once.reply_source) : "";
           const onceMemoryInfo = parseMemoryInfoFromResponse(once || {});
+          const onceReasoningText2 = parseReasoningTextFromResponse(once || {});
           if(onceMemoryInfo.hasMemoryWrite){
             memoryInfo = onceMemoryInfo;
+          }
+          if(onceReasoningText2){
+            reasoningText = onceReasoningText2;
           }
           if(onceNote){
             onceText = `${onceText}\n\n（${onceNote}）`;
@@ -10066,6 +10463,8 @@
         }
         if(aiRow){
           setAssistantMemoryHint(aiRow, memoryInfo);
+          const msgId = String((aiBubble && aiBubble.dataset && aiBubble.dataset.msgId) || "").trim();
+          setAssistantReasoningHint(aiRow, msgId, reasoningText);
         }
       }catch(err){
         if(err && (err.name === "AbortError" || String(err).includes("AbortError"))){
@@ -10089,6 +10488,7 @@
         const failNote = (once && once.reply_note) ? String(once.reply_note) : "";
         const failSource = (once && once.reply_source) ? String(once.reply_source) : "";
         const failMemoryInfo = parseMemoryInfoFromResponse(once || {});
+        const failReasoningText = parseReasoningTextFromResponse(once || {});
         if(failNote){
           failText = `${failText}\n\n（${failNote}）`;
         }else if(failSource === "ollama_fallback"){
@@ -10103,9 +10503,13 @@
           }
           if(aiRow){
             setAssistantMemoryHint(aiRow, failMemoryInfo);
+            setAssistantReasoningHint(aiRow, msgId, failReasoningText);
           }
         }else{
-          addBubble("ai", failText, {fromUserText:message, memoryInfo: failMemoryInfo});
+          const created = addBubble("ai", failText, {fromUserText:message, memoryInfo: failMemoryInfo});
+          if(created && created.row && created.msgId){
+            setAssistantReasoningHint(created.row, created.msgId, failReasoningText);
+          }
         }
       }finally{
         syncActiveChatFromDOM();
@@ -12224,6 +12628,18 @@
         }
       });
     }
+    if(tyxtReasoningPanelCloseBtn){
+      tyxtReasoningPanelCloseBtn.addEventListener("click", ()=>{
+        closeReasoningPanel();
+      });
+    }
+    if(tyxtReasoningPanel){
+      tyxtReasoningPanel.addEventListener("click", (ev)=>{
+        if(ev.target === tyxtReasoningPanel){
+          closeReasoningPanel();
+        }
+      });
+    }
 
     if(weatherWidgetEl){
       weatherWidgetEl.addEventListener("click", onWeatherWidgetClick);
@@ -12318,3 +12734,4 @@
   </script>
 </body>
 </html>
+

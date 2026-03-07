@@ -216,6 +216,15 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
 MODEL_NAME      = os.getenv("MODEL_NAME", "deepseek-r1:8b")
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# ========= 推理模型配置（兼容保留） =========
+# 说明：
+# - 当前思考链展示已改为“自动识别”模式（不再依赖模型白名单）。
+# - 该列表仅作为未来可选配置保留，不参与主判断。
+REASONING_MODELS = [
+    "deepseek-r1:8b",
+    "kimi-k2-thinking",
+]
+
 # ========== LLM Provider 选择 ==========
 # newapi : 使用云 API（OpenAI / Claude 转发等）
 # ollama: 使用本地 Ollama
@@ -1329,6 +1338,145 @@ def _get_last_call_meta() -> Dict[str, Any]:
     except Exception:
         pass
     return {}
+
+
+def _normalize_model_name_for_reasoning(model_name: str) -> str:
+    return str(model_name or "").strip().lower()
+
+
+def _effective_model_name_for_reasoning(call_meta: Optional[Dict[str, Any]] = None) -> str:
+    """
+    根据本次调用最终 provider 选择本次实际模型名（用于思考链解析）。
+    """
+    cm = call_meta if isinstance(call_meta, dict) else _get_last_call_meta()
+    final_provider = str(cm.get("final_provider") or cm.get("primary_provider") or LLM_PROVIDER or "").strip().lower()
+    if final_provider == "newapi":
+        return str(NEWAPI_MODEL or "").strip()
+    return str(MODEL_NAME or "").strip()
+
+
+_REASONING_TAG_PAIRS = [
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<reasoning>", "</reasoning>"),
+]
+_REASONING_CODEBLOCK_RE = re.compile(
+    r"```(?:thinking|reasoning)\s*(.*?)```",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _normalize_reasoning_text(v: Any) -> str:
+    """
+    将不同 provider 返回的 reasoning 字段统一转换为文本。
+    """
+    try:
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v.strip()
+        if isinstance(v, (int, float, bool)):
+            return str(v).strip()
+        if isinstance(v, dict):
+            for k in ("text", "content", "reasoning", "reasoning_content", "summary"):
+                t = _normalize_reasoning_text(v.get(k))
+                if t:
+                    return t
+            return ""
+        if isinstance(v, list):
+            parts: List[str] = []
+            for it in v:
+                t = _normalize_reasoning_text(it)
+                if t:
+                    parts.append(t)
+            return "".join(parts).strip()
+        return str(v).strip()
+    except Exception:
+        return ""
+
+
+def _reasoning_from_call_meta(call_meta: Optional[Dict[str, Any]] = None) -> str:
+    cm = call_meta if isinstance(call_meta, dict) else _get_last_call_meta()
+    return _normalize_reasoning_text(cm.get("reasoning_text"))
+
+
+def _looks_like_reasoning_markup(text: str) -> bool:
+    s = str(text or "").lower()
+    if not s:
+        return False
+    return (
+        ("<think>" in s)
+        or ("</think>" in s)
+        or ("<thinking>" in s)
+        or ("</thinking>" in s)
+        or ("```thinking" in s)
+        or ("```reasoning" in s)
+    )
+
+
+_TYXT_REASONING_STREAM_PREFIX = "__TYXT_REASONING_DELTA__::"
+
+
+def _pack_reasoning_stream_delta(text: str) -> str:
+    return f"{_TYXT_REASONING_STREAM_PREFIX}{str(text or '')}"
+
+
+def _unpack_reasoning_stream_delta(chunk: Any) -> str:
+    s = str(chunk or "")
+    if s.startswith(_TYXT_REASONING_STREAM_PREFIX):
+        return s[len(_TYXT_REASONING_STREAM_PREFIX):]
+    return ""
+
+
+def extract_reasoning_if_any(model_name: str, full_text: str) -> tuple[Optional[str], str]:
+    """
+    自动拆分思考链和最终回答（不依赖模型白名单）。
+
+    返回：(reasoning_text, answer_text)
+
+    - 优先识别 XML 标签：<think>/<thinking>/<reasoning>
+    - 其次识别代码块：```thinking ...``` / ```reasoning ...```
+    - 没识别到，或去掉后 answer 为空：返回 (None, full_text)
+    """
+    _ = model_name  # 兼容保留：当前逻辑不再按模型白名单限制。
+    if not full_text:
+        return None, full_text
+
+    try:
+        src = str(full_text or "")
+
+        best: Optional[Tuple[int, int, str]] = None
+        for start_tag, end_tag in _REASONING_TAG_PAIRS:
+            s = src.find(start_tag)
+            if s < 0:
+                continue
+            e = src.find(end_tag, s + len(start_tag))
+            if e < 0 or e <= s:
+                continue
+            r = src[s + len(start_tag): e].strip()
+            if not r:
+                continue
+            if (best is None) or (s < best[0]):
+                best = (s, e + len(end_tag), r)
+
+        if best is not None:
+            s, e2, reasoning = best
+            answer = (src[:s] + src[e2:]).strip()
+            if answer:
+                return reasoning, answer
+            return None, full_text
+
+        m = _REASONING_CODEBLOCK_RE.search(src)
+        if m:
+            reasoning = str(m.group(1) or "").strip()
+            answer = (src[:m.start()] + src[m.end():]).strip()
+            if reasoning and answer:
+                return reasoning, answer
+            return None, full_text
+
+        return None, full_text
+    except Exception:
+        return None, full_text
 
 # ============================================================
 # 09. System Prompt 人格加载（已切换为仅 UI 人格）
@@ -6605,8 +6753,16 @@ def chat_post():
             except Exception:
                 pass
 
-        reply = call_model(messages)
-        reply = (reply or "").strip()
+        reply_raw = call_model(messages)
+        reply_raw = str(reply_raw or "").strip()
+        call_meta = _get_last_call_meta()
+        reasoning_text, reply = extract_reasoning_if_any(
+            _effective_model_name_for_reasoning(call_meta),
+            reply_raw,
+        )
+        if not str(reasoning_text or "").strip():
+            reasoning_text = _reasoning_from_call_meta(call_meta)
+        reply = str(reply or "").strip()
         if not reply:
             # 避免桥接因空 reply 直接不发：私聊给提示，群聊给最短兜底
             if str(meta.get("scene") or "").strip() == "private":
@@ -6614,7 +6770,6 @@ def chat_post():
             else:
                 reply = "（模型返回空回复）"
 
-        call_meta = _get_last_call_meta()
         reliable_image_for_guard = bool(has_reliable_image_evidence)
         try:
             if has_image_attachment and call_meta.get("fallback_used") and str(call_meta.get("final_provider") or "").strip().lower() == "ollama":
@@ -6695,13 +6850,18 @@ def chat_post():
                 meta=meta,
                 user_ctx_segments=user_ctx_segments,
             )
+        resp_meta: Dict[str, Any] = {
+            "memory": memory_meta,
+        }
+        if str(reasoning_text or "").strip():
+            resp_meta["reasoning"] = {
+                "text": str(reasoning_text or "").strip()
+            }
         return jsonify({
             "reply": reply,
             "reply_source": reply_source,
             "reply_note": reply_note,
-            "meta": {
-                "memory": memory_meta,
-            },
+            "meta": resp_meta,
         }), 200
 
     except Exception as e:
@@ -6851,6 +7011,17 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
         "has_image_payload": False,
     })
 
+    def _merge_last_call_meta(extra: Optional[Dict[str, Any]] = None):
+        try:
+            cur = _get_last_call_meta()
+            if not isinstance(cur, dict):
+                cur = {}
+            if isinstance(extra, dict):
+                cur.update(extra)
+            _set_last_call_meta(cur)
+        except Exception:
+            pass
+
     def _flatten_msg_content(content: Any) -> str:
         if isinstance(content, str):
             return content
@@ -6988,6 +7159,72 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
         except Exception:
             pass
         return "".join(chunks).strip()
+
+    def _extract_reasoning_from_openai_like_obj(data: Any) -> str:
+        """
+        提取 OpenAI/兼容返回中的 reasoning 字段。
+        """
+        try:
+            if not isinstance(data, dict):
+                return ""
+            for k in ("reasoning_content", "reasoning", "thinking"):
+                t = _normalize_reasoning_text(data.get(k))
+                if t:
+                    return t
+
+            choice0 = {}
+            try:
+                choices = data.get("choices") or []
+                if isinstance(choices, list) and choices:
+                    choice0 = choices[0] if isinstance(choices[0], dict) else {}
+            except Exception:
+                choice0 = {}
+            if isinstance(choice0, dict):
+                for node in (choice0.get("message"), choice0.get("delta"), choice0):
+                    if not isinstance(node, dict):
+                        continue
+                    for k in ("reasoning_content", "reasoning", "thinking"):
+                        t = _normalize_reasoning_text(node.get(k))
+                        if t:
+                            return t
+            return ""
+        except Exception:
+            return ""
+
+    def _extract_reasoning_from_responses_obj(data: Any) -> str:
+        """
+        提取 /responses 风格返回中的 reasoning 字段。
+        """
+        try:
+            if not isinstance(data, dict):
+                return ""
+            direct = _normalize_reasoning_text(
+                data.get("reasoning_content") or data.get("reasoning") or data.get("thinking")
+            )
+            if direct:
+                return direct
+            parts: List[str] = []
+            outputs = data.get("output") or []
+            if isinstance(outputs, list):
+                for o in outputs:
+                    if not isinstance(o, dict):
+                        continue
+                    c_list = o.get("content") or []
+                    if not isinstance(c_list, list):
+                        continue
+                    for c in c_list:
+                        if not isinstance(c, dict):
+                            continue
+                        tp = str(c.get("type") or "").strip().lower()
+                        if tp in {"reasoning", "output_reasoning"}:
+                            t = _normalize_reasoning_text(
+                                c.get("text") or c.get("content") or c.get("reasoning")
+                            )
+                            if t:
+                                parts.append(t)
+            return "\n".join([x for x in parts if x]).strip()
+        except Exception:
+            return ""
 
     def _http_status_from_exc(e) -> int:
         try:
@@ -7188,6 +7425,7 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                 rr.raise_for_status()
                 jd = rr.json() or {}
                 txt = _responses_output_text(jd)
+                reasoning_hint = _extract_reasoning_from_responses_obj(jd)
                 _set_last_call_meta({
                     "primary_provider": "newapi",
                     "final_provider": "newapi",
@@ -7196,6 +7434,8 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                     "has_image_payload": bool(has_image_payload),
                     "vision_api": "responses",
                 })
+                if reasoning_hint:
+                    _merge_last_call_meta({"reasoning_text": reasoning_hint})
                 try:
                     print("[Vision API] using /responses for multimodal request")
                 except Exception:
@@ -7220,6 +7460,7 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
         if stream:
             def _gen():
                 got_any = False
+                reasoning_chunks: List[str] = []
                 try:
                     with _newapi_post_with_retry(
                         url,
@@ -7247,10 +7488,28 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                             # OpenAI-like: choices[0].delta.content
                             choices = obj.get("choices") or []
                             if choices:
-                                delta = (choices[0].get("delta") or {}).get("content")
+                                c0 = choices[0] if isinstance(choices[0], dict) else {}
+                                d0 = c0.get("delta") or {}
+                                reasoning_delta = _normalize_reasoning_text(
+                                    d0.get("reasoning_content")
+                                    or d0.get("reasoning")
+                                    or d0.get("thinking")
+                                    or (c0.get("message") or {}).get("reasoning_content")
+                                    or (c0.get("message") or {}).get("reasoning")
+                                    or (c0.get("message") or {}).get("thinking")
+                                )
+                                if reasoning_delta:
+                                    reasoning_chunks.append(reasoning_delta)
+                                    yield _pack_reasoning_stream_delta(reasoning_delta)
+                                delta = d0.get("content")
                                 if delta:
                                     got_any = True
                                     yield str(delta)
+                            else:
+                                fallback_reasoning = _extract_reasoning_from_openai_like_obj(obj)
+                                if fallback_reasoning:
+                                    reasoning_chunks.append(fallback_reasoning)
+                                    yield _pack_reasoning_stream_delta(fallback_reasoning)
 
                 except Exception as e:
                     if _is_newapi_rate_limited(e):
@@ -7329,7 +7588,13 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                         )
                         r.raise_for_status()
                         data = r.json()
-                        raw_txt = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+                        msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
+                        raw_txt = (msg_obj.get("content") or "")
+                        reasoning_hint = _normalize_reasoning_text(
+                            msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or msg_obj.get("thinking")
+                        )
+                        if reasoning_hint:
+                            reasoning_chunks.append(reasoning_hint)
                         txt = _flatten_msg_content(raw_txt).strip()
                         yield txt if txt else "(Sorry, I could not respond properly just now. Please provide more detail.)"
                     except Exception as e:
@@ -7370,6 +7635,9 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                                 yield "❌ The current NEW API/model does not support image input. Please switch to a vision-capable model."
                                 return
                             yield f"❌ NEW API fallback failed: {e}"
+                reasoning_text = "".join([str(x or "") for x in reasoning_chunks if str(x or "").strip()]).strip()
+                if reasoning_text:
+                    _merge_last_call_meta({"reasoning_text": reasoning_text})
 
             return _gen()
 
@@ -7387,7 +7655,13 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
             )
             r.raise_for_status()
             data = r.json()
-            raw_reply = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+            msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
+            raw_reply = (msg_obj.get("content") or "")
+            reasoning_hint = _normalize_reasoning_text(
+                msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or msg_obj.get("thinking")
+            )
+            if reasoning_hint:
+                _merge_last_call_meta({"reasoning_text": reasoning_hint})
             reply = _flatten_msg_content(raw_reply).strip()
             return reply if reply else "(Sorry, I could not respond properly just now. Please provide more detail.)"
         except Exception as e:
@@ -7492,6 +7766,7 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
     if stream:
         def _gen():
             got = False
+            reasoning_chunks: List[str] = []
             try:
                 with requests.post(chat_url, json=payload, stream=True, timeout=(8, MAX_REQUEST_SECONDS)) as r:
                     r.raise_for_status()
@@ -7511,6 +7786,17 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                             continue
                         if obj.get("done"):
                             break
+                        reasoning_delta = _normalize_reasoning_text(
+                            obj.get("thinking")
+                            or obj.get("reasoning")
+                            or (obj.get("delta") or {}).get("thinking")
+                            or (obj.get("delta") or {}).get("reasoning")
+                            or (obj.get("message") or {}).get("thinking")
+                            or (obj.get("message") or {}).get("reasoning")
+                        )
+                        if reasoning_delta:
+                            reasoning_chunks.append(reasoning_delta)
+                            yield _pack_reasoning_stream_delta(reasoning_delta)
                         chunk = obj.get("delta") or ((obj.get("message") or {}).get("content")) or obj.get("response") or ""
                         if chunk:
                             got = True
@@ -7523,18 +7809,37 @@ def call_model(messages, stream=False, max_tokens=None, temperature=None, top_p=
                     r = requests.post(chat_url, json={**payload, "stream": False}, timeout=MAX_REQUEST_SECONDS)
                     r.raise_for_status()
                     data = r.json()
+                    reasoning_hint = _normalize_reasoning_text(
+                        (data.get("message") or {}).get("thinking")
+                        or (data.get("message") or {}).get("reasoning")
+                        or data.get("thinking")
+                        or data.get("reasoning")
+                    )
+                    if reasoning_hint:
+                        reasoning_chunks.append(reasoning_hint)
                     txt = ((data.get("message") or {}).get("content") or data.get("response") or "").strip()
                     if not txt:
                         txt = _gen_fallback_with_generate(text_only_messages)
                     yield txt
                 except Exception:
                     yield _gen_fallback_with_generate(text_only_messages)
+            reasoning_text = "".join([str(x or "") for x in reasoning_chunks if str(x or "").strip()]).strip()
+            if reasoning_text:
+                _merge_last_call_meta({"reasoning_text": reasoning_text})
         return _gen()
 
     try:
         r = requests.post(chat_url, json=payload, timeout=MAX_REQUEST_SECONDS)
         r.raise_for_status()
         data = r.json()
+        reasoning_hint = _normalize_reasoning_text(
+            (data.get("message") or {}).get("thinking")
+            or (data.get("message") or {}).get("reasoning")
+            or data.get("thinking")
+            or data.get("reasoning")
+        )
+        if reasoning_hint:
+            _merge_last_call_meta({"reasoning_text": reasoning_hint})
         reply = (data.get("message") or {}).get("content", "") or data.get("response", "") or ""
         reply = reply.strip()
         if reply:
@@ -8659,7 +8964,160 @@ def api_chat_completions():
         # ---- 7) 流式 ----
         if stream:
             def generate():
-                buf = []
+                buf: List[str] = []
+                parsed_reasoning_chunks: List[str] = []
+                sent_visible_delta = False
+                reasoning_started_sent = False
+                reasoning_ended_sent = False
+                provider_reasoning_last_raw = ""
+                stream_pending = ""
+                stream_phase = "seek_start"  # seek_start | reasoning | answer
+                stream_end_tag = ""
+                max_start_tag_keep = max((len(s) - 1 for s, _ in _REASONING_TAG_PAIRS), default=0)
+
+                def _build_answer_payload(piece_text: str) -> Dict[str, Any]:
+                    return {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": MODEL_NAME,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": piece_text},
+                            "finish_reason": None
+                        }]
+                    }
+
+                def _build_reasoning_payload(reasoning_delta: str) -> Dict[str, Any]:
+                    return {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": MODEL_NAME,
+                        "meta": {
+                            "reasoning": {
+                                "delta": reasoning_delta,
+                                "append": True
+                            }
+                        },
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": None
+                        }]
+                    }
+
+                def _split_reasoning_delta(text: str, chunk_size: int = 36) -> List[str]:
+                    s = str(text or "")
+                    if not s:
+                        return []
+                    if chunk_size <= 0:
+                        return [s]
+                    return [s[i:i + chunk_size] for i in range(0, len(s), chunk_size)]
+
+                def _normalize_provider_reasoning_delta(raw_delta: str) -> str:
+                    nonlocal provider_reasoning_last_raw
+                    cur = str(raw_delta or "")
+                    if not cur:
+                        return ""
+                    out = cur
+                    if provider_reasoning_last_raw:
+                        if cur == provider_reasoning_last_raw:
+                            out = ""
+                        elif cur.startswith(provider_reasoning_last_raw):
+                            out = cur[len(provider_reasoning_last_raw):]
+                    provider_reasoning_last_raw = cur
+                    return out
+
+                def _build_reasoning_state_payload(state: str) -> Dict[str, Any]:
+                    return {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": MODEL_NAME,
+                        "meta": {
+                            "reasoning": {
+                                "state": str(state or "").strip().lower()
+                            }
+                        },
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": None
+                        }]
+                    }
+
+                def _stream_reasoning_events(piece_text: str, final_flush: bool = False) -> List[Tuple[str, str]]:
+                    nonlocal stream_pending, stream_phase, stream_end_tag
+                    events: List[Tuple[str, str]] = []
+                    if piece_text:
+                        stream_pending += piece_text
+
+                    while True:
+                        if stream_phase == "seek_start":
+                            lower_pending = stream_pending.lower()
+                            best: Optional[Tuple[int, str]] = None
+                            best_end = ""
+                            for start_tag, end_tag in _REASONING_TAG_PAIRS:
+                                idx = lower_pending.find(start_tag)
+                                if idx >= 0 and (best is None or idx < best[0]):
+                                    best = (idx, start_tag)
+                                    best_end = end_tag
+
+                            if best is None:
+                                keep_tail = 0 if final_flush else max_start_tag_keep
+                                if len(stream_pending) <= keep_tail:
+                                    break
+                                out = stream_pending[:-keep_tail] if keep_tail else stream_pending
+                                stream_pending = stream_pending[-keep_tail:] if keep_tail else ""
+                                if out:
+                                    events.append(("answer", out))
+                                break
+
+                            idx, start_tag = best
+                            prefix = stream_pending[:idx]
+                            if prefix and prefix.strip():
+                                events.append(("answer", prefix))
+                            stream_pending = stream_pending[idx + len(start_tag):]
+                            stream_phase = "reasoning"
+                            stream_end_tag = best_end
+                            events.append(("reasoning_start", ""))
+                            continue
+
+                        if stream_phase == "reasoning":
+                            if not stream_end_tag:
+                                stream_phase = "answer"
+                                continue
+                            lower_pending = stream_pending.lower()
+                            end_idx = lower_pending.find(stream_end_tag)
+                            if end_idx < 0:
+                                keep_tail = 0 if final_flush else max(0, len(stream_end_tag) - 1)
+                                if len(stream_pending) <= keep_tail:
+                                    break
+                                out = stream_pending[:-keep_tail] if keep_tail else stream_pending
+                                stream_pending = stream_pending[-keep_tail:] if keep_tail else ""
+                                if out:
+                                    events.append(("reasoning", out))
+                                break
+
+                            reasoning_piece = stream_pending[:end_idx]
+                            if reasoning_piece:
+                                events.append(("reasoning", reasoning_piece))
+                            stream_pending = stream_pending[end_idx + len(stream_end_tag):]
+                            stream_phase = "answer"
+                            stream_end_tag = ""
+                            continue
+
+                        if stream_phase == "answer":
+                            if stream_pending:
+                                events.append(("answer", stream_pending))
+                                stream_pending = ""
+                            break
+
+                        break
+
+                    return events
+
                 with _model_lock:
                     for delta in call_model(
                         messages_for_model,
@@ -8669,50 +9127,145 @@ def api_chat_completions():
                         top_p=top_p,
                         top_k=top_k
                     ):
+                        reasoning_delta_from_provider = _unpack_reasoning_stream_delta(delta)
+                        if reasoning_delta_from_provider:
+                            normalized_provider_delta = _normalize_provider_reasoning_delta(reasoning_delta_from_provider)
+                            if not normalized_provider_delta:
+                                continue
+                            if not reasoning_started_sent:
+                                reasoning_started_sent = True
+                                start_payload = _build_reasoning_state_payload("start")
+                                yield f"data: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+                            for rd in _split_reasoning_delta(normalized_provider_delta):
+                                if not rd:
+                                    continue
+                                parsed_reasoning_chunks.append(rd)
+                                payload = _build_reasoning_payload(rd)
+                                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            continue
+
                         piece = clean_reply_text(str(delta))
                         if piece:
                             buf.append(piece)
-
-                        payload = {
-                            "id": f"chatcmpl-{int(time.time())}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": MODEL_NAME,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": piece},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-
-                full = clean_reply_text("".join(buf)).strip()
-                if web_items:
-                    if web_items and _reply_denies_web_access(full):
-                        corrected = _build_web_digest_for_reply(
-                            web_items,
-                            max_items=safe_int(meta.get("web_top_k"), 6),
-                        )
-                        if corrected:
-                            addon_fix = "\n\n（已根据联网结果自动更正）\n" + corrected
-                            full = (full.rstrip() + addon_fix).strip()
-                            payload = {
-                                "id": f"chatcmpl-{int(time.time())}",
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": MODEL_NAME,
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {"content": addon_fix},
-                                    "finish_reason": None
-                                }]
-                            }
+                        events = _stream_reasoning_events(piece, final_flush=False)
+                        for ev_type, ev_text in events:
+                            if not ev_text:
+                                if ev_type != "reasoning_start":
+                                    continue
+                            if ev_type == "reasoning_start":
+                                if not reasoning_started_sent:
+                                    reasoning_started_sent = True
+                                    start_payload = _build_reasoning_state_payload("start")
+                                    yield f"data: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+                                continue
+                            if ev_type == "reasoning":
+                                if not reasoning_started_sent:
+                                    reasoning_started_sent = True
+                                    start_payload = _build_reasoning_state_payload("start")
+                                    yield f"data: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+                                for rd in _split_reasoning_delta(ev_text):
+                                    if not rd:
+                                        continue
+                                    parsed_reasoning_chunks.append(rd)
+                                    payload = _build_reasoning_payload(rd)
+                                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                                continue
+                            if reasoning_started_sent and not reasoning_ended_sent:
+                                reasoning_ended_sent = True
+                                end_payload = _build_reasoning_state_payload("end")
+                                yield f"data: {json.dumps(end_payload, ensure_ascii=False)}\n\n"
+                            payload = _build_answer_payload(ev_text)
                             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            sent_visible_delta = True
+
+                for ev_type, ev_text in _stream_reasoning_events("", final_flush=True):
+                    if not ev_text:
+                        if ev_type != "reasoning_start":
+                            continue
+                    if ev_type == "reasoning_start":
+                        if not reasoning_started_sent:
+                            reasoning_started_sent = True
+                            start_payload = _build_reasoning_state_payload("start")
+                            yield f"data: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+                        continue
+                    if ev_type == "reasoning":
+                        if not reasoning_started_sent:
+                            reasoning_started_sent = True
+                            start_payload = _build_reasoning_state_payload("start")
+                            yield f"data: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
+                        for rd in _split_reasoning_delta(ev_text):
+                            if not rd:
+                                continue
+                            parsed_reasoning_chunks.append(rd)
+                            payload = _build_reasoning_payload(rd)
+                            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        continue
+                    if reasoning_started_sent and not reasoning_ended_sent:
+                        reasoning_ended_sent = True
+                        end_payload = _build_reasoning_state_payload("end")
+                        yield f"data: {json.dumps(end_payload, ensure_ascii=False)}\n\n"
+                    payload = _build_answer_payload(ev_text)
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    sent_visible_delta = True
+
+                if reasoning_started_sent and (not reasoning_ended_sent):
+                    reasoning_ended_sent = True
+                    end_payload = _build_reasoning_state_payload("end")
+                    yield f"data: {json.dumps(end_payload, ensure_ascii=False)}\n\n"
+
+                reply_raw = clean_reply_text("".join(buf)).strip()
+                call_meta = _get_last_call_meta()
+                reasoning_text, full = extract_reasoning_if_any(
+                    _effective_model_name_for_reasoning(call_meta),
+                    reply_raw,
+                )
+                if not str(reasoning_text or "").strip():
+                    reasoning_text = "".join([str(x or "") for x in parsed_reasoning_chunks if str(x or "").strip()]).strip()
+                if not str(reasoning_text or "").strip():
+                    reasoning_text = _reasoning_from_call_meta(call_meta)
+                full = clean_reply_text(str(full or "")).strip()
+
+                if web_items and _reply_denies_web_access(full):
+                    corrected = _build_web_digest_for_reply(
+                        web_items,
+                        max_items=safe_int(meta.get("web_top_k"), 6),
+                    )
+                    if corrected:
+                        addon_fix = "\n\n（已根据联网结果自动更正）\n" + corrected
+                        full = (full.rstrip() + addon_fix).strip()
+                        payload = _build_answer_payload(addon_fix)
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        sent_visible_delta = True
+
+                if (not sent_visible_delta) and full:
+                    payload = _build_answer_payload(full)
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    sent_visible_delta = True
+
                 if full:
                     try:
                         save_chat(user_input or "[no_user]", full, meta=meta)
                     except Exception as e:
                         print("[save_chat error]", e)
+
+                if str(reasoning_text or "").strip():
+                    meta_payload = {
+                        "id": f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": MODEL_NAME,
+                        "meta": {
+                            "reasoning": {
+                                "text": str(reasoning_text or "").strip()
+                            }
+                        },
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
 
                 yield "data: [DONE]\n\n"
 
@@ -8733,7 +9286,15 @@ def api_chat_completions():
                 top_k=top_k
             )
 
-        reply_text = clean_reply_text(str(reply))
+        reply_raw = clean_reply_text(str(reply))
+        call_meta = _get_last_call_meta()
+        reasoning_text, reply_text = extract_reasoning_if_any(
+            _effective_model_name_for_reasoning(call_meta),
+            reply_raw,
+        )
+        if not str(reasoning_text or "").strip():
+            reasoning_text = _reasoning_from_call_meta(call_meta)
+        reply_text = clean_reply_text(str(reply_text or ""))
         if web_items:
             if web_items and _reply_denies_web_access(reply_text):
                 corrected = _build_web_digest_for_reply(
@@ -8747,7 +9308,7 @@ def api_chat_completions():
         except Exception as e:
             print("[save_chat error]", e)
 
-        resp = {
+        resp: Dict[str, Any] = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
             "created": int(time.time()),
@@ -8758,6 +9319,12 @@ def api_chat_completions():
                 "finish_reason": "stop"
             }]
         }
+        if str(reasoning_text or "").strip():
+            resp["meta"] = {
+                "reasoning": {
+                    "text": str(reasoning_text or "").strip()
+                }
+            }
         return Response(json.dumps(resp, ensure_ascii=False), status=200, mimetype="application/json; charset=utf-8")
 
     except Exception as e:
