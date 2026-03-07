@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.1.0（桃源星庭本地智能体系统）
+﻿# TYXT Local Agent v1.1.1（桃源星庭本地智能体系统）
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![平台](https://img.shields.io/badge/平台-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -136,3 +136,10 @@ MCP 桥接配置：
 
 本项目采用 **GNU Affero General Public License v3.0（AGPL-3.0）**。
 详见 [LICENSE](LICENSE)。
+
+## 支持桃源星庭 🌱
+
+如果这个项目对你有帮助，欢迎支持后续开发：
+
+<img src="docs/donate-qrcode.png" alt="donate" width="320" />
+
