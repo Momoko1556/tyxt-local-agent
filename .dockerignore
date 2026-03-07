@@ -1,0 +1,35 @@
+.git
+.gitignore
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Local secrets / private config
+.env
+config.json
+tools/api_config.json
+configs/user_profiles.json
+configs/persona_config.json
+configs/mcp_servers.json
+
+# Runtime and user data
+memory_db/*
+!memory_db/.gitkeep
+memory_warehouse/*
+!memory_warehouse/.gitkeep
+profiles/*
+!profiles/.gitkeep
+Ollama_agent_shared/*
+!Ollama_agent_shared/.gitkeep
+tmp_images/
+
+# Optional local assets
+GPT-SoVITS-1007-cu124/
+skills_quarantine/
+tools/mkcert/
+certs/lan/*
+!certs/lan/.gitkeep

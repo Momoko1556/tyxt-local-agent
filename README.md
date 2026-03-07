@@ -48,6 +48,12 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/` (when LAN certs exist)
 
+## Docker Deployment
+
+Use the publish-ready Docker packaging:
+
+- [DOCKER.md](DOCKER.md)
+
 ## LAN HTTPS (Optional)
 
 Server first-time setup:

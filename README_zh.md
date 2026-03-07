@@ -48,6 +48,12 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/`（存在局域网证书时）
 
+## Docker 部署
+
+可使用已整理好的 Docker 封装：
+
+- [DOCKER.md](DOCKER.md)
+
 ## 局域网 HTTPS（可选）
 
 服务端首次配置：
