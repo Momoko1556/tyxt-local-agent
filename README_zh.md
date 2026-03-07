@@ -56,6 +56,19 @@ docker compose up -d --build --pull never
 docker compose ps
 ```
 
+## BAT 脚本什么时候用
+
+- `setup_project.bat`
+首次初始化环境时使用。会创建 `.venv`、安装依赖、初始化 ChromaDB，并尝试安装/拉取 Ollama 模型。
+- `start_agent.bat`
+日常启动后端和网页时使用。默认优先用 `.venv`，自动打开本机 UI 地址。
+- `start_lan_https_easy.bat`
+当你要给局域网其他设备通过 HTTPS 访问时使用（服务端机器执行）。会准备证书并调用 `start_agent.bat` 启动。
+- `client_join_lan_ui.bat`
+给局域网客户端首次接入时使用（客户端机器执行）。会自动发现服务端并安装信任证书。
+- `client_join_lan_ui_zero_input.bat`
+零输入客户端脚本（固定了服务端 IP/域名），适合发给不懂配置的客户端用户直接双击接入。
+
 ## 基础配置
 
 先复制：

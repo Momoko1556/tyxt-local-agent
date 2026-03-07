@@ -56,6 +56,19 @@ docker compose up -d --build --pull never
 docker compose ps
 ```
 
+## When to Use Each BAT Script
+
+- `setup_project.bat`
+Use this for first-time setup. It creates `.venv`, installs dependencies, initializes ChromaDB, and tries to prepare Ollama/model.
+- `start_agent.bat`
+Use this for normal daily startup. It runs the backend with local env and opens the local UI URL.
+- `start_lan_https_easy.bat`
+Use this on the server machine when you want LAN clients to access via HTTPS. It prepares certs and then starts the backend.
+- `client_join_lan_ui.bat`
+Use this on a LAN client machine for first-time client onboarding. It auto-discovers server and installs trust cert.
+- `client_join_lan_ui_zero_input.bat`
+Use this zero-input client script when server IP/domain is pre-filled, for non-technical users to connect with one double-click.
+
 ## Basic Configuration
 
 Copy:
