@@ -49,7 +49,16 @@ Recommended for China mainland networks (beginner two-step flow):
 Run `setup_start_cn.bat`. It uses CN pip mirrors by default.
 When you see `[OK] Setup completed.`, step 1 is done.
 2. Step 2: Install/start Ollama, pull model, then start TYXT
-Install and start Ollama first. If `ollama` is not recognized, install Ollama before continuing. Then run:
+Install and start Ollama first. If `ollama` is not recognized, install Ollama before continuing:
+- Official Windows download: https://ollama.com/download/windows
+- Fallback install command (PowerShell): `winget install -e --id Ollama.Ollama`
+
+After install, reopen terminal and verify:
+```bat
+ollama --version
+```
+
+Then run:
 ```bat
 ollama pull deepseek-r1:8b
 ```

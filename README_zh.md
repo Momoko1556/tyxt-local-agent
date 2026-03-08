@@ -49,7 +49,16 @@ start_agent.bat
 运行 `setup_start_cn.bat`，脚本会自动使用国内 pip 镜像安装依赖。  
 看到 `[OK] Setup completed.` 就表示第一步完成。
 2. 第二步：单独安装 Ollama 并拉模型，再启动项目
-先安装并启动 Ollama（如果提示 `ollama 不是内部或外部命令`，说明 Ollama 还没安装好），然后在命令行执行：
+先安装并启动 Ollama（如果提示 `ollama 不是内部或外部命令`，说明 Ollama 还没安装好）：
+- 官方下载（Windows）：https://ollama.com/download/windows
+- 备用安装命令（PowerShell）：`winget install -e --id Ollama.Ollama`
+
+安装完成后，重新打开命令行，先验证：
+```bat
+ollama --version
+```
+
+然后执行：
 ```bat
 ollama pull deepseek-r1:8b
 ```
