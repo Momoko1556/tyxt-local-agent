@@ -43,10 +43,21 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/` (when LAN certs exist)
 
-Recommended for China mainland networks (two-step flow):
+Recommended for China mainland networks (beginner two-step flow):
 
-1. Run `setup_start_cn.bat` first to install Python dependencies (uses CN pip mirrors by default and skips Ollama/model bootstrap by default).
-2. Install/start Ollama separately, run `ollama pull <model>` (for example `deepseek-r1:8b`), then run `start_agent.bat`.
+1. Step 1: Install Python dependencies first (without model pull)
+Run `setup_start_cn.bat`. It uses CN pip mirrors by default.
+When you see `[OK] Setup completed.`, step 1 is done.
+2. Step 2: Install/start Ollama, pull model, then start TYXT
+Install and start Ollama first. If `ollama` is not recognized, install Ollama before continuing. Then run:
+```bat
+ollama pull deepseek-r1:8b
+```
+Then run:
+```bat
+start_agent.bat
+```
+Finally open `http://127.0.0.1:5000/`.
 
 ## Option B: Run with Docker
 

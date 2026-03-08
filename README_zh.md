@@ -43,10 +43,21 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/`（有 LAN 证书时）
 
-中国网络建议（两步走）：
+中国用户安装（小白两步走）：
 
-1. 先双击 `setup_start_cn.bat` 安装 Python 依赖（默认使用国内 pip 镜像，并默认跳过 Ollama 自动安装/拉模型）。
-2. 再单独安装并启动 Ollama，手动执行 `ollama pull <模型名>`（例如 `deepseek-r1:8b`），最后运行 `start_agent.bat`。
+1. 第一步：先装 Python 依赖（不拉模型）
+运行 `setup_start_cn.bat`，脚本会自动使用国内 pip 镜像安装依赖。  
+看到 `[OK] Setup completed.` 就表示第一步完成。
+2. 第二步：单独安装 Ollama 并拉模型，再启动项目
+先安装并启动 Ollama（如果提示 `ollama 不是内部或外部命令`，说明 Ollama 还没安装好），然后在命令行执行：
+```bat
+ollama pull deepseek-r1:8b
+```
+拉完模型后，回到项目目录运行：
+```bat
+start_agent.bat
+```
+最后打开 `http://127.0.0.1:5000/`。
 
 ## 方式 B：Docker 运行
 
