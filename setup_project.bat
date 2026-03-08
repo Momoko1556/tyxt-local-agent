@@ -14,6 +14,12 @@ set "PYTHON_CMD="
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
 set "OLLAMA_MODEL=deepseek-r1:8b"
 
+rem Prefer CN mirrors by default (can be overridden by env vars)
+if "%PIP_INDEX_URL%"=="" set "PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple"
+if "%PIP_TRUSTED_HOST%"=="" set "PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn"
+if "%PIP_DEFAULT_TIMEOUT%"=="" set "PIP_DEFAULT_TIMEOUT=180"
+if "%PIP_RETRIES%"=="" set "PIP_RETRIES=5"
+
 if exist "%VENV_PY%" (
   set "PYTHON_CMD=%VENV_PY%"
 ) else (
@@ -49,9 +55,10 @@ if not exist "%VENV_PY%" (
 
 set "PYTHON_CMD=%VENV_PY%"
 echo [INFO] Using interpreter: %PYTHON_CMD%
+echo [INFO] pip index: %PIP_INDEX_URL%
 
 echo [2/4] Upgrading pip/setuptools/wheel...
-"%PYTHON_CMD%" -m pip install --upgrade pip setuptools wheel
+"%PYTHON_CMD%" -m pip install --upgrade pip setuptools wheel --retries %PIP_RETRIES% --timeout %PIP_DEFAULT_TIMEOUT%
 if not "%errorlevel%"=="0" (
   echo [ERROR] pip upgrade failed.
   pause
@@ -59,7 +66,7 @@ if not "%errorlevel%"=="0" (
 )
 
 echo [3/4] Installing dependencies from requirements.txt...
-"%PYTHON_CMD%" -m pip install -r requirements.txt
+"%PYTHON_CMD%" -m pip install -r requirements.txt --retries %PIP_RETRIES% --timeout %PIP_DEFAULT_TIMEOUT%
 if not "%errorlevel%"=="0" (
   echo [ERROR] Dependency installation failed.
   pause

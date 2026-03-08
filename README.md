@@ -43,6 +43,11 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/` (when LAN certs exist)
 
+Recommended for China mainland networks (two-step flow):
+
+1. Run `setup_start_cn.bat` first to install Python dependencies (uses CN pip mirrors by default and skips Ollama/model bootstrap by default).
+2. Install/start Ollama separately, run `ollama pull <model>` (for example `deepseek-r1:8b`), then run `start_agent.bat`.
+
 ## Option B: Run with Docker
 
 See full guide:
@@ -58,6 +63,8 @@ docker compose ps
 
 ## When to Use Each BAT Script
 
+- `setup_start_cn.bat`
+CN-friendly setup/start entry. Uses China pip mirrors and follows a two-step default flow (dependencies first, Ollama/model handled separately).
 - `setup_project.bat`
 Use this for first-time setup. It creates `.venv`, installs dependencies, initializes ChromaDB, and tries to prepare Ollama/model.
 - `start_agent.bat`

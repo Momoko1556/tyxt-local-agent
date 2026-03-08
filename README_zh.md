@@ -43,6 +43,11 @@ start_agent.bat
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/`（有 LAN 证书时）
 
+中国网络建议（两步走）：
+
+1. 先双击 `setup_start_cn.bat` 安装 Python 依赖（默认使用国内 pip 镜像，并默认跳过 Ollama 自动安装/拉模型）。
+2. 再单独安装并启动 Ollama，手动执行 `ollama pull <模型名>`（例如 `deepseek-r1:8b`），最后运行 `start_agent.bat`。
+
 ## 方式 B：Docker 运行
 
 详细说明见：
@@ -58,6 +63,8 @@ docker compose ps
 
 ## BAT 脚本什么时候用
 
+- `setup_start_cn.bat`
+面向中国网络环境的一键安装+启动入口。优先用国内 pip 镜像，并按“两步走”默认策略先装依赖、再单独处理 Ollama/模型。
 - `setup_project.bat`
 首次初始化环境时使用。会创建 `.venv`、安装依赖、初始化 ChromaDB，并尝试安装/拉取 Ollama 模型。
 - `start_agent.bat`
