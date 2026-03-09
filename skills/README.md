@@ -163,7 +163,7 @@ Example config:
       "name": "claude_desktop_bridge",
       "command": "python",
       "args": ["-m", "my_mcp_bridge"],
-      "cwd": "E:/your/path",
+      "cwd": "./your/path",
       "env": {
         "SOME_ENV": "value"
       },

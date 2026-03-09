@@ -54,12 +54,10 @@ http://192.168.0.103:5000/
 
 ## 2.3 打开手机UI（手机）
 
-在电脑开一个终端（CMD 或 PowerShell）：
+在项目根目录双击：
 
 ```bat
-cd /d "e:\Ollama memory_project\third_party\tyxt_mobile_frontend"
-npm install
-npm run dev -- --host 0.0.0.0 --port 5173
+start_mobile_ui.bat
 ```
 
 然后手机浏览器打开：
@@ -76,9 +74,9 @@ http://192.168.0.103:5173
 
 ## 2.4 局域网模式常见报错
 
-1. `npm ERR! enoent ... C:\Users\xxx\package.json`  
-原因：你没进入 `tyxt_mobile_frontend` 目录。  
-修复：用 `cd /d "e:\Ollama memory_project\third_party\tyxt_mobile_frontend"`。
+1. `npm ERR! enoent ... <用户目录>\package.json`  
+原因：你在错误目录运行了 `npm`。  
+修复：直接用 `start_mobile_ui.bat`，不要手动写绝对路径。
 
 2. 手机打不开 `:5173`  
 原因：防火墙拦截 Node。  

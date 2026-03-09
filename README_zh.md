@@ -131,6 +131,8 @@ stop_all.bat
 日常启动后端和网页时使用。默认优先用 `.venv`，自动打开本机 UI 地址。
 - `start_local.bat`
 本地启动快捷入口（等价于调用 `start_agent.bat`），给小白用户减少选择困难。
+- `start_mobile_ui.bat`
+手机 UI 启动快捷入口。自动切到 `third_party\tyxt_mobile_frontend`，首次会自动 `npm install`，并以局域网可访问方式启动 `5173` 端口。
 - `start_remote_easy.bat`
 跨网免域名入口。自动拉起本地后端并创建临时公网地址（`trycloudflare.com`），适合手机外网访问测试。
 - `start_remote_ngrok.bat`

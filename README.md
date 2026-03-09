@@ -135,6 +135,8 @@ Use this for first-time setup. It creates `.venv`, installs dependencies, initia
 Use this for normal daily startup. It runs the backend with local env and opens the local UI URL.
 - `start_local.bat`
 Simplified local start shortcut. It warns if `.venv` is missing, then calls `start_agent.bat`.
+- `start_mobile_ui.bat`
+Mobile UI start shortcut. It auto-enters `third_party\\tyxt_mobile_frontend`, runs `npm install` on first run, and starts dev server on port `5173` for LAN access.
 - `start_remote_easy.bat`
 No-domain remote access entry. It starts local backend in HTTP mode and creates a temporary public tunnel URL.
 - `start_remote_ngrok.bat`
