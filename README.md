@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.1.1
+﻿# TYXT Local Agent v1.2.0
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -208,3 +208,4 @@ Licensed under **AGPL-3.0**. See [LICENSE](LICENSE).
 ## Support
 
 <img src="docs/donate-qrcode.png" alt="donate" width="320" />
+
