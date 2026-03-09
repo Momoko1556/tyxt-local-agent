@@ -1,7 +1,11 @@
 @echo off
 setlocal
 
-title Ollama Multi-Agent Launcher
+if not "%TYXT_WINDOW_TITLE%"=="" (
+  title %TYXT_WINDOW_TITLE%
+) else (
+  title Ollama Multi-Agent Launcher
+)
 cd /d "%~dp0"
 
 echo.
@@ -51,6 +55,7 @@ set "TYXT_SSL_CERT_FILE=%~dp0certs\lan\server.pem"
 set "TYXT_SSL_KEY_FILE=%~dp0certs\lan\server-key.pem"
 set "USE_HTTPS=0"
 if exist "%TYXT_SSL_CERT_FILE%" if exist "%TYXT_SSL_KEY_FILE%" set "USE_HTTPS=1"
+if /I "%TYXT_FORCE_HTTP%"=="1" set "USE_HTTPS=0"
 
 if "%USE_HTTPS%"=="1" (
   set "UI_URL=https://127.0.0.1:5000/"
@@ -77,8 +82,12 @@ if "%USE_HTTPS%"=="1" (
 
 echo Web UI URL : %UI_URL%
 echo Health URL : %HEALTH_URL%
-echo Browser will open after backend starts...
-start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 2; Start-Process '%UI_URL%'"
+if /I "%TYXT_NO_BROWSER%"=="1" (
+  echo [INFO] Browser auto-open disabled by TYXT_NO_BROWSER=1
+) else (
+  echo Browser will open after backend starts...
+  start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 2; Start-Process '%UI_URL%'"
+)
 echo.
 
 "%PYTHON_EXE%" %PYTHON_ARGS% "%~dp0ollama_multi_agent.py"

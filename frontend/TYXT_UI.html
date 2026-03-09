@@ -1097,7 +1097,7 @@
 
     .param-row{display:flex;align-items:center;gap:10px;margin:10px 0}
     .param-row label{width:96px;color:var(--sub);font-size:13px}
-    .param-row input[type="number"], .param-row input[type="text"], .param-row select{
+    .param-row input[type="number"], .param-row input[type="text"], .param-row input[type="password"], .param-row select{
       flex:1;
       padding:10px 10px;
       border-radius:12px;
@@ -1133,6 +1133,10 @@
     .param-row input:focus{
       border-color:#c7d2fe;
       box-shadow:0 0 0 3px rgba(99,102,241,.12);
+    }
+    .param-row .pwd-wrap{
+      flex:1;
+      min-width:0;
     }
     .drawer .param-row input::placeholder{
       color:#9ca3af;
@@ -3276,6 +3280,16 @@
           </select>
         </div>
 
+        <div class="param-row">
+          <label for="input-mobile-link-api-key">手机关联密码</label>
+          <div class="pwd-wrap">
+            <input id="input-mobile-link-api-key" type="password" placeholder="用于手机端 API Key 关联"/>
+            <button type="button" class="pwd-toggle" data-target="input-mobile-link-api-key" title="显示密码">
+              <i class="fa-regular fa-eye"></i>
+            </button>
+          </div>
+        </div>
+
         <div class="param-actions">
           <button id="btn-save-params" class="small-btn primary"><i class="fa-solid fa-floppy-disk"></i>保存</button>
           <button id="btn-load-params" class="small-btn"><i class="fa-solid fa-rotate"></i>加载</button>
@@ -3950,6 +3964,7 @@
     const faviconLinkEl = document.querySelector("link[rel='icon']");
     const chatWelcomeEl = $("#chat-welcome");
     const LS_AUTH_USER_KEY = "shenxiu_auth_user";
+    const LS_MOBILE_LINK_API_KEY = "tyxt_mobile_link_api_key_v1";
     const LS_CHAT_SESSIONS_PREFIX = "tyxt_chat_sessions_v1";
     const LS_SIDEBAR_COLLAPSED_KEY = "tyxt_sidebar_collapsed_v1";
     const LS_UI_SETTINGS_PREFIX = "tyxt_ui_settings_v1";
@@ -4038,6 +4053,7 @@
     const drawerTitleIconEl = $("#drawer-title-icon");
     const cardParamsEl = $("#card-params");
     const cardApiEl = $("#card-api");
+    const inputMobileLinkApiKey = $("#input-mobile-link-api-key");
     const agentChipEl = $("#agent-chip");
     const agentPillTextEl = $("#agent-pill-text");
     const modelPillTextEl = $("#model-pill-text");
@@ -4110,6 +4126,7 @@
     let webSearchMode = "off"; // off | default | force
     let webSearchProvider = "builtin";
     let webSearchApiKey = "";
+    let mobileLinkApiKey = "";
 
     let ttsAudio = null;         // 全局 Audio 对象
     let ttsCurrentRow = null;    // 当前绑定的消息 row
@@ -4316,6 +4333,8 @@
         stream_output: "流式输出",
         stream_on: "开启（流式）",
         stream_off: "关闭（一次性）",
+        mobile_link_api_key: "手机关联密码",
+        mobile_link_api_key_ph: "用于手机端 API Key 关联",
         params_note: "保存会调用 /tools/save_params（无需重启）；同时会写入 config.json。",
         save: "保存",
         load: "加载",
@@ -4550,6 +4569,8 @@
         stream_output: "Streaming",
         stream_on: "Enabled (Streaming)",
         stream_off: "Disabled (One-shot)",
+        mobile_link_api_key: "Mobile Link Password",
+        mobile_link_api_key_ph: "Used as API key for mobile client binding",
         params_note: "Saving calls /tools/save_params (no restart needed) and writes to config.json.",
         save: "Save",
         load: "Load",
@@ -4846,6 +4867,8 @@
       setTextBySelector('label[for="input-chat-stream-enabled"]', "stream_output");
       setSelectOptionText("#input-chat-stream-enabled", "1", "stream_on");
       setSelectOptionText("#input-chat-stream-enabled", "0", "stream_off");
+      setTextBySelector('label[for="input-mobile-link-api-key"]', "mobile_link_api_key");
+      setPlaceholderBySelector("#input-mobile-link-api-key", "mobile_link_api_key_ph");
 
       const btnSaveParamsEl = document.getElementById("btn-save-params");
       const btnLoadParamsEl = document.getElementById("btn-load-params");
@@ -5279,12 +5302,83 @@
       return out.replace(/\n/g, "<br>");
     }
 
-    function apiFetch(url, options = {}){
+    function loadMobileLinkApiKeyLocal(){
+      try{
+        return String(localStorage.getItem(LS_MOBILE_LINK_API_KEY) || "").trim();
+      }catch(_){
+        return "";
+      }
+    }
+
+    function persistMobileLinkApiKeyLocal(v){
+      const key = String(v || "").trim();
+      try{
+        if(key){
+          localStorage.setItem(LS_MOBILE_LINK_API_KEY, key);
+        }else{
+          localStorage.removeItem(LS_MOBILE_LINK_API_KEY);
+        }
+      }catch(_){}
+    }
+
+    function setMobileLinkApiKey(v, options = {}){
+      const key = String(v || "").trim();
+      mobileLinkApiKey = key;
+      if(options.persist !== false){
+        persistMobileLinkApiKeyLocal(key);
+      }
+      if(options.syncInput !== false && inputMobileLinkApiKey){
+        inputMobileLinkApiKey.value = key;
+      }
+      return key;
+    }
+
+    function _resolveFetchRequestUrl(input){
+      try{
+        if(typeof input === "string") return input;
+        if(input && typeof input.url === "string") return input.url;
+      }catch(_){}
+      return "";
+    }
+
+    function _shouldAttachInboundApiKey(input){
+      const key = String(mobileLinkApiKey || "").trim();
+      if(!key) return false;
+      const rawUrl = _resolveFetchRequestUrl(input);
+      if(!rawUrl) return false;
+      try{
+        const u = new URL(rawUrl, window.location.href);
+        return u.origin === window.location.origin;
+      }catch(_){
+        return false;
+      }
+    }
+
+    function _withInboundApiKeyOptions(input, options = {}){
       const opts = Object.assign({}, options || {});
       if(!("credentials" in opts)){
         opts.credentials = "include";
       }
-      return fetch(url, opts);
+      if(!_shouldAttachInboundApiKey(input)){
+        return opts;
+      }
+      const headers = new Headers(opts.headers || {});
+      if(!headers.has("Authorization") && !headers.has("X-API-Key")){
+        headers.set("Authorization", `Bearer ${mobileLinkApiKey}`);
+      }
+      opts.headers = headers;
+      return opts;
+    }
+
+    const _nativeFetch = window.fetch.bind(window);
+    window.fetch = function(input, options){
+      return _nativeFetch(input, _withInboundApiKeyOptions(input, options));
+    };
+
+    setMobileLinkApiKey(loadMobileLinkApiKeyLocal(), {persist:false, syncInput:true});
+
+    function apiFetch(url, options = {}){
+      return fetch(url, _withInboundApiKeyOptions(url, options));
     }
 
     function normalizeRole(role){
@@ -10732,6 +10826,9 @@
       const winTurns = cfg.window_display_turn_limit ?? cfg.windowDisplayTurnLimit;
       const ollamaModel = cfg.ollama_model ?? (cfg.api_config && cfg.api_config.ollama_model);
       const streamEnabled = cfg.chat_stream_enabled ?? cfg.stream_output ?? cfg.streamEnabled;
+      const mobileLinkKey = String(
+        cfg.mobile_link_api_key ?? cfg.mobileLinkApiKey ?? cfg.mobile_bind_password ?? cfg.mobileBindPassword ?? ""
+      ).trim();
       const wsEnabled = cfg.web_search_enabled ?? cfg.webSearchEnabled;
       const wsModeRaw = cfg.web_search_mode ?? cfg.webSearchMode;
       const wsProvider = normalizeWebSearchProvider(cfg.web_search_provider ?? cfg.webSearchProvider);
@@ -10746,6 +10843,11 @@
       }
       if(inputChatStreamEnabled){
         inputChatStreamEnabled.value = asBool(streamEnabled, true) ? "1" : "0";
+      }
+      if(mobileLinkKey){
+        setMobileLinkApiKey(mobileLinkKey, {persist:true, syncInput:true});
+      }else if(inputMobileLinkApiKey){
+        inputMobileLinkApiKey.value = String(mobileLinkApiKey || "");
       }
       webSearchProvider = wsProvider;
       webSearchApiKey = wsApiKey;
@@ -10799,6 +10901,7 @@
         window_display_turn_limit:getIntInputValue(inputWindowDisplayTurnLimit, 60, 1, 5000),
         ollama_model:String((inputOllamaModelParam && inputOllamaModelParam.value) || "").trim(),
         chat_stream_enabled:isStreamOutputEnabled(),
+        mobile_link_api_key:String((inputMobileLinkApiKey && inputMobileLinkApiKey.value) || "").trim(),
         web_search_enabled: !!(normalizeWebSearchMode(webSearchMode) !== "off"),
         web_search_mode: normalizeWebSearchMode(webSearchMode),
         web_search_provider: normalizeWebSearchProvider(webSearchProvider),
@@ -10813,6 +10916,7 @@
         });
         if(r.ok){
           await r.json().catch(()=>null);
+          setMobileLinkApiKey(payload.mobile_link_api_key, {persist:true, syncInput:true});
           return true;
         }
       }catch(e){}
@@ -10826,6 +10930,7 @@
         if(r2.ok){
           const j2=await r2.json().catch(()=>null);
           if(j2&&j2.ok){
+            setMobileLinkApiKey(payload.mobile_link_api_key, {persist:true, syncInput:true});
             return true;
           }
         }
@@ -11254,6 +11359,12 @@
         onSend();
       }
     });
+
+    if(inputMobileLinkApiKey){
+      inputMobileLinkApiKey.addEventListener("input", ()=>{
+        setMobileLinkApiKey(inputMobileLinkApiKey.value, {persist:true, syncInput:false});
+      });
+    }
 
     btnCancel.onclick = ()=>{
       if(abortController){

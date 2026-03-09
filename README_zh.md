@@ -39,6 +39,10 @@ setup_project.bat
 ```bat
 start_agent.bat
 ```
+或使用：
+```bat
+start_local.bat
+```
 3. 打开：
 - `http://127.0.0.1:5000/`
 - `https://127.0.0.1:5000/`（有 LAN 证书时）
@@ -81,6 +85,36 @@ docker compose up -d --build --pull never
 docker compose ps
 ```
 
+## 方式 C：自部署跨网访问（无需域名）
+
+适合“用户自己部署 + 手机 5G/外网访问”，不想折腾域名备案。
+
+步骤：
+
+1. 先本地初始化一次（首次）：
+```bat
+setup_start_cn.bat
+```
+2. 启动跨网入口（自动使用 Cloudflare Quick Tunnel）：
+```bat
+start_remote_easy.bat
+```
+若 Cloudflare 网络不稳定，可改用 ngrok 备用入口：
+```bat
+start_remote_ngrok.bat
+```
+3. 脚本会输出一个 `https://xxxx.trycloudflare.com` 地址，发给手机端即可。
+4. 停止服务时运行：
+```bat
+stop_all.bat
+```
+
+注意：
+
+- 该地址是临时地址，重启隧道后会变化。
+- 运行 `start_remote_easy.bat` 的窗口必须保持打开。
+- 如果本机未安装 `cloudflared`，脚本会尝试自动安装；失败时会提示手动安装命令。
+
 ## BAT 脚本什么时候用
 
 - `setup_start_cn.bat`
@@ -89,6 +123,14 @@ docker compose ps
 首次初始化环境时使用。会创建 `.venv`、安装依赖、初始化 ChromaDB，并尝试安装/拉取 Ollama 模型。
 - `start_agent.bat`
 日常启动后端和网页时使用。默认优先用 `.venv`，自动打开本机 UI 地址。
+- `start_local.bat`
+本地启动快捷入口（等价于调用 `start_agent.bat`），给小白用户减少选择困难。
+- `start_remote_easy.bat`
+跨网免域名入口。自动拉起本地后端并创建临时公网地址（`trycloudflare.com`），适合手机外网访问测试。
+- `start_remote_ngrok.bat`
+跨网备用入口（ngrok）。当 Cloudflare 隧道在本机网络下不稳定时可切换使用。
+- `stop_all.bat`
+一键停止 `cloudflared` / `ngrok` 隧道和 5000 端口后端进程。
 - `start_lan_https_easy.bat`
 当你要给局域网其他设备通过 HTTPS 访问时使用（服务端机器执行）。会准备证书并调用 `start_agent.bat` 启动。
 - `client_join_lan_ui.bat`
@@ -109,6 +151,14 @@ docker compose ps
 - `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`
 - `NEWAPI_BASE_URL=...`
 - `NEWAPI_API_KEY=...`
+- `TYXT_INBOUND_API_KEY=...`（可选；公网暴露时强烈建议设置）
+
+入站 API Key 强制校验说明：
+
+- 设置 `TYXT_INBOUND_API_KEY` 后，后端会对非白名单路由强制校验：
+  `Authorization: Bearer <key>`（或 `X-API-Key`）。
+- 默认白名单包含 `/`、`/health`，避免把基础探活和首页锁死。
+- 手机端可在 API 配置里的 `API Key` 填同一密钥接入。
 
 ## 目录说明
 
