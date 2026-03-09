@@ -41,9 +41,9 @@ if load_dotenv:
     _DOTENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     load_dotenv(_DOTENV_PATH, override=False)
 
-from flask import Flask, request, jsonify, make_response, Response, stream_with_context, send_from_directory, send_file, url_for, session
-from flask_cors import CORS
+from flask import Flask, request, jsonify, make_response, Response, stream_with_context, send_from_directory, send_file, url_for, session, g
 from werkzeug.utils import secure_filename
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from chromadb.api.types import Documents, Embeddings
 from chromadb.utils.embedding_functions import EmbeddingFunction
@@ -313,6 +313,37 @@ skills_registry.configure(
 
 ENABLE_PROFILE_UPDATE = safe_bool(os.getenv("TYXT_ENABLE_PROFILE_UPDATE", "1"), True)
 ENABLE_MEMORY_STRIP_AUTO = safe_bool(os.getenv("TYXT_ENABLE_MEMORY_STRIP_AUTO", "1"), True)
+
+# ========== Inbound API Access Guard ==========
+# If TYXT_INBOUND_API_KEY is non-empty, inbound requests (except whitelist)
+# must provide Authorization: Bearer <key> (or X-API-Key).
+TYXT_INBOUND_API_KEY = str(os.getenv("TYXT_INBOUND_API_KEY", "")).strip()
+TYXT_INBOUND_API_KEY_ENABLED = bool(TYXT_INBOUND_API_KEY)
+TYXT_INBOUND_API_KEY_EXEMPT_PATHS = [
+    p.strip()
+    for p in str(
+        os.getenv(
+            "TYXT_INBOUND_API_KEY_EXEMPT_PATHS",
+            "/,/health,/favicon.ico,/chatgpt_logo_transparent.png,/auth/register,/auth/login,/auth/logout,/auth/me,/tools/lan/rootca,/tools/lan/bootstrap,/tools/lan/client_join_ps1,/tools/lan/install_lan_root_ca_ps1",
+        )
+    ).split(",")
+    if str(p).strip()
+]
+TYXT_INBOUND_API_KEY_EXEMPT_PREFIXES = [
+    p.strip()
+    for p in str(
+        os.getenv(
+            "TYXT_INBOUND_API_KEY_EXEMPT_PREFIXES",
+            "/frontend/",
+        )
+    ).split(",")
+    if str(p).strip()
+]
+TYXT_MOBILE_AUTH_HEADER = str(os.getenv("TYXT_MOBILE_AUTH_HEADER", "X-TYXT-Auth-Token") or "X-TYXT-Auth-Token").strip() or "X-TYXT-Auth-Token"
+TYXT_MOBILE_AUTH_SECRET = str(os.getenv("TYXT_MOBILE_AUTH_SECRET", "") or "").strip()
+TYXT_MOBILE_AUTH_TOKEN_TTL_SEC = max(300, safe_int(os.getenv("TYXT_MOBILE_AUTH_TOKEN_TTL_SEC", "2592000"), 2592000))
+TYXT_MOBILE_AUTH_SALT = "tyxt-mobile-auth-v1"
+CORS_ALLOW_HEADERS_VALUE = f"Content-Type, Authorization, X-API-Key, {TYXT_MOBILE_AUTH_HEADER}, ngrok-skip-browser-warning"
 OPEN_METEO_FORECAST_URL = os.getenv(
     "OPEN_METEO_FORECAST_URL",
     "https://api.open-meteo.com/v1/forecast",
@@ -1187,6 +1218,8 @@ def _load_config_file() -> Dict[str, Any]:
         "web_search_mode": "off",
         "web_search_provider": "builtin",
         "web_search_api_key": "",
+        # 手机端关联密码（用于入站 API Key）
+        "mobile_link_api_key": TYXT_INBOUND_API_KEY,
     }
     try:
         if os.path.exists(CONFIG_FILE):
@@ -1234,6 +1267,14 @@ try:
 except Exception as e:
     print("[WARN] apply startup web search env override failed:", e)
 
+try:
+    _cfg_mobile_link_api_key = str(MODEL_CONFIG.get("mobile_link_api_key", "") or "").strip()
+    if _cfg_mobile_link_api_key:
+        TYXT_INBOUND_API_KEY = _cfg_mobile_link_api_key
+    TYXT_INBOUND_API_KEY_ENABLED = bool(TYXT_INBOUND_API_KEY)
+except Exception as e:
+    print("[WARN] apply startup mobile_link_api_key failed:", e)
+
 
 def _get_context_turn_limit() -> int:
     """
@@ -1252,7 +1293,15 @@ def _get_context_turn_limit() -> int:
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me-please")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+_cookie_samesite = str(os.getenv("SESSION_COOKIE_SAMESITE", "Lax") or "Lax").strip()
+if _cookie_samesite.lower() == "none":
+    _cookie_samesite = "None"
+elif _cookie_samesite.lower() == "strict":
+    _cookie_samesite = "Strict"
+else:
+    _cookie_samesite = "Lax"
+app.config["SESSION_COOKIE_SAMESITE"] = _cookie_samesite
+app.config["SESSION_COOKIE_SECURE"] = safe_bool(os.getenv("SESSION_COOKIE_SECURE", "0"), False)
 
 
 # ============================================================
@@ -1267,7 +1316,7 @@ def _add_cors_headers(resp):
     else:
         resp.headers["Access-Control-Allow-Origin"] = "*"
     resp.headers["Access-Control-Allow-Credentials"] = "true"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    resp.headers["Access-Control-Allow-Headers"] = CORS_ALLOW_HEADERS_VALUE
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return resp
 
@@ -1280,7 +1329,137 @@ try:
 except Exception:
     pass
 
-CORS(app, resources={r"/*": {"origins": "*"}})
+# NOTE:
+# 这里不再启用 flask_cors 的全局通配，避免与上方 after_request 的动态 Origin 回写冲突。
+# 跨域由 _add_cors_headers 统一控制，确保 credentials 模式下浏览器行为一致。
+
+
+_mobile_auth_serializer: Optional[URLSafeTimedSerializer] = None
+
+
+def _get_mobile_auth_serializer() -> URLSafeTimedSerializer:
+    global _mobile_auth_serializer
+    if _mobile_auth_serializer is None:
+        secret = TYXT_MOBILE_AUTH_SECRET or app.secret_key or "change-me-please"
+        _mobile_auth_serializer = URLSafeTimedSerializer(secret_key=str(secret), salt=TYXT_MOBILE_AUTH_SALT)
+    return _mobile_auth_serializer
+
+
+def _make_mobile_auth_token(user_id: str, role: str, nickname: str) -> str:
+    s = _get_mobile_auth_serializer()
+    payload = {
+        "uid": str(user_id or "").strip(),
+        "role": "admin" if str(role or "").strip().lower() == "admin" else "user",
+        "nick": str(nickname or "").strip(),
+        "iat": int(time.time()),
+    }
+    return str(s.dumps(payload))
+
+
+def _extract_mobile_auth_token() -> str:
+    h = str(TYXT_MOBILE_AUTH_HEADER or "X-TYXT-Auth-Token").strip() or "X-TYXT-Auth-Token"
+    token = str(request.headers.get(h) or "").strip()
+    if token:
+        return token
+    return str(request.headers.get("X-TYXT-Auth-Token") or "").strip()
+
+
+def _verify_mobile_auth_token(token: str) -> Optional[dict]:
+    raw = str(token or "").strip()
+    if not raw:
+        return None
+    s = _get_mobile_auth_serializer()
+    try:
+        data = s.loads(raw, max_age=max(300, int(TYXT_MOBILE_AUTH_TOKEN_TTL_SEC)))
+    except SignatureExpired:
+        return None
+    except BadSignature:
+        return None
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    uid = str(data.get("uid") or "").strip()
+    if not uid:
+        return None
+    role = "admin" if str(data.get("role") or "").strip().lower() == "admin" else "user"
+    nick = str(data.get("nick") or uid).strip() or uid
+    return {"user_id": uid, "role": role, "nickname": nick}
+
+
+@app.before_request
+def _hydrate_session_from_mobile_auth_token():
+    try:
+        if str(session.get("user_id") or "").strip():
+            return None
+    except Exception:
+        pass
+    tok = _extract_mobile_auth_token()
+    if not tok:
+        return None
+    u = _verify_mobile_auth_token(tok)
+    if not isinstance(u, dict):
+        return None
+    try:
+        session["user_id"] = str(u.get("user_id") or "").strip()
+        session["role"] = "admin" if str(u.get("role") or "").strip().lower() == "admin" else "user"
+        session["nickname"] = str(u.get("nickname") or session["user_id"]).strip() or session["user_id"]
+        g.tyxt_mobile_auth = True
+    except Exception:
+        return None
+    return None
+
+
+def _extract_inbound_api_token() -> str:
+    auth = str(request.headers.get("Authorization") or "").strip()
+    if auth:
+        parts = auth.split(None, 1)
+        if len(parts) == 2 and str(parts[0]).lower() == "bearer":
+            return str(parts[1] or "").strip()
+    x_api_key = str(request.headers.get("X-API-Key") or "").strip()
+    if x_api_key:
+        return x_api_key
+    return ""
+
+
+def _is_inbound_api_key_exempt(path: str) -> bool:
+    p = str(path or "").strip() or "/"
+    if p in TYXT_INBOUND_API_KEY_EXEMPT_PATHS:
+        return True
+    for prefix in TYXT_INBOUND_API_KEY_EXEMPT_PREFIXES:
+        pref = str(prefix or "").strip()
+        if pref and p.startswith(pref):
+            return True
+    return False
+
+
+@app.before_request
+def _enforce_inbound_api_key():
+    if not TYXT_INBOUND_API_KEY_ENABLED:
+        return None
+    if request.method == "OPTIONS":
+        return None
+    # 已登录的 WebUI 会话放行；手机/第三方跨域调用通常无此 session，仍需携带 API Key。
+    try:
+        if str(session.get("user_id") or "").strip():
+            return None
+    except Exception:
+        pass
+    req_path = str(request.path or "").strip() or "/"
+    if _is_inbound_api_key_exempt(req_path):
+        return None
+    token = _extract_inbound_api_token()
+    if token and secrets.compare_digest(token, TYXT_INBOUND_API_KEY):
+        return None
+    return jsonify({
+        "ok": False,
+        "msg": "Unauthorized: missing or invalid API key",
+        "error": {
+            "message": "Unauthorized: missing or invalid API key",
+            "type": "invalid_request_error",
+            "code": "unauthorized",
+        },
+    }), 401
 
 # 模型调用互斥锁（防并发把本地模型/上游压爆）
 _model_lock = threading.Semaphore(1)
@@ -2500,12 +2679,19 @@ def auth_register():
         session["user_id"] = user_id
         session["role"] = role
         session["nickname"] = nickname or user_id
+        mobile_auth_token = _make_mobile_auth_token(
+            user_id=user_id,
+            role=role,
+            nickname=(nickname or user_id),
+        )
 
         return jsonify({
             "ok": True,
             "user_id": user_id,
             "nickname": nickname or user_id,
-            "role": role
+            "role": role,
+            "mobile_auth_token": mobile_auth_token,
+            "mobile_auth_header": TYXT_MOBILE_AUTH_HEADER,
         }), 200
     except Exception as e:
         print(f"[auth/register error] {e}")
@@ -2536,12 +2722,19 @@ def auth_login():
         session["user_id"] = user_id
         session["role"] = role
         session["nickname"] = nickname
+        mobile_auth_token = _make_mobile_auth_token(
+            user_id=user_id,
+            role=role,
+            nickname=nickname,
+        )
 
         return jsonify({
             "ok": True,
             "user_id": user_id,
             "nickname": nickname,
-            "role": role
+            "role": role,
+            "mobile_auth_token": mobile_auth_token,
+            "mobile_auth_header": TYXT_MOBILE_AUTH_HEADER,
         }), 200
     except Exception as e:
         print(f"[auth/login error] {e}")
@@ -4605,7 +4798,7 @@ def chat_options():
     resp.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
     resp.headers["Access-Control-Allow-Credentials"] = "true"
     resp.headers["Access-Control-Allow-Methods"]="POST, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"]="Content-Type, Authorization"
+    resp.headers["Access-Control-Allow-Headers"] = CORS_ALLOW_HEADERS_VALUE
     return resp
 
 # ============================================================
@@ -11136,7 +11329,7 @@ def api_save_params():
     if request.method == "OPTIONS":
         return ("", 204)
     try:
-        global MODEL_NAME
+        global MODEL_NAME, TYXT_INBOUND_API_KEY, TYXT_INBOUND_API_KEY_ENABLED
         data = request.get_json(silent=True) or {}
         prev_web_search_api_key = str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip()
 
@@ -11168,6 +11361,10 @@ def api_save_params():
         next_ollama_model = _as_str("ollama_model", MODEL_CONFIG.get("ollama_model", MODEL_NAME))
         if not next_ollama_model:
             next_ollama_model = str(MODEL_NAME or "").strip()
+        next_mobile_link_api_key = _as_str(
+            "mobile_link_api_key",
+            _as_str("mobile_bind_password", MODEL_CONFIG.get("mobile_link_api_key", TYXT_INBOUND_API_KEY)),
+        )
         raw_mode_in = data.get("web_search_mode", None)
         if raw_mode_in is None or str(raw_mode_in).strip() == "":
             next_web_search_mode = "default" if _as_bool("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False)) else "off"
@@ -11190,8 +11387,11 @@ def api_save_params():
             "web_search_provider": _normalize_web_search_provider(_as_str("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))),
             "web_search_api_key": _as_str("web_search_api_key", MODEL_CONFIG.get("web_search_api_key", "")),
             "ollama_model": next_ollama_model,
+            "mobile_link_api_key": next_mobile_link_api_key,
         })
         MODEL_NAME = next_ollama_model
+        TYXT_INBOUND_API_KEY = next_mobile_link_api_key
+        TYXT_INBOUND_API_KEY_ENABLED = bool(TYXT_INBOUND_API_KEY)
 
         _save_config_file(MODEL_CONFIG)
         if prev_web_search_api_key != str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip():
@@ -11234,7 +11434,7 @@ def api_update_config():
     if request.method == "OPTIONS":
         return ("", 204)
     try:
-        global MODEL_NAME
+        global MODEL_NAME, TYXT_INBOUND_API_KEY, TYXT_INBOUND_API_KEY_ENABLED
         data = request.get_json(silent=True) or {}
         prev_web_search_api_key = str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip()
 
@@ -11266,6 +11466,10 @@ def api_update_config():
         next_ollama_model = _get_str("ollama_model", MODEL_CONFIG.get("ollama_model", MODEL_NAME))
         if not next_ollama_model:
             next_ollama_model = str(MODEL_NAME or "").strip()
+        next_mobile_link_api_key = _get_str(
+            "mobile_link_api_key",
+            _get_str("mobile_bind_password", MODEL_CONFIG.get("mobile_link_api_key", TYXT_INBOUND_API_KEY)),
+        )
         raw_mode_in = data.get("web_search_mode", None)
         if raw_mode_in is None or str(raw_mode_in).strip() == "":
             next_web_search_mode = "default" if _get_bool("web_search_enabled", MODEL_CONFIG.get("web_search_enabled", False)) else "off"
@@ -11288,8 +11492,11 @@ def api_update_config():
             "web_search_provider": _normalize_web_search_provider(_get_str("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))),
             "web_search_api_key": _get_str("web_search_api_key", MODEL_CONFIG.get("web_search_api_key", "")),
             "ollama_model": next_ollama_model,
+            "mobile_link_api_key": next_mobile_link_api_key,
         })
         MODEL_NAME = next_ollama_model
+        TYXT_INBOUND_API_KEY = next_mobile_link_api_key
+        TYXT_INBOUND_API_KEY_ENABLED = bool(TYXT_INBOUND_API_KEY)
 
         _save_config_file(MODEL_CONFIG)
         if prev_web_search_api_key != str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip():
