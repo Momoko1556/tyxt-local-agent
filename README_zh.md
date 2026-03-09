@@ -9,6 +9,12 @@ TYXT 是一个本地优先的 AI 助手系统（聊天、记忆、工具、局�
 
 English: [README.md](README.md)
 
+## 新手教程（WebUI + 手机UI）
+
+如果你想按步骤完成“局域网使用”或“手机 5G 跨网登录”，看这份详细教程：
+
+- [docs/BEGINNER_WEBUI_MOBILEUI_GUIDE_ZH.md](docs/BEGINNER_WEBUI_MOBILEUI_GUIDE_ZH.md)
+
 ## 先看这条（下载方式）
 
 当前版本无论你使用哪种部署方式，都需要下载完整仓库代码：
