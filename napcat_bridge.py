@@ -75,7 +75,7 @@ PROFILE_A_GROUP_ID = os.getenv("PROFILE_A_GROUP_ID", "1079552241").strip()   # �
 PROFILE_B_GROUP_ID = os.getenv("PROFILE_B_GROUP_ID", "1077018222").strip()   # 活跃群：唤醒+相关续命+随机插话
 
 # 机器人名字关键词：群聊里出现这些字，也算“点名”
-BOT_NAME_KEYWORDS = [x.strip() for x in os.getenv("BOT_NAME_KEYWORDS", "AI,墨渊").split(",") if x.strip()]
+BOT_NAME_KEYWORDS = [x.strip() for x in os.getenv("BOT_NAME_KEYWORDS", "AI,Agent,助手").split(",") if x.strip()]
 
 # 单条消息最大长度（超过则分段发送）
 REPLY_MAX_CHARS = int(os.getenv("REPLY_MAX_CHARS", "9999"))  # 默认不做 200 字限制；如需限制可用环境变量覆盖

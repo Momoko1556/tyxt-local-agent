@@ -17,12 +17,19 @@ from memory_store import (
     LOCAL_OWNER_ID,
     MemoryRecord,
     MultiTenantChromaMemoryStore,
+    resolve_scoped_persist_dir,
 )
 
 # ========= 配置 =========
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 KEYWORDS_FILE = os.getenv("KEYWORDS_FILE", os.path.join(PROJECT_ROOT, "trigger_keywords.json"))
 KEYWORDS_FILE = os.path.abspath(str(KEYWORDS_FILE))
+GROUP_CHATS_STORE_PATH = os.path.abspath(
+    str(os.getenv("TYXT_GROUP_CHATS_STORE_PATH", os.path.join(PROJECT_ROOT, "configs", "group_chats.json")))
+)
+GROUP_MEMORY_ROOT = os.path.abspath(
+    str(os.getenv("TYXT_GROUP_MEMORY_ROOT", os.path.join(PROJECT_ROOT, "group_memory")))
+)
 DEFAULT_TOPK = int(os.getenv("MEM_TOPK", "20"))
 LIGHT_TOPK = max(0, min(5, DEFAULT_TOPK))
 
@@ -39,6 +46,119 @@ CHAT_MEM_STORE = MultiTenantChromaMemoryStore(
 )
 # 兼容旧引用名称
 MEM_STORE = CHAT_MEM_STORE
+_MEM_STORE_CACHE: Dict[str, MultiTenantChromaMemoryStore] = {
+    os.path.abspath(CHROMA_PERSIST_DIR): CHAT_MEM_STORE,
+}
+os.makedirs(GROUP_MEMORY_ROOT, exist_ok=True)
+
+
+def _normalize_persist_dir(v: Any) -> str:
+    raw = str(v or "").strip()
+    if not raw:
+        return os.path.abspath(CHROMA_PERSIST_DIR)
+    cand = os.path.expandvars(os.path.expanduser(raw))
+    if not os.path.isabs(cand):
+        cand = os.path.join(PROJECT_ROOT, cand)
+    return os.path.abspath(cand)
+
+
+def _group_memory_path_from_store(group_id: Any) -> str:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return ""
+    try:
+        with open(GROUP_CHATS_STORE_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception:
+        return ""
+    rows = list((payload or {}).get("groups") or []) if isinstance(payload, dict) else []
+    for row in rows:
+        item = row if isinstance(row, dict) else {}
+        row_gid = str(item.get("group_id") or "").strip()
+        if not row_gid:
+            continue
+        if row_gid.casefold() != gid.casefold():
+            continue
+        return str(item.get("group_memory_path") or "").strip()
+    return ""
+
+
+def get_memory_store(meta: Optional[Dict[str, Any]] = None) -> MultiTenantChromaMemoryStore:
+    mm = meta if isinstance(meta, dict) else {}
+    channel_type, owner_id = resolve_channel_owner(mm)
+    if channel_type == "group":
+        explicit_group_root = str(
+            mm.get("group_memory_path")
+            or mm.get("group_memory_root")
+            or _group_memory_path_from_store(owner_id)
+            or ""
+        ).strip()
+        if explicit_group_root:
+            persist_dir = _normalize_persist_dir(explicit_group_root)
+        else:
+            persist_dir = resolve_scoped_persist_dir(
+                GROUP_MEMORY_ROOT,
+                channel_type=channel_type,
+                owner_id=owner_id,
+            )
+    else:
+        base_dir = _normalize_persist_dir(mm.get("memory_root") or mm.get("agent_memory_root"))
+        persist_dir = resolve_scoped_persist_dir(
+            base_dir,
+            agent_id=mm.get("agent_id"),
+            channel_type=channel_type,
+            owner_id=owner_id,
+        )
+    store = _MEM_STORE_CACHE.get(persist_dir)
+    if store is None:
+        store = MultiTenantChromaMemoryStore(persist_dir=persist_dir)
+        _MEM_STORE_CACHE[persist_dir] = store
+    return store
+
+
+def _legacy_memory_store_roots(meta: Optional[Dict[str, Any]] = None) -> List[str]:
+    mm = meta if isinstance(meta, dict) else {}
+    base_dir = _normalize_persist_dir(mm.get("memory_root") or mm.get("agent_memory_root"))
+    channel_type, owner_id = resolve_channel_owner(mm)
+    agent_root = resolve_scoped_persist_dir(base_dir, agent_id=mm.get("agent_id"))
+    if channel_type == "group":
+        explicit_group_root = str(
+            mm.get("group_memory_path")
+            or mm.get("group_memory_root")
+            or _group_memory_path_from_store(owner_id)
+            or ""
+        ).strip()
+        if explicit_group_root:
+            owner_root = _normalize_persist_dir(explicit_group_root)
+        else:
+            owner_root = resolve_scoped_persist_dir(
+                GROUP_MEMORY_ROOT,
+                channel_type=channel_type,
+                owner_id=owner_id,
+            )
+    else:
+        owner_root = resolve_scoped_persist_dir(
+            base_dir,
+            agent_id=mm.get("agent_id"),
+            channel_type=channel_type,
+            owner_id=owner_id,
+        )
+    out: List[str] = []
+    for cand in (agent_root, base_dir):
+        root = os.path.abspath(str(cand or "").strip())
+        if (not root) or root == owner_root or root in out:
+            continue
+        out.append(root)
+    return out
+
+
+def _get_or_create_store(persist_dir: Any) -> MultiTenantChromaMemoryStore:
+    root = _normalize_persist_dir(persist_dir)
+    store = _MEM_STORE_CACHE.get(root)
+    if store is None:
+        store = MultiTenantChromaMemoryStore(persist_dir=root)
+        _MEM_STORE_CACHE[root] = store
+    return store
 
 
 def resolve_channel_owner(meta: Optional[Dict[str, Any]]) -> Tuple[str, str]:
@@ -128,9 +248,45 @@ def _lexical_match_score(query: str, text: str) -> Tuple[float, bool]:
 
     score = 0.0
     if exact_hit:
-        score += 0.9
-    score += 0.35 * ratio
+        score += 1.45
+    score += 0.55 * ratio
     return score, (exact_hit or hit_count > 0)
+
+
+def _focus_preview(text: str, query: str, max_len: int = 260) -> str:
+    src = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not src:
+        return ""
+    if max_len <= 0:
+        return src
+    if len(src) <= max_len:
+        return src
+
+    q = re.sub(r"\s+", " ", str(query or "")).strip().lower()
+    terms = _query_terms(q)
+    low = src.lower()
+    hit_pos = -1
+    for term in terms:
+        if not term:
+            continue
+        p = low.find(term.lower())
+        if p >= 0 and (hit_pos < 0 or p < hit_pos):
+            hit_pos = p
+
+    if hit_pos < 0:
+        return src[:max_len].rstrip() + "…"
+
+    left_span = max_len // 3
+    start = max(0, hit_pos - left_span)
+    end = min(len(src), start + max_len)
+    if end - start < max_len:
+        start = max(0, end - max_len)
+    chunk = src[start:end].strip()
+    if start > 0:
+        chunk = "…" + chunk
+    if end < len(src):
+        chunk = chunk + "…"
+    return chunk
 
 
 def _effective_importance(meta: Dict[str, Any], now_ts: Optional[int] = None) -> float:
@@ -208,6 +364,7 @@ def _select_by_final_score(
         rec.metadata["_lex_score"] = lex_score
         rec.metadata["_lex_hit"] = bool(lex_hit)
         rec.metadata["_final_score"] = final_score
+        rec.metadata["_focus_preview"] = _focus_preview(text, query_clean, max_len=260)
         rec.score = final_score
         scored.append((final_score, lex_score, bool(lex_hit), ts, rec))
 
@@ -222,7 +379,8 @@ def _select_by_final_score(
     for _fs, _lex, _hit, _ts, rec in scored:
         if len(out) >= top_k:
             break
-        txt_len = len(str(rec.text or ""))
+        rec_meta = dict(getattr(rec, "metadata", {}) or {})
+        txt_len = len(str(rec_meta.get("_focus_preview") or rec.text or ""))
         if total_chars + txt_len > max_chars and out:
             break
         out.append(rec)
@@ -237,6 +395,7 @@ def _fallback_lexical_scan_records(
     top_k: int,
     lookback_days: Optional[int],
     layer: Optional[str],
+    mem_store: Optional[MultiTenantChromaMemoryStore] = None,
 ) -> List[MemoryRecord]:
     """
     关键词兜底：
@@ -259,9 +418,10 @@ def _fallback_lexical_scan_records(
     scanned = 0
     page = 1
     page_size = 100
+    store = mem_store or CHAT_MEM_STORE
 
     while scanned < LEXICAL_FALLBACK_MAX_SCAN:
-        got = CHAT_MEM_STORE.list_records(
+        got = store.list_records(
             channel_type=channel_type,
             owner_id=owner_id,
             page=page,
@@ -308,6 +468,7 @@ def retrieve_chat_memory_records(
     if not q:
         return []
     safe_top_k = max(1, int(top_k or 1))
+    mem_store = get_memory_store(meta)
     channel_type, owner_id = resolve_channel_owner(meta)
     filters: Dict[str, Any] = {
         "channel_type": channel_type,
@@ -330,7 +491,7 @@ def retrieve_chat_memory_records(
         raw_top_k = max(safe_top_k * 20, 240)
     else:
         raw_top_k = max(safe_top_k * 6, 80)
-    candidates = CHAT_MEM_STORE.search_raw(query=q, top_k=raw_top_k, filters=filters)
+    candidates = mem_store.search_raw(query=q, top_k=raw_top_k, filters=filters)
     selected = _select_by_final_score(candidates, top_k=safe_top_k, query=q, max_chars=max_chars)
 
     # 语义候选里若无关键词命中，则回退到 tenant 内词法扫描兜底。
@@ -343,9 +504,41 @@ def retrieve_chat_memory_records(
             top_k=safe_top_k,
             lookback_days=lookback_days,
             layer=layer,
+            mem_store=mem_store,
         )
         if fallback_rows:
             selected = _select_by_final_score(fallback_rows, top_k=safe_top_k, query=q, max_chars=max_chars)
+
+    if not selected:
+        for legacy_root in _legacy_memory_store_roots(meta):
+            legacy_store = _get_or_create_store(legacy_root)
+            legacy_candidates = legacy_store.search_raw(query=q, top_k=raw_top_k, filters=filters)
+            legacy_selected = _select_by_final_score(legacy_candidates, top_k=safe_top_k, query=q, max_chars=max_chars)
+            legacy_lex_hits = sum(
+                1
+                for r in legacy_selected
+                if bool((getattr(r, "metadata", {}) or {}).get("_lex_hit"))
+            )
+            if ENABLE_LEXICAL_FALLBACK_SCAN and keyword_like and legacy_lex_hits <= 0:
+                legacy_fallback_rows = _fallback_lexical_scan_records(
+                    query=q,
+                    channel_type=channel_type,
+                    owner_id=owner_id,
+                    top_k=safe_top_k,
+                    lookback_days=lookback_days,
+                    layer=layer,
+                    mem_store=legacy_store,
+                )
+                if legacy_fallback_rows:
+                    legacy_selected = _select_by_final_score(
+                        legacy_fallback_rows,
+                        top_k=safe_top_k,
+                        query=q,
+                        max_chars=max_chars,
+                    )
+            if legacy_selected:
+                selected = legacy_selected
+                break
 
     return selected
 
@@ -388,12 +581,24 @@ def bump_chat_memory_importance(
         return 0
     channel_type, owner_id = resolve_channel_owner(meta)
     try:
-        return CHAT_MEM_STORE.bump_importance(
+        bumped = get_memory_store(meta).bump_importance(
             clean_ids,
             float(delta),
             channel_type=channel_type,
             owner_id=owner_id,
         )
+        if bumped:
+            return bumped
+        for legacy_root in _legacy_memory_store_roots(meta):
+            bumped = _get_or_create_store(legacy_root).bump_importance(
+                clean_ids,
+                float(delta),
+                channel_type=channel_type,
+                owner_id=owner_id,
+            )
+            if bumped:
+                return bumped
+        return 0
     except Exception:
         return 0
 

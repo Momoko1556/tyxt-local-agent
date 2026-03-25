@@ -9,6 +9,20 @@ TYXT is a local-first AI assistant system for chat, memory, tools, and LAN multi
 
 中文文档: [README_zh.md](README_zh.md)
 
+## What's New
+
+- **Group Chat**
+  - Built-in group chat sessions with group metadata, member list, and group-level memory.
+- **Multi-Agent Collaboration**
+  - Router + worker style response flow for multi-agent conversations and relay handoff.
+- **Agent Permissions**
+  - Scene-based permission matrix (chat/work) for documents, profiles, relationship data, runtime logs, and more.
+- **Idle Work**
+  - Background rumination/deep-think modules with session controls (start/pause/resume/end) and progress tracking.
+- **Mobile Access and Login**
+  - Supports mobile login with account + API key over LAN/public tunnel.
+  - Backend can serve a mobile frontend entry at `/mobile/`.
+
 ## Read This First (How to Download)
 
 In the current release, both deployment methods require the full repository:
@@ -104,6 +118,9 @@ If Cloudflare is unstable on your network, use the ngrok fallback:
 start_remote_ngrok.bat
 ```
 3. The script prints a public URL like `https://xxxx.trycloudflare.com`. Share this URL to phone users.
+   - Web UI: `https://xxxx.trycloudflare.com/`
+   - Mobile UI: `https://xxxx.trycloudflare.com/mobile/`
+   - Mobile API base: `https://xxxx.trycloudflare.com/v1`
 4. To stop tunnel and backend quickly:
 ```bat
 stop_all.bat
@@ -124,6 +141,20 @@ The mobile client source is located in:
 Real-device validation checklist:
 
 - [docs/MOBILE_FRONTEND_QA.md](docs/MOBILE_FRONTEND_QA.md)
+
+Mobile startup/login quick guide:
+
+1. Start backend + tunnel:
+```bat
+start_remote_easy.bat
+```
+2. Open mobile page:
+   - `https://<your-tunnel-domain>/mobile/`
+3. In mobile login dialog, fill:
+   - Server API URL: `https://<your-tunnel-domain>/v1`
+   - Server API Key: same key as `mobile_link_api_key` / `TYXT_INBOUND_API_KEY`
+   - Account + password: your TYXT account
+4. If tunnel restarts, domain changes. Update both mobile page URL and API URL.
 
 ## When to Use Each BAT Script
 

@@ -3,7 +3,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 
 title TYXT Remote Easy Start (No Domain)
 cd /d "%~dp0"
-set "TYXT_REMOTE_EASY_VER=2026-03-09 17:26 DNS-HOSTS-RETRY"
+set "TYXT_REMOTE_EASY_VER=2026-03-25 16:25 AUTO-RECONNECT"
 
 set "BACKEND_BASE_HTTP=http://127.0.0.1:5000"
 set "BACKEND_BASE_HTTPS=https://127.0.0.1:5000"
@@ -14,6 +14,10 @@ set "BACKEND_BASE="
 set "TUNNEL_TLS_ARGS="
 set "SCRIPT_RC=0"
 set "CLOUDFLARED_EXE=cloudflared"
+set "CF_RETRY_DELAY_SEC=3"
+set "CF_RETRY_MAX=0"
+set "CF_RETRY_COUNT=0"
+set "CF_HOSTS_FALLBACK_DONE=0"
 
 echo.
 echo ==========================================
@@ -141,35 +145,52 @@ echo [3/3] Starting quick tunnel ...
 echo [INFO] Keep this window open while remote users are using the service.
 echo [INFO] Press Ctrl+C to stop tunnel.
 echo [INFO] Tunnel target: %BACKEND_BASE%
+echo [INFO] Mobile frontend path: /mobile/ (append to the trycloudflare URL)
 if not "%TUNNEL_TLS_ARGS%"=="" echo [INFO] Tunnel origin args: %TUNNEL_TLS_ARGS%
 set "CF_EDGE_ARGS=--protocol http2 --edge-ip-version 4"
 echo [INFO] Tunnel edge args: %CF_EDGE_ARGS%
+echo [INFO] Auto reconnect: ON (delay=%CF_RETRY_DELAY_SEC%s, max_retries=%CF_RETRY_MAX%, 0 means infinite)
 echo.
 
 set "TUNNEL_URL="
-"%CLOUDFLARED_EXE%" tunnel --url %BACKEND_BASE% %TUNNEL_TLS_ARGS% %CF_EDGE_ARGS% --no-autoupdate
-set "CF_RC=%errorlevel%"
-if not "%CF_RC%"=="0" (
-  echo [WARN] cloudflared exited with code %CF_RC%.
-  echo [INFO] Retrying once with default protocol settings...
-  "%CLOUDFLARED_EXE%" tunnel --url %BACKEND_BASE% %TUNNEL_TLS_ARGS% --no-autoupdate
-  set "CF_RC=%errorlevel%"
+:tunnel_loop
+set /a CF_RETRY_COUNT+=1
+if not "%CF_RETRY_MAX%"=="0" (
+  if !CF_RETRY_COUNT! GTR %CF_RETRY_MAX% (
+    set "SCRIPT_RC=1"
+    echo [ERROR] Tunnel retry reached max limit: %CF_RETRY_MAX%.
+    echo [HINT] Check DNS/firewall and set system DNS to 223.5.5.5 / 119.29.29.29, then rerun.
+    goto tunnel_stopped
+  )
 )
-if not "%CF_RC%"=="0" (
-  echo [WARN] cloudflared retry also failed with code %CF_RC%.
+echo [INFO] Tunnel attempt !CF_RETRY_COUNT! ...
+"%CLOUDFLARED_EXE%" tunnel --url %BACKEND_BASE% %TUNNEL_TLS_ARGS% %CF_EDGE_ARGS% --no-autoupdate
+set "CF_RC=!errorlevel!"
+if "!CF_RC!"=="0" goto tunnel_stopped
+
+echo [WARN] cloudflared exited with code !CF_RC!.
+echo [INFO] Retrying once with default protocol settings...
+"%CLOUDFLARED_EXE%" tunnel --url %BACKEND_BASE% %TUNNEL_TLS_ARGS% --no-autoupdate
+set "CF_RC=!errorlevel!"
+if "!CF_RC!"=="0" goto tunnel_stopped
+
+if "!CF_HOSTS_FALLBACK_DONE!"=="0" (
+  echo [WARN] cloudflared retry also failed with code !CF_RC!.
   echo [INFO] Trying DNS hosts fallback for region1.v2.argotunnel.com ...
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$target='region1.v2.argotunnel.com'; $servers=@('223.5.5.5','119.29.29.29','1.1.1.1'); $ip=$null; foreach($s in $servers){ try{ $ip=(Resolve-DnsName -Name $target -Server $s -Type A -ErrorAction Stop | Select-Object -First 1 -ExpandProperty IPAddress); if($ip){break} } catch {} }; if(-not $ip){ exit 1 }; $hosts=Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'; $lines=@(); if(Test-Path $hosts){ $lines=Get-Content $hosts -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '(^|\\s)region1\\.v2\\.argotunnel\\.com(\\s|$)' } }; $lines += ($ip + ' region1.v2.argotunnel.com'); Set-Content -Path $hosts -Value $lines -Encoding ASCII; Write-Output ('[OK] Hosts fallback applied: region1.v2.argotunnel.com -> ' + $ip); exit 0"
-  if "%errorlevel%"=="0" (
-    echo [INFO] Retrying tunnel after hosts fallback...
-    "%CLOUDFLARED_EXE%" tunnel --url %BACKEND_BASE% %TUNNEL_TLS_ARGS% %CF_EDGE_ARGS% --no-autoupdate
-    set "CF_RC=%errorlevel%"
+  if "!errorlevel!"=="0" (
+    set "CF_HOSTS_FALLBACK_DONE=1"
+    echo [INFO] Hosts fallback applied. Continue auto reconnect.
   ) else (
     echo [WARN] Hosts fallback failed (may require Administrator privileges).
   )
 )
-if not "%CF_RC%"=="0" (
-  echo [HINT] Still failed. Check DNS/firewall and set system DNS to 223.5.5.5 / 119.29.29.29, then rerun.
-)
+
+echo [INFO] Waiting %CF_RETRY_DELAY_SEC%s before reconnect...
+timeout /t %CF_RETRY_DELAY_SEC% /nobreak >nul
+goto tunnel_loop
+
+:tunnel_stopped
 
 echo.
 echo [INFO] Tunnel stopped.

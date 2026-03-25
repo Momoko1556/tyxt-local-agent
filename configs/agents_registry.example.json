@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "agents": [
+    {
+      "agent_id": "moyuan",
+      "display_name": "Moyuan",
+      "agent_title": "Moyuan",
+      "agent_name": "Moyuan",
+      "enabled": true,
+      "system_prompt": "You are the primary TYXT agent. Reply in the configured persona and keep the response grounded in the current context.",
+      "system_prompt_file": "",
+      "main_provider": "newapi",
+      "main_base_url": "https://example.com/v1",
+      "main_api_key": "",
+      "main_model": "example-model",
+      "profile_root": "profiles",
+      "memory_root": "memory_db",
+      "reply_policy": {
+        "style": "default",
+        "max_reply_chars": 200,
+        "concise_first": true,
+        "allow_assistant_hint": true
+      },
+      "group_policy": {
+        "enabled": true,
+        "reply_target_only": true,
+        "reserve_for_future": true
+      }
+    }
+  ]
+}

@@ -48,7 +48,7 @@ Open:
 If you see errors like `auth.docker.io` / `registry-1.docker.io` timeout, force a China base image explicitly:
 
 ```bat
-cd /d "E:\Ollama memory_project"
+cd /d "path\\to\\tyxt-local-agent"
 set BASE_IMAGE=swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/python:3.10-slim-bookworm
 set APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
 set PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple

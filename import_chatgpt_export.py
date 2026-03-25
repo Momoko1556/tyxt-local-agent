@@ -24,7 +24,7 @@ import uuid
 import zipfile
 from typing import Any, Dict, Iterable, List, Optional
 
-from memory_store import CHROMA_PERSIST_DIR, LOCAL_OWNER_ID, MultiTenantChromaMemoryStore
+from memory_store import CHROMA_PERSIST_DIR, LOCAL_OWNER_ID, MultiTenantChromaMemoryStore, resolve_scoped_persist_dir
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -336,6 +336,7 @@ def import_chatgpt_export_records(
     owner_type: str = "local",
     owner_id: str = LOCAL_OWNER_ID,
     max_records: int = 0,
+    persist_dir: Optional[str] = None,
     progress_callback: Optional[callable] = None,
     should_pause: Optional[callable] = None,
     should_stop: Optional[callable] = None,
@@ -365,7 +366,13 @@ def import_chatgpt_export_records(
         limit = 0
     os.makedirs(RAW_DIR, exist_ok=True)
 
-    store = MultiTenantChromaMemoryStore(persist_dir=CHROMA_PERSIST_DIR)
+    store = MultiTenantChromaMemoryStore(
+        persist_dir=resolve_scoped_persist_dir(
+            os.path.abspath(str(persist_dir or CHROMA_PERSIST_DIR)),
+            channel_type=channel_type,
+            owner_id=owner,
+        )
+    )
 
     total_turns = 0
     processed = 0

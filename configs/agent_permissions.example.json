@@ -1,0 +1,33 @@
+﻿{
+  "version": 1,
+  "agents": {
+    "agent_001": {
+      "agent_id": "agent_001",
+      "updated_at": 0,
+      "scenes": {
+        "chat": {
+          "documents": "read",
+          "deepthink_reports": "read",
+          "idle_work_logs": "none",
+          "runtime_logs": "read",
+          "vault_docs": "read",
+          "memory_strips": "read",
+          "user_profile": "read",
+          "relationships": "read",
+          "relationship_params": "read"
+        },
+        "work": {
+          "documents": "read",
+          "deepthink_reports": "read_write",
+          "idle_work_logs": "read_write",
+          "runtime_logs": "read",
+          "vault_docs": "read",
+          "memory_strips": "read",
+          "user_profile": "read_write",
+          "relationships": "read",
+          "relationship_params": "read_write"
+        }
+      }
+    }
+  }
+}

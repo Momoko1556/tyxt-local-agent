@@ -257,6 +257,69 @@ def _safe_token(v: Any, default: str = "unknown", max_len: int = 96) -> str:
     return s or default
 
 
+def resolve_scoped_persist_dir(
+    base_persist_dir: Any,
+    agent_id: Any = "",
+    channel_type: Any = "",
+    owner_id: Any = "",
+) -> str:
+    """
+    统一的 Chroma 物理目录规则：
+    - Agent 级：memory_db/<agent_id>
+    - owner 级：memory_db/<agent_id>/<channel_type>/<owner_id>
+
+    兼容：
+    - 如果 base_persist_dir 已经是 agent 级目录，不重复追加 agent_id
+    - 未提供 owner 目标时，只返回 Agent 级目录
+    """
+    root = os.path.abspath(str(base_persist_dir or CHROMA_PERSIST_DIR))
+    aid = _safe_token(agent_id, default="", max_len=96)
+    if aid:
+        tail = os.path.normcase(os.path.basename(root.rstrip("\\/")))
+        if tail != os.path.normcase(aid):
+            root = os.path.join(root, aid)
+
+    channel = str(channel_type or "").strip().lower()
+    if channel not in TYXT_CHANNEL_TYPES:
+        return os.path.abspath(root)
+
+    if channel == TYXT_CHANNEL_GROUP:
+        owner = _safe_token(owner_id, default="unknown_group", max_len=96)
+    elif channel == TYXT_CHANNEL_LOCAL:
+        owner = _safe_token(owner_id, default=LOCAL_OWNER_ID, max_len=96)
+    else:
+        owner = _safe_token(owner_id, default="unknown_user", max_len=96)
+    return os.path.abspath(os.path.join(root, channel, owner))
+
+
+def iter_scoped_tenant_dirs(base_persist_dir: Any, agent_id: Any = "") -> List[Dict[str, str]]:
+    """
+    扫描 memory_db/<agent_id>/<channel_type>/<owner_id> 目录结构。
+    """
+    agent_root = resolve_scoped_persist_dir(base_persist_dir, agent_id=agent_id)
+    out: List[Dict[str, str]] = []
+    for channel_type in TYXT_CHANNEL_TYPES:
+        channel_dir = os.path.join(agent_root, channel_type)
+        if not os.path.isdir(channel_dir):
+            continue
+        try:
+            owner_names = sorted(os.listdir(channel_dir))
+        except Exception:
+            continue
+        for owner_name in owner_names:
+            owner_dir = os.path.join(channel_dir, owner_name)
+            if not os.path.isdir(owner_dir):
+                continue
+            out.append(
+                {
+                    "channel_type": channel_type,
+                    "owner_id": str(owner_name or "").strip(),
+                    "persist_dir": os.path.abspath(owner_dir),
+                }
+            )
+    return out
+
+
 def make_collection_name(channel_type: str, owner_id: str) -> str:
     """
     根据 channel_type 和 owner_id 生成 collection 名称。

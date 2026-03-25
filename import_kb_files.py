@@ -26,7 +26,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 import docx
 import fitz
 
-from memory_store import CHROMA_PERSIST_DIR, LOCAL_OWNER_ID, MultiTenantChromaMemoryStore
+from memory_store import CHROMA_PERSIST_DIR, LOCAL_OWNER_ID, MultiTenantChromaMemoryStore, resolve_scoped_persist_dir
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -241,6 +241,7 @@ def import_kb_records(
     owner_type: str = "local",
     owner_id: str = "org_shared",
     max_records: int = 0,
+    persist_dir: Optional[str] = None,
     chunk_size: int = 900,
     chunk_overlap: int = 150,
     progress_callback: Optional[callable] = None,
@@ -295,7 +296,13 @@ def import_kb_records(
             "file_logs": [],
         }
 
-    store = MultiTenantChromaMemoryStore(persist_dir=CHROMA_PERSIST_DIR)
+    store = MultiTenantChromaMemoryStore(
+        persist_dir=resolve_scoped_persist_dir(
+            os.path.abspath(str(persist_dir or CHROMA_PERSIST_DIR)),
+            channel_type=channel_type,
+            owner_id=owner,
+        )
+    )
     os.makedirs(RAW_DIR, exist_ok=True)
 
     scanned_files = len(files)

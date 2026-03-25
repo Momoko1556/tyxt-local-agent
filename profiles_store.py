@@ -164,7 +164,7 @@ def normalize_profile_user_id(user_id: str) -> str:
     """
     将业务 user_id 归一化到 profiles 目录命名规范：
     - local_admin
-    - qq_<qq号>
+    - 私聊用户：保留原始 user_id（如 QQ 号、字母数字 ID）
     - group_<group_id>
     """
     uid = str(user_id or "").strip()
@@ -178,22 +178,42 @@ def normalize_profile_user_id(user_id: str) -> str:
         return "local_admin"
 
     if low.startswith("qq_"):
-        return "qq_" + _safe_token(uid[3:], "unknown")
+        return _safe_token(uid[3:], "unknown")
     if low.startswith("group_"):
         return "group_" + _safe_token(uid[6:], "unknown")
     if low.startswith("qq:"):
-        return "qq_" + _safe_token(uid.split(":", 1)[1], "unknown")
+        return _safe_token(uid.split(":", 1)[1], "unknown")
     if low.startswith("group:"):
         return "group_" + _safe_token(uid.split(":", 1)[1], "unknown")
 
     if re.fullmatch(r"\d{5,20}", uid):
-        return f"qq_{uid}"
+        return uid
 
-    # 兜底按“私聊用户”处理
+    # 兜底按“私聊用户原始 ID”处理
     safe = _safe_token(uid, "local_admin")
-    if safe == "local_admin":
-        return safe
-    return f"qq_{safe}"
+    return safe
+
+
+def _legacy_profile_user_id(norm_uid: str) -> str:
+    uid = str(norm_uid or "").strip()
+    low = uid.lower()
+    if (not uid) or low == "local_admin" or low.startswith("group_") or low.startswith("qq_"):
+        return ""
+    return f"qq_{_safe_token(uid, 'unknown')}"
+
+
+def _resolve_user_profile_dir(user_id: str, profile_base_dir: Optional[str] = None) -> str:
+    base = get_profile_base_dir(profile_base_dir)
+    norm_uid = normalize_profile_user_id(user_id)
+    canonical_dir = os.path.join(base, norm_uid)
+    legacy_uid = _legacy_profile_user_id(norm_uid)
+    legacy_dir = os.path.join(base, legacy_uid) if legacy_uid else ""
+    if legacy_dir and os.path.isdir(legacy_dir) and not os.path.exists(canonical_dir):
+        try:
+            os.rename(legacy_dir, canonical_dir)
+        except Exception:
+            return legacy_dir
+    return canonical_dir
 
 
 def get_profile_base_dir(profile_base_dir: Optional[str] = None) -> str:
@@ -205,9 +225,7 @@ def get_profile_base_dir(profile_base_dir: Optional[str] = None) -> str:
 
 
 def get_user_profile_dir(user_id: str, profile_base_dir: Optional[str] = None) -> str:
-    base = get_profile_base_dir(profile_base_dir)
-    norm_uid = normalize_profile_user_id(user_id)
-    return os.path.join(base, norm_uid)
+    return _resolve_user_profile_dir(user_id, profile_base_dir)
 
 
 def _memory_strips_path(user_id: str, profile_base_dir: Optional[str] = None) -> str:

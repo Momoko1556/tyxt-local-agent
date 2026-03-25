@@ -9,6 +9,19 @@ TYXT 是一个本地优先的 AI 助手系统（聊天、记忆、工具、局�
 
 English: [README.md](README.md)
 
+## 新增功能
+
+- **群聊**
+  - 支持群会话、群基础信息、群成员管理与群级记忆。
+- **多 Agent 协作**
+  - 采用 Router + Worker 的群聊/接力回复链路，支持多 Agent 联动回复。
+- **Agent 权限**
+  - 按场景（chat/work）配置权限矩阵，可控文档、画像、关系、运行日志等资源访问。
+- **待机作业**
+  - 支持反刍层、深度思考层后台作业，会话可开始/暂停/继续/结束并追踪进度。
+- **手机端接入**
+  - 支持手机端账号登录 + API Key 鉴权；后端可直接提供 `/mobile/` 入口。
+
 ## 新手教程（WebUI + 手机UI）
 
 如果你想按步骤完成“局域网使用”或“手机 5G 跨网登录”，看这份详细教程：
@@ -110,6 +123,9 @@ start_remote_easy.bat
 start_remote_ngrok.bat
 ```
 3. 脚本会输出一个 `https://xxxx.trycloudflare.com` 地址，发给手机端即可。
+   - Web 端地址：`https://xxxx.trycloudflare.com/`
+   - 手机 UI 地址：`https://xxxx.trycloudflare.com/mobile/`
+   - 手机 API 地址：`https://xxxx.trycloudflare.com/v1`
 4. 停止服务时运行：
 ```bat
 stop_all.bat
@@ -145,6 +161,20 @@ stop_all.bat
 给局域网客户端首次接入时使用（客户端机器执行）。会自动发现服务端并安装信任证书。
 - `client_join_lan_ui_zero_input.bat`
 零输入客户端脚本（固定了服务端 IP/域名），适合发给不懂配置的客户端用户直接双击接入。
+
+## 手机端启动与登录（推荐）
+
+1. 启动后端 + 公网隧道：
+```bat
+start_remote_easy.bat
+```
+2. 手机浏览器打开：
+   - `https://<隧道域名>/mobile/`
+3. 登录弹窗中填写：
+   - 服务器 API 地址：`https://<隧道域名>/v1`
+   - 服务器 API Key：与 `mobile_link_api_key` / `TYXT_INBOUND_API_KEY` 相同
+   - 账号和密码：TYXT 账号密码
+4. 隧道重启后域名会变化，需要同步更新手机端页面地址和 API 地址。
 
 ## 基础配置
 

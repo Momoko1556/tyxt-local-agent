@@ -59,11 +59,13 @@ if /I "%TYXT_FORCE_HTTP%"=="1" set "USE_HTTPS=0"
 
 if "%USE_HTTPS%"=="1" (
   set "UI_URL=https://127.0.0.1:5000/"
+  set "MOBILE_UI_URL=https://127.0.0.1:5000/mobile/"
   set "HEALTH_URL=https://127.0.0.1:5000/health"
 ) else (
   set "TYXT_SSL_CERT_FILE="
   set "TYXT_SSL_KEY_FILE="
   set "UI_URL=http://127.0.0.1:5000/"
+  set "MOBILE_UI_URL=http://127.0.0.1:5000/mobile/"
   set "HEALTH_URL=http://127.0.0.1:5000/health"
 )
 
@@ -81,6 +83,7 @@ if "%USE_HTTPS%"=="1" (
 )
 
 echo Web UI URL : %UI_URL%
+echo Mobile UI URL : %MOBILE_UI_URL%
 echo Health URL : %HEALTH_URL%
 if /I "%TYXT_NO_BROWSER%"=="1" (
   echo [INFO] Browser auto-open disabled by TYXT_NO_BROWSER=1
