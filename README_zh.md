@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.3.0
+﻿# TYXT Local Agent v1.3.1
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
