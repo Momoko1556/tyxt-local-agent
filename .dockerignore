@@ -19,13 +19,24 @@ configs/mcp_servers.json
 # Runtime and user data
 memory_db/*
 !memory_db/.gitkeep
+memory_db_theater/*
+!memory_db_theater/.gitkeep
 memory_warehouse/*
 !memory_warehouse/.gitkeep
 profiles/*
 !profiles/.gitkeep
 Ollama_agent_shared/*
 !Ollama_agent_shared/.gitkeep
+group_memory/*
+!group_memory/.gitkeep
+state/*
+!state/.gitkeep
+agents/*
+!agents/.gitkeep
+configs/theater/*
+!configs/theater/.gitkeep
 tmp_images/
+__*.log
 
 # Optional local assets
 GPT-SoVITS-1007-cu124/

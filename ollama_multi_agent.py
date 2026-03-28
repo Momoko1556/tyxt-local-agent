@@ -448,8 +448,21 @@ PERSONA_CONFIG_PATH = os.path.join(CONFIG_DIR, "persona_config.json")
 AGENTS_REGISTRY_PATH = os.path.join(CONFIG_DIR, "agents_registry.json")
 GROUP_CHATS_STORE_PATH = os.path.join(CONFIG_DIR, "group_chats.json")
 GROUP_MEMORY_ROOT = os.path.join(PROJECT_ROOT, "group_memory")
+THEATER_MEMORY_ROOT = os.path.join(PROJECT_ROOT, "memory_db_theater")
+THEATER_CONFIG_ROOT = os.path.join(CONFIG_DIR, "theater")
+THEATER_THEATERS_FILE = os.path.join(THEATER_CONFIG_ROOT, "theaters.json")
+THEATER_SESSIONS_FILE = os.path.join(THEATER_CONFIG_ROOT, "sessions.json")
+THEATER_CHARACTER_CARDS_DIR = os.path.join(THEATER_CONFIG_ROOT, "character_cards")
+THEATER_CHARACTER_CARDS_FILE = os.path.join(THEATER_CHARACTER_CARDS_DIR, "cards.json")
+THEATER_WORLDBOOKS_DIR = os.path.join(THEATER_CONFIG_ROOT, "worldbooks")
+THEATER_WORLDBOOKS_FILE = os.path.join(THEATER_WORLDBOOKS_DIR, "worldbooks.json")
+THEATER_PROMPT_PRESETS_DIR = os.path.join(THEATER_CONFIG_ROOT, "prompt_presets")
+THEATER_PROMPT_PRESETS_FILE = os.path.join(THEATER_PROMPT_PRESETS_DIR, "prompt_presets.json")
+THEATER_REGEX_RULES_DIR = os.path.join(THEATER_CONFIG_ROOT, "regex_rules")
+THEATER_REGEX_RULES_FILE = os.path.join(THEATER_REGEX_RULES_DIR, "regex_rules.json")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(GROUP_MEMORY_ROOT, exist_ok=True)
+os.makedirs(THEATER_MEMORY_ROOT, exist_ok=True)
 
 GROUP_CHAT_STORE = GroupChatStore(
     store_path=GROUP_CHATS_STORE_PATH,
@@ -725,6 +738,22 @@ def _default_agent_group_system_prompt() -> str:
         "1. 能直接回答就不调用工具；单轮最多 3 次工具调用。\n"
         "2. 优先本地记忆，再考虑联网；证据不足时明确不确定点，不编造。\n"
         "3. 若系统已提供工具结果，不要再说“无法访问/无法联网”，应基于结果作答。"
+    )
+
+
+def _default_agent_theater_system_prompt() -> str:
+    return (
+        "你是 TYXT 多 Agent 系统中的当前会话 Agent，当前处于剧场模式（theater）。\n"
+        "\n"
+        "【工作内容】\n"
+        "1. 仅在当前 theater_id 对应的剧场会话内进行角色化创作与互动。\n"
+        "2. 优先遵循：剧场系统提示词 -> 角色卡 -> 世界书 -> Prompt预设 -> 正则/逆则 -> 剧场记忆 -> 当前剧场历史。\n"
+        "3. 保持戏剧一致性，不把私聊/群聊人物关系、总结和上下文带入剧场。\n"
+        "\n"
+        "【默认安全策略】\n"
+        "1. 默认禁止工具调用、禁止联网搜索、禁止文件工具，除非 theater 配置显式开启。\n"
+        "2. 未获得明确证据时不得编造外部事实；剧场创作场景可进行虚构，但需与设定一致。\n"
+        "3. 不写入用户画像，不读取群聊总结，不跨场域检索记忆。"
     )
 
 
@@ -1406,6 +1435,11 @@ def _agent_global_system_prompt_text(agent_cfg: Optional[Dict[str, Any]], scene:
         or MODEL_CONFIG.get("agent_group_system_prompt")
         or ""
     )
+    theater_txt = _normalize_prompt_multiline(
+        MODEL_CONFIG.get("agent_global_theater_system_prompt")
+        or MODEL_CONFIG.get("agent_theater_system_prompt")
+        or ""
+    )
     legacy_txt = _normalize_prompt_multiline(
         MODEL_CONFIG.get("agent_global_system_prompt")
         or MODEL_CONFIG.get("global_agent_system_prompt")
@@ -1418,12 +1452,16 @@ def _agent_global_system_prompt_text(agent_cfg: Optional[Dict[str, Any]], scene:
         for cand in (group_txt, private_txt, legacy_txt, fallback_cfg_txt):
             if cand:
                 return cand
+    elif scene_key == "theater":
+        for cand in (theater_txt, private_txt, legacy_txt, fallback_cfg_txt):
+            if cand:
+                return cand
     elif scene_key in {"private", "chat"}:
         for cand in (private_txt, legacy_txt, group_txt, fallback_cfg_txt):
             if cand:
                 return cand
     else:
-        for cand in (legacy_txt, private_txt, group_txt, fallback_cfg_txt):
+        for cand in (legacy_txt, private_txt, group_txt, theater_txt, fallback_cfg_txt):
             if cand:
                 return cand
     return ""
@@ -1696,6 +1734,21 @@ def _owner_memory_root(
     channel = str(channel_type or "").strip().lower()
     owner = str(owner_id or "").strip()
     mm = meta if isinstance(meta, dict) else {}
+    if channel == "theater":
+        default_theater_root = resolve_scoped_persist_dir(
+            THEATER_MEMORY_ROOT,
+            channel_type="theater",
+            owner_id=owner or mm.get("theater_id") or "unknown_theater",
+        )
+        explicit_theater_root = str(
+            mm.get("theater_memory_path")
+            or mm.get("theater_memory_root")
+            or mm.get("memory_root_theater")
+            or ""
+        ).strip()
+        if explicit_theater_root:
+            return _normalize_optional_path(explicit_theater_root, default_theater_root)
+        return default_theater_root
     if channel == "group":
         default_group_root = resolve_scoped_persist_dir(
             GROUP_MEMORY_ROOT,
@@ -1786,7 +1839,7 @@ def _list_agent_memory_tenants(
         channel_type = str(row.get("channel_type") or "").strip().lower()
         owner_id = str(row.get("owner_id") or "").strip()
         persist_dir = str(row.get("persist_dir") or "").strip()
-        if channel_type not in {"private", "group", "local"} or (not owner_id) or (not persist_dir):
+        if channel_type not in {"private", "group", "theater", "local"} or (not owner_id) or (not persist_dir):
             continue
         try:
             store = _get_memory_store_for_root(persist_dir)
@@ -1825,7 +1878,7 @@ def _list_agent_memory_tenants(
             ch = str((item or {}).get("channel_type") or "").strip().lower()
             owner = str((item or {}).get("owner_id") or "").strip()
             sig = f"{ch}|{owner}"
-            if ch not in {"private", "group", "local"} or (not owner) or sig in seen:
+            if ch not in {"private", "group", "theater", "local"} or (not owner) or sig in seen:
                 continue
             seen.add(sig)
             out.append(
@@ -1838,6 +1891,55 @@ def _list_agent_memory_tenants(
                     "deleted_count": int((item or {}).get("deleted_count") or 0),
                     "persist_dir": legacy_root,
                     "layout": "legacy_flat",
+                }
+            )
+
+    # 剧场记忆独立库：THEATER_MEMORY_ROOT/theater/<theater_id>
+    for row in iter_scoped_tenant_dirs(THEATER_MEMORY_ROOT):
+        channel_type = str(row.get("channel_type") or "").strip().lower()
+        owner_id = str(row.get("owner_id") or "").strip()
+        persist_dir = str(row.get("persist_dir") or "").strip()
+        if channel_type != "theater" or (not owner_id) or (not persist_dir):
+            continue
+        try:
+            tenants = _get_memory_store_for_root(persist_dir).list_tenants()
+        except Exception:
+            tenants = []
+        if not tenants:
+            sig = f"theater|{owner_id}"
+            if sig in seen:
+                continue
+            seen.add(sig)
+            out.append(
+                {
+                    "channel_type": "theater",
+                    "owner_id": owner_id,
+                    "collection": make_collection_name("theater", owner_id),
+                    "doc_count": 0,
+                    "last_ts": None,
+                    "deleted_count": 0,
+                    "persist_dir": persist_dir,
+                    "layout": "theater_shared",
+                }
+            )
+            continue
+        for item in tenants:
+            ch = str((item or {}).get("channel_type") or "theater").strip().lower()
+            owner = str((item or {}).get("owner_id") or owner_id).strip()
+            sig = f"{ch}|{owner}"
+            if ch != "theater" or (not owner) or sig in seen:
+                continue
+            seen.add(sig)
+            out.append(
+                {
+                    "channel_type": ch,
+                    "owner_id": owner,
+                    "collection": str((item or {}).get("collection") or make_collection_name(ch, owner)),
+                    "doc_count": int((item or {}).get("doc_count") or 0),
+                    "last_ts": (item or {}).get("last_ts"),
+                    "deleted_count": int((item or {}).get("deleted_count") or 0),
+                    "persist_dir": persist_dir,
+                    "layout": "theater_shared",
                 }
             )
 
@@ -1892,6 +1994,21 @@ def _legacy_owner_memory_roots(
     agent_cfg: Optional[Dict[str, Any]] = None,
     meta: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
+    if str(channel_type or "").strip().lower() == "theater":
+        # theater 强制隔离，不参与 private/group/local 回退；
+        # 仅兼容历史导入路径误拼接：
+        #   <theater_root>/theater/<theater_id>/theater/<theater_id>
+        current_root = _requested_owner_memory_root(channel_type, owner_id, agent_cfg, meta)
+        owner = str(owner_id or "").strip() or str(((meta or {}) if isinstance(meta, dict) else {}).get("theater_id") or "").strip() or "unknown_theater"
+        nested_root = resolve_scoped_persist_dir(
+            current_root,
+            channel_type="theater",
+            owner_id=owner,
+        )
+        out: List[str] = []
+        if nested_root != current_root and os.path.isdir(nested_root):
+            out.append(nested_root)
+        return out
     current_root = _requested_owner_memory_root(channel_type, owner_id, agent_cfg, meta)
     out: List[str] = []
     for legacy_root in _legacy_memory_candidate_roots(agent_cfg, meta):
@@ -8428,63 +8545,74 @@ def _post_reply_housekeeping(
     返回 memory_meta（给调用方可选展示）。
     """
     m = dict(meta or {})
+    scene_key = str(m.get("scene") or "").strip().lower()
     seg = dict(user_ctx_segments or {})
     memory_meta = {
         "strip_added": False,
         "profile_updated": False,
     }
+    if _should_skip_error_turn_persist(reply) or _should_skip_error_turn_persist(user_input):
+        try:
+            print(
+                "[save_chat skip] error-like assistant reply blocked from persistence: "
+                f"user={str(user_input or '')[:80]!r} reply={str(reply or '')[:80]!r}"
+            )
+        except Exception:
+            pass
+        return memory_meta
 
-    try:
-        profile_uid = str(m.get("profile_user_id") or m.get("user_id") or "").strip() or "local_admin"
-        profile_base_dir = _agent_profile_root(meta=m)
-        recent_hint = (
-            str(seg.get("strips_summary") or "").strip()
-            + "\n"
-            + str(seg.get("profile_summary") or "").strip()
-        ).strip()
-        agent_cfg = _get_agent_config(m.get("agent_id") or _default_agent_id_from_config())
-        decision = run_memory_judge(
-            user_id=profile_uid,
-            last_user_message=user_input,
-            assistant_reply=reply,
-            recent_context_hint=recent_hint,
-            assistant_cfg=_assistant_config_from_model_config(),
-            agent_cfg=agent_cfg,
-        )
+    profile_base_dir = _agent_profile_root(meta=m)
+    if scene_key != "theater":
+        try:
+            profile_uid = str(m.get("profile_user_id") or m.get("user_id") or "").strip() or "local_admin"
+            recent_hint = (
+                str(seg.get("strips_summary") or "").strip()
+                + "\n"
+                + str(seg.get("profile_summary") or "").strip()
+            ).strip()
+            agent_cfg = _get_agent_config(m.get("agent_id") or _default_agent_id_from_config())
+            decision = run_memory_judge(
+                user_id=profile_uid,
+                last_user_message=user_input,
+                assistant_reply=reply,
+                recent_context_hint=recent_hint,
+                assistant_cfg=_assistant_config_from_model_config(),
+                agent_cfg=agent_cfg,
+            )
 
-        if decision.should_write_strip and str(decision.strip_text or "").strip():
-            if ENABLE_MEMORY_STRIP_AUTO:
-                ok = append_memory_strip_for_user(
-                    profile_uid,
-                    text=str(decision.strip_text or "").strip(),
-                    importance=float(decision.strip_importance),
-                    created_by="agent",
-                    profile_base_dir=profile_base_dir,
-                )
-                memory_meta["strip_added"] = bool(ok)
-            else:
-                print(
-                    f"[memory_judge] strip candidate skipped by switch: user={profile_uid} "
-                    f"text={decision.strip_text!r} imp={decision.strip_importance:.2f}"
-                )
+            if decision.should_write_strip and str(decision.strip_text or "").strip():
+                if ENABLE_MEMORY_STRIP_AUTO:
+                    ok = append_memory_strip_for_user(
+                        profile_uid,
+                        text=str(decision.strip_text or "").strip(),
+                        importance=float(decision.strip_importance),
+                        created_by="agent",
+                        profile_base_dir=profile_base_dir,
+                    )
+                    memory_meta["strip_added"] = bool(ok)
+                else:
+                    print(
+                        f"[memory_judge] strip candidate skipped by switch: user={profile_uid} "
+                        f"text={decision.strip_text!r} imp={decision.strip_importance:.2f}"
+                    )
 
-        if decision.should_update_profile and str(decision.profile_note or "").strip():
-            if ENABLE_PROFILE_UPDATE:
-                p = profiles_apply_profile_note(
-                    user_id=profile_uid,
-                    note=str(decision.profile_note or "").strip(),
-                    confidence=float(decision.profile_confidence),
-                    source="memory_judge",
-                    profile_base_dir=profile_base_dir,
-                )
-                memory_meta["profile_updated"] = bool(p)
-            else:
-                print(
-                    f"[memory_judge] profile candidate skipped by switch: user={profile_uid} "
-                    f"note={decision.profile_note!r} conf={decision.profile_confidence:.2f}"
-                )
-    except Exception as e:
-        print(f"[memory_judge warn] {e}")
+            if decision.should_update_profile and str(decision.profile_note or "").strip():
+                if ENABLE_PROFILE_UPDATE:
+                    p = profiles_apply_profile_note(
+                        user_id=profile_uid,
+                        note=str(decision.profile_note or "").strip(),
+                        confidence=float(decision.profile_confidence),
+                        source="memory_judge",
+                        profile_base_dir=profile_base_dir,
+                    )
+                    memory_meta["profile_updated"] = bool(p)
+                else:
+                    print(
+                        f"[memory_judge] profile candidate skipped by switch: user={profile_uid} "
+                        f"note={decision.profile_note!r} conf={decision.profile_confidence:.2f}"
+                    )
+        except Exception as e:
+            print(f"[memory_judge warn] {e}")
 
     try:
         save_meta = dict(m or {})
@@ -8494,7 +8622,7 @@ def _post_reply_housekeeping(
     except Exception as e:
         print(f"[save_chat error] {e}")
 
-    if ENABLE_PROFILE_UPDATE:
+    if ENABLE_PROFILE_UPDATE and scene_key != "theater":
         try:
             turn_summary = f"用户：{user_input}\n助手：{reply}"
             profiles_maybe_update_user_profile_from_turn(
@@ -8691,6 +8819,7 @@ def _load_config_file() -> Dict[str, Any]:
         # 新字段：按场域拆分的 Agent 系统提示词
         "agent_global_private_system_prompt": _default_agent_private_system_prompt(),
         "agent_global_group_system_prompt": _default_agent_group_system_prompt(),
+        "agent_global_theater_system_prompt": _default_agent_theater_system_prompt(),
         # 全局辅助模型（秘书）
         **_default_assistant_config(),
     }
@@ -8730,8 +8859,15 @@ def _load_config_file() -> Dict[str, Any]:
         or private_prompt
         or _default_agent_group_system_prompt()
     )
+    theater_prompt = _normalize_prompt_multiline(
+        cfg.get("agent_global_theater_system_prompt")
+        or cfg.get("agent_theater_system_prompt")
+        or private_prompt
+        or _default_agent_theater_system_prompt()
+    )
     cfg["agent_global_private_system_prompt"] = private_prompt
     cfg["agent_global_group_system_prompt"] = group_prompt
+    cfg["agent_global_theater_system_prompt"] = theater_prompt
     cfg["agent_global_system_prompt"] = legacy_agent_prompt
     cfg.update(_assistant_config_from_model_config(cfg))
     return cfg
@@ -9292,8 +9428,13 @@ def _scene_for_memory(meta: Optional[dict]) -> str:
     m = meta or {}
     scene = str(m.get("scene") or "").strip().lower()
     gid = str(m.get("group_id") or "").strip()
+    tid = str(m.get("theater_id") or m.get("theaterId") or "").strip()
     if scene == "group" and gid:
         return f"qq_group:{gid}"
+    if scene.startswith("theater:"):
+        return scene
+    if scene == "theater":
+        return f"theater:{tid or 'unknown_theater'}"
     if scene in {"private", "local_ui", "ui", "chat", ""}:
         return "local_ui"
     return scene
@@ -9334,6 +9475,19 @@ def _memory_filters_from_meta(meta: Optional[dict], lookback_days: Optional[int]
             _scene_for_memory(m),
             f"qq_group:{owner}" if owner else "",
             "group",
+        ]:
+            if s and s not in scenes:
+                scenes.append(s)
+        if scenes:
+            filters["scene"] = {"$in": scenes}
+    elif str(channel_type) == "theater":
+        owner = str(owner_id or "").strip()
+        scenes = []
+        for s in [
+            str(m.get("scene") or "").strip(),
+            _scene_for_memory(m),
+            f"theater:{owner}" if owner else "",
+            "theater",
         ]:
             if s and s not in scenes:
                 scenes.append(s)
@@ -9653,6 +9807,8 @@ def _persist_online_memory(user_text: str, assistant_text: str, meta: Optional[d
         channel_type, owner_id = resolve_channel_owner(mm)
     except Exception:
         channel_type, owner_id = ("local", "local_admin")
+    if str(channel_type or "").strip().lower() == "theater" and (not safe_bool(mm.get("memory_enabled"), True)):
+        return
     now_ts = int(time.time())
     scene = _scene_for_memory(mm)
     if scene == "group" and (not safe_bool(mm.get("group_memory_enabled"), True)):
@@ -9666,6 +9822,11 @@ def _persist_online_memory(user_text: str, assistant_text: str, meta: Optional[d
     merged_text = f"{speaker_user_name}: {user_part}\n{speaker_assistant_name}: {ai_part}".strip()
     if len(merged_text) < 2:
         return
+
+    chat_id = str(mm.get("chat_id") or mm.get("session_id") or mm.get("window_stamp") or "").strip()
+    session_id = str(mm.get("session_id") or chat_id or "").strip()
+    window_stamp = str(mm.get("window_stamp") or chat_id or "").strip()
+    chat_title = str(mm.get("chat_title") or mm.get("session_name") or mm.get("chat_name") or "").strip()
 
     norm_text = _normalize_for_fingerprint(merged_text)
     fp_src = f"{owner_id}|{norm_text}"
@@ -9693,6 +9854,10 @@ def _persist_online_memory(user_text: str, assistant_text: str, meta: Optional[d
         "speaker_assistant_name": speaker_assistant_name,
         "user_name": speaker_user_name,
         "assistant_name": speaker_assistant_name,
+        "chat_id": chat_id,
+        "session_id": session_id,
+        "window_stamp": window_stamp,
+        "chat_title": chat_title,
     }
 
     row = {
@@ -10422,6 +10587,7 @@ def persona_get():
             "agent_system_prompt": _agent_global_system_prompt_text(cfg, scene="private"),
             "agent_system_prompt_private": _agent_global_system_prompt_text(cfg, scene="private"),
             "agent_system_prompt_group": _agent_global_system_prompt_text(cfg, scene="group"),
+            "agent_system_prompt_theater": _agent_global_system_prompt_text(cfg, scene="theater"),
             "content": _agent_system_prompt_text(cfg),
             "agent_title": str(cfg.get("agent_title") or cfg.get("display_name") or ""),
             "agent_name": str(cfg.get("agent_name") or cfg.get("display_name") or ""),
@@ -11023,6 +11189,18 @@ def _resolve_request_user_ctx(payload: Optional[Dict[str, Any]] = None) -> Tuple
     r = "admin" if str(role or "").strip().lower() == "admin" else "user"
     nick = str(nickname or uid).strip() or uid
     if uid:
+        # 移动端跨域场景下可能无 cookie session（仅携带 user_id / token），
+        # 这里回退 profiles 以恢复准确角色，避免管理员被误识别为普通用户。
+        try:
+            session_uid = str(session.get("user_id") or "").strip()
+        except Exception:
+            session_uid = ""
+        if not session_uid:
+            prof_role, prof_nick = _load_profile_role_nickname(uid)
+            if prof_role == "admin":
+                r = "admin"
+            if (not str(nick or "").strip()) or str(nick).strip() == uid:
+                nick = str(prof_nick or uid).strip() or uid
         return uid, r, nick
 
     fallback_uid = _request_user_id_fallback()
@@ -11037,6 +11215,8 @@ def _tenant_display_name(channel_type: str, owner_id: str) -> str:
     owner = str(owner_id or "").strip()
     if ch == "group":
         return f"群聊 / {owner}"
+    if ch == "theater":
+        return f"剧场 / {owner}"
     if ch == "local":
         return "本地 / 管理员"
     return f"私聊 / {owner}"
@@ -11115,18 +11295,53 @@ def _trim_text(text: str, max_len: int = 6000) -> str:
     return s[:max_len] + "\n...\n[内容过长，已截断]"
 
 
+_CJK_QUERY_BLOCK_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
+_CJK_QUERY_STOP_TOKENS = {
+    "什么", "怎么", "为何", "为啥", "是否", "是不是", "吗", "呢", "吧", "啊", "呀", "嘛",
+    "了", "的", "是", "有", "在", "和", "跟", "与", "及", "请", "请问", "一下", "一个", "一些",
+    "多少", "几个", "哪个", "哪种", "哪里", "哪儿",
+}
+
+
+def _expand_cjk_query_terms(src: str, limit: int = 24) -> List[str]:
+    out: List[str] = []
+    for block in _CJK_QUERY_BLOCK_RE.findall(str(src or "")):
+        txt = str(block or "").strip()
+        if len(txt) < 2:
+            continue
+        out.append(txt)
+        compact = re.sub(r"[了的吗呢吧啊呀嘛么]", "", txt)
+        if len(compact) >= 2 and compact != txt:
+            out.append(compact)
+        for n in (3, 2):
+            if len(txt) < n:
+                continue
+            for i in range(0, len(txt) - n + 1):
+                token = txt[i : i + n]
+                if (not token) or token in _CJK_QUERY_STOP_TOKENS:
+                    continue
+                out.append(token)
+                if len(out) >= max(6, int(limit)):
+                    return out[: max(6, int(limit))]
+    return out[: max(6, int(limit))]
+
+
 def _query_terms(query: str) -> List[str]:
     q = re.sub(r"\s+", " ", str(query or "")).strip().lower()
     if not q:
         return []
     pieces = re.split(r"[\s,，。！？!?:：;；/\\|()\[\]{}\"'`~@#$%^&*+=<>《》“”‘’·…-]+", q)
     terms = [p for p in pieces if p]
+    terms.extend(_expand_cjk_query_terms(q, limit=24))
     if q and q not in terms:
         terms.insert(0, q)
     # 去重并保序
     out: List[str] = []
     seen: set = set()
     for t in terms:
+        t = str(t or "").strip().lower()
+        if not t:
+            continue
         if t in seen:
             continue
         seen.add(t)
@@ -11266,7 +11481,7 @@ def _admin_memory_lexical_fallback_scan(
 
 
 _IMPORT_ALLOWED_MODES = {"chatgpt_export", "kb_files"}
-_IMPORT_ALLOWED_OWNER_TYPES = {"local", "private", "group"}
+_IMPORT_ALLOWED_OWNER_TYPES = {"local", "private", "group", "theater"}
 _IMPORT_JOB_TERMINAL = {"done", "error", "stopped"}
 _IMPORT_JOBS: Dict[str, Dict[str, Any]] = {}
 _IMPORT_JOB_LOCK = threading.RLock()
@@ -11283,7 +11498,7 @@ def _parse_import_owner_target(
     if not owner_type:
         return None, None, "Missing owner_type"
     if owner_type not in _IMPORT_ALLOWED_OWNER_TYPES:
-        return None, None, "Invalid owner_type (local/private/group only)"
+        return None, None, "Invalid owner_type (local/private/group/theater only)"
     if not owner_id:
         if allow_empty_group_owner_id and owner_type == "group":
             return owner_type, "", None
@@ -11998,7 +12213,7 @@ def admin_memory_list():
         page_size = max(1, min(100, safe_int(request.args.get("page_size"), 20)))
         include_deleted = safe_bool(request.args.get("include_deleted"), False)
 
-        if channel_type not in {"private", "group", "local"} or (not owner_id):
+        if channel_type not in {"private", "group", "theater", "local"} or (not owner_id):
             return jsonify({"ok": False, "msg": "Invalid channel_type or owner_id"}), 200
         memory_root = _requested_owner_memory_root(channel_type, owner_id, agent_cfg, query_data)
         mem_store = _get_memory_store_for_root(memory_root)
@@ -12077,7 +12292,7 @@ def admin_memory_soft_delete():
         owner_id = str(data.get("owner_id") or "").strip()
         mem_id = str(data.get("id") or "").strip()
         deleted = safe_bool(data.get("deleted"), True)
-        if channel_type not in {"private", "group", "local"} or (not owner_id) or (not mem_id):
+        if channel_type not in {"private", "group", "theater", "local"} or (not owner_id) or (not mem_id):
             return jsonify({"ok": False, "msg": "Invalid parameters"}), 200
         memory_root = _requested_owner_memory_root(
             channel_type,
@@ -12119,7 +12334,7 @@ def admin_memory_set_importance():
         mem_id = str(data.get("id") or "").strip()
         mode = str(data.get("mode") or "delta").strip().lower()
         value = safe_float(data.get("value"), 0.0)
-        if channel_type not in {"private", "group", "local"} or (not owner_id) or (not mem_id):
+        if channel_type not in {"private", "group", "theater", "local"} or (not owner_id) or (not mem_id):
             return jsonify({"ok": False, "msg": "Invalid parameters"}), 200
         if mode not in {"delta", "set"}:
             mode = "delta"
@@ -12549,8 +12764,7 @@ def admin_memory_search():
                         if saw_older_than_from and t_from is not None:
                             break
                         page += 1
-                    if collected > 0:
-                        break
+                    # 兼容 legacy 路径：继续扫描其它目标根，后续统一去重
 
             date_candidates.sort(key=lambda item: int(item[0]), reverse=True)
             out_rows: List[Dict[str, Any]] = []
@@ -12590,7 +12804,6 @@ def admin_memory_search():
         scored_inputs: List[Tuple[Any, str, str]] = []
         for target in memory_targets:
             target_owner_id = str((target or {}).get("owner_id") or "").strip()
-            hit = False
             for target_root, target_store in _iter_target_stores(target):
                 records = target_store.search_raw(
                     query=query,
@@ -12611,10 +12824,6 @@ def admin_memory_search():
                 )
                 if records:
                     scored_inputs.extend((rec, target_owner_id, target_root) for rec in records)
-                    hit = True
-                    break
-            if not hit:
-                continue
 
         now_ts = int(time.time())
         scored: List[Tuple[float, float, bool, int, Any, str, str]] = []
@@ -12681,7 +12890,6 @@ def admin_memory_search():
                     if fallback_records:
                         for rec in fallback_records:
                             _append_scored(rec, target_owner_id, target_root)
-                        break
             recovered = max(0, lexical_hit_count - before_hit)
             if recovered > 0:
                 search_note = f"Vector recall miss; lexical fallback recovered {recovered} hit(s)"
@@ -12771,7 +12979,30 @@ def mobile_index():
     try:
         mobile_index_html = os.path.join(TYXT_MOBILE_FRONTEND_DIR, "index.html")
         if os.path.exists(mobile_index_html):
-            return send_file(mobile_index_html, mimetype="text/html; charset=utf-8")
+            resp = send_file(mobile_index_html, mimetype="text/html; charset=utf-8")
+            # Force index.html no-cache to avoid stale mobile bundle after updates.
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            try:
+                assets_dir = os.path.join(TYXT_MOBILE_FRONTEND_DIR, "assets")
+                build_js = ""
+                if os.path.isdir(assets_dir):
+                    newest_mtime = -1.0
+                    for nm in os.listdir(assets_dir):
+                        low = str(nm or "").lower()
+                        if not (low.startswith("index-") and low.endswith(".js")):
+                            continue
+                        p = os.path.join(assets_dir, str(nm))
+                        mt = safe_float(os.path.getmtime(p), 0.0) if os.path.isfile(p) else 0.0
+                        if mt >= newest_mtime:
+                            newest_mtime = mt
+                            build_js = str(nm)
+                if build_js:
+                    resp.headers["X-TYXT-Mobile-Build"] = build_js
+            except Exception:
+                pass
+            return resp
         return (
             f"Mobile frontend not found: {mobile_index_html}. "
             "Please run: cd third_party/tyxt_mobile_frontend && npm run build",
@@ -13057,6 +13288,1522 @@ def _chat_title_from_meta(meta: Optional[Dict[str, Any]]) -> str:
     return "default"
 
 
+def _safe_theater_id(value: Any, default: str = "theater_001") -> str:
+    token = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(value or "").strip()).strip("._")
+    if not token:
+        token = default
+    if not token.startswith("theater_"):
+        token = f"theater_{token}"
+    if len(token) > 96:
+        token = token[:96].rstrip("._")
+    return token or default
+
+
+def _safe_theater_session_id(value: Any, theater_id: Any = "") -> str:
+    token = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(value or "").strip()).strip("._")
+    if not token:
+        tid = _safe_theater_id(theater_id, "theater_001")
+        token = f"session_{tid}_{int(time.time())}"
+    if len(token) > 128:
+        token = token[:128].rstrip("._")
+    return token
+
+
+def now_iso() -> str:
+    try:
+        return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    except Exception:
+        return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def _default_theater_config(theater_id: str = "theater_001", name: str = "古风长夜") -> Dict[str, Any]:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    return {
+        "theater_id": tid,
+        "name": str(name or tid).strip() or tid,
+        "enabled": True,
+        "character_card_id": "",
+        "worldbook_ids": [],
+        "prompt_preset_id": "",
+        "regex_rules": [],
+        "anti_regex_rules": [],
+        "api_override_enabled": False,
+        "provider": "ollama",
+        "model": "gpt-oss:20b",
+        "api_base_url": "",
+        "api_key": "",
+        "temperature": 0.9,
+        "top_p": 0.92,
+        "top_k": 40,
+        "max_tokens": 1200,
+        "memory_enabled": True,
+        "tool_enabled": False,
+        "web_search_enabled": False,
+        "file_tools_enabled": False,
+        "context_turn_n": 8,
+    }
+
+
+def _default_theater_cards_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "items": [],
+    }
+
+
+def _default_theater_worldbooks_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "items": [],
+    }
+
+
+def _default_theater_prompt_presets_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "items": [],
+    }
+
+
+def _default_theater_regex_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "items": [],
+    }
+
+
+def _default_theater_sessions_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "sessions": [],
+    }
+
+
+def _default_theater_registry_doc() -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "theaters": [_default_theater_config("theater_001", "古风长夜")],
+    }
+
+
+def _read_json_safe(path: str, default_payload: Any) -> Any:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data is None:
+            return default_payload
+        return data
+    except Exception:
+        return default_payload
+
+
+def _ensure_theater_storage() -> None:
+    os.makedirs(THEATER_CONFIG_ROOT, exist_ok=True)
+    os.makedirs(THEATER_CHARACTER_CARDS_DIR, exist_ok=True)
+    os.makedirs(THEATER_WORLDBOOKS_DIR, exist_ok=True)
+    os.makedirs(THEATER_PROMPT_PRESETS_DIR, exist_ok=True)
+    os.makedirs(THEATER_REGEX_RULES_DIR, exist_ok=True)
+    os.makedirs(THEATER_MEMORY_ROOT, exist_ok=True)
+    defaults: List[Tuple[str, Any]] = [
+        (THEATER_THEATERS_FILE, _default_theater_registry_doc()),
+        (THEATER_CHARACTER_CARDS_FILE, _default_theater_cards_doc()),
+        (THEATER_WORLDBOOKS_FILE, _default_theater_worldbooks_doc()),
+        (THEATER_PROMPT_PRESETS_FILE, _default_theater_prompt_presets_doc()),
+        (THEATER_REGEX_RULES_FILE, _default_theater_regex_doc()),
+        (THEATER_SESSIONS_FILE, _default_theater_sessions_doc()),
+    ]
+    for path, payload in defaults:
+        if os.path.exists(path):
+            continue
+        try:
+            _write_json_atomic(path, payload)
+        except Exception:
+            pass
+
+
+def _normalize_theater_regex_rule(raw: Any, idx: int = 0) -> Dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+    rid = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(src.get("rule_id") or f"rule_{idx+1}").strip()).strip("._")
+    pattern = str(src.get("pattern") or src.get("regex") or "").strip()
+    inject = str(src.get("inject") or src.get("inject_text") or "").strip()
+    return {
+        "rule_id": rid or f"rule_{idx+1}",
+        "name": str(src.get("name") or rid or f"规则{idx+1}").strip() or f"规则{idx+1}",
+        "pattern": pattern,
+        "inject": inject,
+        "flags": str(src.get("flags") or "i").strip().lower() or "i",
+        "enabled": safe_bool(src.get("enabled"), True),
+    }
+
+
+def _normalize_theater_config(raw: Any) -> Dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+    base = _default_theater_config(str(src.get("theater_id") or "theater_001"))
+    tid = _safe_theater_id(src.get("theater_id") or base["theater_id"], base["theater_id"])
+    base["theater_id"] = tid
+    base["name"] = str(src.get("name") or base["name"]).strip() or base["name"]
+    base["enabled"] = safe_bool(src.get("enabled"), True)
+    base["character_card_id"] = str(src.get("character_card_id") or "").strip()
+    base["worldbook_ids"] = [str(x or "").strip() for x in list(src.get("worldbook_ids") or []) if str(x or "").strip()]
+    base["prompt_preset_id"] = str(src.get("prompt_preset_id") or "").strip()
+    base["regex_rules"] = [_normalize_theater_regex_rule(x, idx=i) for i, x in enumerate(list(src.get("regex_rules") or []))]
+    base["anti_regex_rules"] = [_normalize_theater_regex_rule(x, idx=i) for i, x in enumerate(list(src.get("anti_regex_rules") or []))]
+    base["api_override_enabled"] = safe_bool(src.get("api_override_enabled"), False)
+    base["provider"] = str(src.get("provider") or base["provider"]).strip().lower() or base["provider"]
+    base["model"] = str(src.get("model") or base["model"]).strip() or base["model"]
+    base["api_base_url"] = str(src.get("api_base_url") or src.get("base_url") or "").strip()
+    base["api_key"] = str(src.get("api_key") or "").strip()
+    base["temperature"] = float(max(0.0, min(2.0, safe_float(src.get("temperature"), base["temperature"]))))
+    base["top_p"] = float(max(0.0, min(1.0, safe_float(src.get("top_p"), base["top_p"]))))
+    base["top_k"] = int(max(0, safe_int(src.get("top_k"), base["top_k"])))
+    base["max_tokens"] = int(max(64, safe_int(src.get("max_tokens"), base["max_tokens"])))
+    base["memory_enabled"] = safe_bool(src.get("memory_enabled"), True)
+    base["tool_enabled"] = safe_bool(src.get("tool_enabled"), False)
+    base["web_search_enabled"] = safe_bool(src.get("web_search_enabled"), False)
+    base["file_tools_enabled"] = safe_bool(src.get("file_tools_enabled"), False)
+    base["context_turn_n"] = int(max(1, min(40, safe_int(src.get("context_turn_n"), base["context_turn_n"]))))
+    return base
+
+
+def _load_theater_registry() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_THEATERS_FILE, _default_theater_registry_doc())
+    src = raw if isinstance(raw, dict) else {}
+    rows_raw = list(src.get("theaters") or []) if isinstance(src.get("theaters"), list) else []
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for item in rows_raw:
+        row = _normalize_theater_config(item)
+        tid = str(row.get("theater_id") or "").strip()
+        if (not tid) or tid in seen:
+            continue
+        seen.add(tid)
+        rows.append(row)
+    if not rows:
+        rows = [_default_theater_config("theater_001", "古风长夜")]
+    doc = {
+        "version": max(1, safe_int(src.get("version"), 1)),
+        "theaters": rows,
+    }
+    try:
+        _write_json_atomic(THEATER_THEATERS_FILE, doc)
+    except Exception:
+        pass
+    return doc
+
+
+def _save_theater_registry(doc: Dict[str, Any]) -> Dict[str, Any]:
+    rows = list(doc.get("theaters") or []) if isinstance(doc, dict) else []
+    normalized = [_normalize_theater_config(x) for x in rows]
+    out = {
+        "version": max(1, safe_int((doc or {}).get("version"), 1)),
+        "theaters": normalized,
+    }
+    _write_json_atomic(THEATER_THEATERS_FILE, out)
+    return out
+
+
+def _list_theater_configs() -> List[Dict[str, Any]]:
+    return list((_load_theater_registry().get("theaters") or []))
+
+
+def _get_theater_config(theater_id: Any) -> Optional[Dict[str, Any]]:
+    tid = _safe_theater_id(theater_id, "")
+    if not tid:
+        return None
+    for row in _list_theater_configs():
+        if str((row or {}).get("theater_id") or "").strip() == tid:
+            return dict(row)
+    return None
+
+
+def _load_theater_config(theater_id: Any) -> Optional[Dict[str, Any]]:
+    # 兼容旧调用名：当前统一读取入口为 _get_theater_config
+    return _get_theater_config(theater_id)
+
+
+def _upsert_theater_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    row = _normalize_theater_config(payload or {})
+    tid = str(row.get("theater_id") or "").strip()
+    doc = _load_theater_registry()
+    rows = list(doc.get("theaters") or [])
+    updated = False
+    for idx, item in enumerate(rows):
+        if str((item or {}).get("theater_id") or "").strip() == tid:
+            rows[idx] = row
+            updated = True
+            break
+    if not updated:
+        rows.append(row)
+    return _save_theater_registry({"version": doc.get("version", 1), "theaters": rows})
+
+
+def _load_theater_cards_doc() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_CHARACTER_CARDS_FILE, _default_theater_cards_doc())
+    src = raw if isinstance(raw, dict) else {}
+    items_src = list(src.get("items") or []) if isinstance(src.get("items"), list) else []
+    out = {
+        "version": max(1, safe_int(src.get("version"), 1)),
+        "items": [_normalize_theater_card_item(x, i) for i, x in enumerate(items_src)],
+    }
+    try:
+        _write_json_atomic(THEATER_CHARACTER_CARDS_FILE, out)
+    except Exception:
+        pass
+    return out
+
+
+def _load_theater_worldbooks_doc() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_WORLDBOOKS_FILE, _default_theater_worldbooks_doc())
+    src = raw if isinstance(raw, dict) else {}
+    items_src = list(src.get("items") or []) if isinstance(src.get("items"), list) else []
+    out = {
+        "version": max(1, safe_int(src.get("version"), 1)),
+        "items": [_normalize_theater_worldbook_item(x, i) for i, x in enumerate(items_src)],
+    }
+    try:
+        _write_json_atomic(THEATER_WORLDBOOKS_FILE, out)
+    except Exception:
+        pass
+    return out
+
+
+def _load_theater_prompt_presets_doc() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_PROMPT_PRESETS_FILE, _default_theater_prompt_presets_doc())
+    src = raw if isinstance(raw, dict) else {}
+    items_src = list(src.get("items") or []) if isinstance(src.get("items"), list) else []
+    out = {
+        "version": max(1, safe_int(src.get("version"), 1)),
+        "items": [_normalize_theater_prompt_preset_item(x, i) for i, x in enumerate(items_src)],
+    }
+    try:
+        _write_json_atomic(THEATER_PROMPT_PRESETS_FILE, out)
+    except Exception:
+        pass
+    return out
+
+
+def _load_theater_regex_doc() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_REGEX_RULES_FILE, _default_theater_regex_doc())
+    src = raw if isinstance(raw, dict) else {}
+    items_src = list(src.get("items") or []) if isinstance(src.get("items"), list) else []
+    out = _normalize_theater_regex_library_doc(items_src)
+    out["version"] = max(1, safe_int(src.get("version"), 1))
+    try:
+        _write_json_atomic(THEATER_REGEX_RULES_FILE, out)
+    except Exception:
+        pass
+    return out
+
+
+def _load_theater_sessions_doc() -> Dict[str, Any]:
+    _ensure_theater_storage()
+    raw = _read_json_safe(THEATER_SESSIONS_FILE, _default_theater_sessions_doc())
+    src = raw if isinstance(raw, dict) else {}
+    rows = list(src.get("sessions") or []) if isinstance(src.get("sessions"), list) else []
+    norm_rows: List[Dict[str, Any]] = []
+    for idx, row in enumerate(rows):
+        item = row if isinstance(row, dict) else {}
+        sid = _safe_theater_session_id(item.get("session_id"), item.get("theater_id"))
+        tid = _safe_theater_id(item.get("theater_id"), "theater_001")
+        norm_rows.append(
+            {
+                "session_id": sid,
+                "theater_id": tid,
+                "name": str(item.get("name") or sid).strip() or sid,
+                "created_at": str(item.get("created_at") or now_iso()),
+                "updated_at": str(item.get("updated_at") or now_iso()),
+                "enabled": safe_bool(item.get("enabled"), True),
+            }
+        )
+    out = {
+        "version": max(1, safe_int(src.get("version"), 1)),
+        "sessions": norm_rows,
+    }
+    try:
+        _write_json_atomic(THEATER_SESSIONS_FILE, out)
+    except Exception:
+        pass
+    return out
+
+
+def _save_theater_sessions_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
+    rows = list((doc or {}).get("sessions") or [])
+    out = {
+        "version": max(1, safe_int((doc or {}).get("version"), 1)),
+        "sessions": rows,
+    }
+    _write_json_atomic(THEATER_SESSIONS_FILE, out)
+    return out
+
+
+def _normalize_theater_card_item(raw: Any, idx: int = 0) -> Dict[str, Any]:
+    row = raw if isinstance(raw, dict) else {}
+    cid_seed = (
+        row.get("character_id")
+        or row.get("characterId")
+        or row.get("character_card_id")
+        or row.get("id")
+        or f"char_{idx+1}"
+    )
+    cid = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(cid_seed).strip()).strip("._")
+    if not cid:
+        cid = f"char_{idx+1}"
+    if not cid.startswith("char_"):
+        cid = f"char_{cid}"
+    tags_src = row.get("tags")
+    if isinstance(tags_src, list):
+        tags = [str(x or "").strip() for x in tags_src if str(x or "").strip()]
+    else:
+        tags = [x.strip() for x in re.split(r"[,\n，]+", str(tags_src or "")) if x.strip()]
+
+    examples_src = list(row.get("example_dialogues") or row.get("examples") or []) if isinstance(row.get("example_dialogues") or row.get("examples") or [], list) else []
+    examples: List[Dict[str, str]] = []
+    for item in examples_src:
+        src = item if isinstance(item, dict) else {}
+        speaker_raw = str(src.get("speaker") or src.get("role") or "character").strip().lower()
+        speaker = "user" if speaker_raw in {"user", "human"} else "character"
+        text = str(src.get("text") or src.get("content") or "").strip()
+        if not text:
+            continue
+        examples.append({"speaker": speaker, "text": text})
+
+    relation = str(row.get("relation_to_user") or row.get("relationToUser") or row.get("relation") or "").strip()
+    description = str(row.get("description") or row.get("content") or row.get("text") or "").strip()
+    speech_style_requirements = str(
+        row.get("speech_style_requirements")
+        or row.get("style_guide")
+        or row.get("styleGuide")
+        or row.get("language_style_requirements")
+        or row.get("language_style_prompt")
+        or ""
+    ).strip()
+    return {
+        "character_id": cid,
+        "character_card_id": cid,  # legacy alias
+        "name": str(row.get("name") or cid or f"角色卡{idx+1}").strip() or f"角色卡{idx+1}",
+        "avatar": str(row.get("avatar") or row.get("avatar_url") or row.get("image") or "").strip(),
+        "tags": tags,
+        "enabled": safe_bool(row.get("enabled"), True),
+        "description": description,
+        "personality": str(row.get("personality") or "").strip(),
+        "relation_to_user": relation,
+        "scenario": str(row.get("scenario") or "").strip(),
+        "speech_style_requirements": speech_style_requirements,
+        "first_message": str(row.get("first_message") or row.get("firstMessage") or "").strip(),
+        "example_dialogues": examples,
+        "content": description,  # legacy alias
+    }
+
+
+def _normalize_theater_worldbook_item(raw: Any, idx: int = 0) -> Dict[str, Any]:
+    row = raw if isinstance(raw, dict) else {}
+    wid_seed = row.get("worldbook_id") or row.get("worldbookId") or row.get("id") or f"wb_{idx+1}"
+    wid = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(wid_seed).strip()).strip("._")
+    if not wid:
+        wid = f"wb_{idx+1}"
+    if not wid.startswith("wb_"):
+        wid = f"wb_{wid}"
+    entries_src = list(row.get("entries") or []) if isinstance(row.get("entries"), list) else []
+    entries: List[Dict[str, Any]] = []
+    for i, item in enumerate(entries_src):
+        ent = item if isinstance(item, dict) else {}
+        eid_seed = ent.get("entry_id") or ent.get("entryId") or ent.get("id") or f"entry_{i+1}"
+        eid = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(eid_seed).strip()).strip("._")
+        if not eid:
+            eid = f"entry_{i+1}"
+        if not eid.startswith("entry_"):
+            eid = f"entry_{eid}"
+        keys_src = ent.get("keys")
+        if isinstance(keys_src, list):
+            keys = [str(x or "").strip() for x in keys_src if str(x or "").strip()]
+        else:
+            fallback_keys = ent.get("keywords")
+            if isinstance(fallback_keys, list):
+                keys = [str(x or "").strip() for x in fallback_keys if str(x or "").strip()]
+            else:
+                keys = [x.strip() for x in re.split(r"[,\n，]+", str(keys_src or fallback_keys or "")) if x.strip()]
+        match_mode = str(ent.get("match_mode") or ent.get("matchMode") or "any").strip().lower()
+        if match_mode not in {"any", "all"}:
+            match_mode = "any"
+        position = str(ent.get("position") or "after_character").strip().lower()
+        if position not in {"after_character", "system_append"}:
+            position = "after_character"
+        title = str(ent.get("title") or ent.get("name") or eid).strip() or eid
+        entries.append(
+            {
+                "entry_id": eid,
+                "title": title,
+                "name": title,  # legacy alias
+                "content": str(ent.get("content") or ent.get("text") or "").strip(),
+                "enabled": safe_bool(ent.get("enabled"), True),
+                "keys": keys,
+                "keywords": keys,  # legacy alias
+                "match_mode": match_mode,
+                "position": position,
+            }
+        )
+    return {
+        "worldbook_id": wid,
+        "name": str(row.get("name") or row.get("title") or wid or f"世界书{idx+1}").strip() or f"世界书{idx+1}",
+        "enabled": safe_bool(row.get("enabled"), True),
+        "entries": entries,
+    }
+
+
+def _normalize_theater_prompt_preset_item(raw: Any, idx: int = 0) -> Dict[str, Any]:
+    row = raw if isinstance(raw, dict) else {}
+    pid = re.sub(r"[^0-9A-Za-z_\-]+", "_", str(row.get("prompt_preset_id") or f"preset_{idx+1}").strip()).strip("._")
+    return {
+        "prompt_preset_id": pid or f"preset_{idx+1}",
+        "name": str(row.get("name") or pid or f"预设{idx+1}").strip() or f"预设{idx+1}",
+        "content": str(row.get("content") or row.get("text") or "").strip(),
+        "enabled": safe_bool(row.get("enabled"), True),
+    }
+
+
+def _normalize_theater_regex_library_doc(raw_items: Any) -> Dict[str, Any]:
+    items_src = list(raw_items or []) if isinstance(raw_items, list) else []
+    return {
+        "version": 1,
+        "items": [_normalize_theater_regex_rule(x, idx=i) for i, x in enumerate(items_src)],
+    }
+
+
+def _list_theater_sessions(theater_id: Any = "") -> List[Dict[str, Any]]:
+    rows = list((_load_theater_sessions_doc().get("sessions") or []))
+    tid = _safe_theater_id(theater_id, "") if str(theater_id or "").strip() else ""
+    if tid:
+        rows = [dict(x or {}) for x in rows if str((x or {}).get("theater_id") or "").strip() == tid]
+    else:
+        rows = [dict(x or {}) for x in rows]
+    rows.sort(
+        key=lambda row: (
+            str(row.get("updated_at") or ""),
+            str(row.get("created_at") or ""),
+            str(row.get("session_id") or ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _upsert_theater_session(theater_id: Any, session_id: Any = "", name: Any = "") -> Dict[str, Any]:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    sid = _safe_theater_session_id(session_id, tid)
+    now = now_iso()
+    display_name = str(name or "").strip() or sid
+
+    doc = _load_theater_sessions_doc()
+    rows = list(doc.get("sessions") or [])
+    out_row = {
+        "session_id": sid,
+        "theater_id": tid,
+        "name": display_name,
+        "created_at": now,
+        "updated_at": now,
+        "enabled": True,
+    }
+    updated = False
+    for idx, row in enumerate(rows):
+        item = row if isinstance(row, dict) else {}
+        if str(item.get("session_id") or "").strip() != sid:
+            continue
+        out_row["created_at"] = str(item.get("created_at") or now)
+        out_row["enabled"] = safe_bool(item.get("enabled"), True)
+        rows[idx] = out_row
+        updated = True
+        break
+    if not updated:
+        rows.append(out_row)
+    _save_theater_sessions_doc({"version": doc.get("version", 1), "sessions": rows})
+    return out_row
+
+
+def _collect_theater_session_turn_pairs(theater_id: Any, session_id: Any, max_turns: int = 5000) -> List[Tuple[str, str]]:
+    tid = _safe_theater_id(theater_id, "")
+    sid = _safe_theater_session_id(session_id, tid or "theater_001")
+    if (not tid) or (not sid):
+        return []
+    try:
+        msgs = _load_private_chat_context_messages(
+            _theater_temp_chat_user_id(tid),
+            _theater_temp_chat_window_name(tid, sid),
+            max_turns=max_turns,
+            agent_id=_theater_temp_chat_agent_id(),
+            chat_id=sid,
+            window_stamp=sid,
+        )
+        return _build_turn_pairs_from_messages(msgs, max_turns=max_turns)
+    except Exception:
+        return []
+
+
+def _purge_theater_chroma_memories(theater_id: Any, max_scan: int = 20000) -> Dict[str, Any]:
+    tid = _safe_theater_id(theater_id, "")
+    out = {
+        "ok": True,
+        "mode": "theater_all",
+        "theater_id": tid,
+        "matched_count": 0,
+        "deleted_count": 0,
+        "scanned_count": 0,
+        "max_scan": max(1000, min(200000, safe_int(max_scan, 20000))),
+        "msg": "",
+    }
+    if not tid:
+        out["ok"] = False
+        out["msg"] = "theater_id_missing"
+        return out
+
+    owner_store = _get_memory_store_for_owner(
+        "theater",
+        tid,
+        meta={
+            "scene": "theater",
+            "theater_id": tid,
+            "channel_type": "theater",
+            "owner_id": tid,
+        },
+    )
+
+    page = 1
+    page_size = 100
+    matched_ids: List[str] = []
+    scanned = 0
+    max_scan_i = max(1000, min(200000, safe_int(max_scan, 20000)))
+
+    while scanned < max_scan_i:
+        got = owner_store.list_records(
+            channel_type="theater",
+            owner_id=tid,
+            page=page,
+            page_size=page_size,
+            include_deleted=True,
+        )
+        recs = list(got.get("records") or [])
+        if not recs:
+            break
+
+        for rec in recs:
+            scanned += 1
+            if scanned > max_scan_i:
+                break
+            rid = str(getattr(rec, "id", "") or "").strip()
+            if rid:
+                matched_ids.append(rid)
+
+        page += 1
+        if len(recs) < page_size:
+            break
+
+    uniq_ids = sorted(set([x for x in matched_ids if x]))
+    deleted_ok = 0
+    if uniq_ids:
+        for i in range(0, len(uniq_ids), 256):
+            chunk = uniq_ids[i:i + 256]
+            if not chunk:
+                continue
+            try:
+                deleted_ok += safe_int(
+                    owner_store.delete(chunk, channel_type="theater", owner_id=tid),
+                    0,
+                )
+            except Exception:
+                continue
+
+    out["matched_count"] = len(uniq_ids)
+    out["deleted_count"] = int(deleted_ok)
+    out["scanned_count"] = int(scanned)
+    if (not uniq_ids) and scanned >= max_scan_i:
+        out["msg"] = "scan_limit_reached_no_matches"
+    elif scanned >= max_scan_i:
+        out["msg"] = "scan_limit_reached_partial"
+    return out
+
+
+def _purge_theater_session_chroma_memories(
+    theater_id: Any,
+    session_id: Any,
+    turn_pairs: Optional[List[Tuple[str, str]]] = None,
+    max_scan: int = 20000,
+) -> Dict[str, Any]:
+    tid = _safe_theater_id(theater_id, "")
+    sid = _safe_theater_session_id(session_id, tid or "theater_001")
+    out = {
+        "ok": True,
+        "mode": "theater_session",
+        "theater_id": tid,
+        "session_id": sid,
+        "matched_count": 0,
+        "deleted_count": 0,
+        "scanned_count": 0,
+        "matched_by_meta": 0,
+        "matched_by_turn_pair": 0,
+        "turn_pair_count": 0,
+        "max_scan": max(1000, min(200000, safe_int(max_scan, 20000))),
+        "msg": "",
+    }
+    if (not tid) or (not sid):
+        out["ok"] = False
+        out["msg"] = "theater_id_or_session_id_missing"
+        return out
+
+    owner_store = _get_memory_store_for_owner(
+        "theater",
+        tid,
+        meta={
+            "scene": "theater",
+            "theater_id": tid,
+            "channel_type": "theater",
+            "owner_id": tid,
+            "chat_id": sid,
+            "session_id": sid,
+            "window_stamp": sid,
+        },
+    )
+
+    pairs = list(turn_pairs or [])
+    if not pairs:
+        pairs = _collect_theater_session_turn_pairs(tid, sid, max_turns=5000)
+    out["turn_pair_count"] = len(pairs)
+    pair_norm_set = set()
+    for u_text, a_text in pairs:
+        uu = str(u_text or "").strip()
+        aa = str(a_text or "").strip()
+        if (not uu) or (not aa):
+            continue
+        merged = f"用户说：{uu}\nAI 回复：{aa}".strip()
+        norm = _normalize_for_fingerprint(merged)
+        if norm:
+            pair_norm_set.add(norm)
+
+    page = 1
+    page_size = 100
+    matched_ids: List[str] = []
+    scanned = 0
+    matched_by_meta = 0
+    matched_by_pair = 0
+    max_scan_i = max(1000, min(200000, safe_int(max_scan, 20000)))
+
+    while scanned < max_scan_i:
+        got = owner_store.list_records(
+            channel_type="theater",
+            owner_id=tid,
+            page=page,
+            page_size=page_size,
+            include_deleted=True,
+        )
+        recs = list(got.get("records") or [])
+        if not recs:
+            break
+
+        for rec in recs:
+            scanned += 1
+            if scanned > max_scan_i:
+                break
+            rid = str(getattr(rec, "id", "") or "").strip()
+            if not rid:
+                continue
+            meta = dict(getattr(rec, "metadata", {}) or {})
+            rec_chat_id = str(
+                meta.get("chat_id")
+                or meta.get("session_id")
+                or meta.get("window_stamp")
+                or ""
+            ).strip()
+            if rec_chat_id and rec_chat_id == sid:
+                matched_ids.append(rid)
+                matched_by_meta += 1
+                continue
+
+            if not pair_norm_set:
+                continue
+            text_full = str(getattr(rec, "text", "") or "")
+            if not text_full:
+                continue
+            uu, aa = _extract_turn_pair_from_memory_text(text_full)
+            if not (uu and aa):
+                continue
+            merged_pair = f"用户说：{str(uu).strip()}\nAI 回复：{str(aa).strip()}".strip()
+            if _normalize_for_fingerprint(merged_pair) in pair_norm_set:
+                matched_ids.append(rid)
+                matched_by_pair += 1
+                continue
+
+        page += 1
+        if len(recs) < page_size:
+            break
+
+    uniq_ids = sorted(set([x for x in matched_ids if x]))
+    deleted_ok = 0
+    if uniq_ids:
+        for i in range(0, len(uniq_ids), 256):
+            chunk = uniq_ids[i:i + 256]
+            if not chunk:
+                continue
+            try:
+                deleted_ok += safe_int(
+                    owner_store.delete(chunk, channel_type="theater", owner_id=tid),
+                    0,
+                )
+            except Exception:
+                continue
+
+    out["matched_count"] = len(uniq_ids)
+    out["deleted_count"] = int(deleted_ok)
+    out["scanned_count"] = int(scanned)
+    out["matched_by_meta"] = int(matched_by_meta)
+    out["matched_by_turn_pair"] = int(matched_by_pair)
+    if (not uniq_ids) and scanned >= max_scan_i:
+        out["msg"] = "scan_limit_reached_no_matches"
+    elif scanned >= max_scan_i:
+        out["msg"] = "scan_limit_reached_partial"
+    return out
+
+
+def _remove_theaters_and_cleanup(theater_ids: List[Any]) -> Dict[str, Any]:
+    ids_raw = list(theater_ids or [])
+    remove_ids: List[str] = []
+    seen = set()
+    for item in ids_raw:
+        tid = _safe_theater_id(item, "")
+        if (not tid) or tid in seen:
+            continue
+        seen.add(tid)
+        remove_ids.append(tid)
+
+    out = {
+        "requested_ids": remove_ids,
+        "removed_ids": [],
+        "registry_deleted_count": 0,
+        "session_deleted_count": 0,
+        "runtime_deleted_count": 0,
+        "memory_deleted_count": 0,
+        "memory_purge": {},
+    }
+    if not remove_ids:
+        return out
+
+    remove_set = set(remove_ids)
+
+    try:
+        doc = _load_theater_registry()
+        rows = list(doc.get("theaters") or [])
+        kept_rows: List[Dict[str, Any]] = []
+        removed_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            tid = _safe_theater_id((row or {}).get("theater_id"), "")
+            if tid and tid in remove_set:
+                removed_rows.append(dict(row or {}))
+            else:
+                kept_rows.append(dict(row or {}))
+        if removed_rows:
+            _save_theater_registry({"version": doc.get("version", 1), "theaters": kept_rows})
+            out["removed_ids"] = [
+                _safe_theater_id((row or {}).get("theater_id"), "")
+                for row in removed_rows
+                if _safe_theater_id((row or {}).get("theater_id"), "")
+            ]
+            out["registry_deleted_count"] = len(out["removed_ids"])
+    except Exception:
+        pass
+
+    effective_removed = [x for x in out["removed_ids"] if x]
+    if not effective_removed:
+        return out
+    removed_set = set(effective_removed)
+
+    try:
+        sess_doc = _load_theater_sessions_doc()
+        sess_rows = list(sess_doc.get("sessions") or [])
+        before = len(sess_rows)
+        kept = [
+            dict(x or {})
+            for x in sess_rows
+            if _safe_theater_id((x or {}).get("theater_id"), "") not in removed_set
+        ]
+        if before != len(kept):
+            _save_theater_sessions_doc({"version": sess_doc.get("version", 1), "sessions": kept})
+        out["session_deleted_count"] = max(0, before - len(kept))
+    except Exception:
+        pass
+
+    for tid in effective_removed:
+        try:
+            runtime_dir = os.path.join(_theater_runtime_root(), tid)
+            if os.path.isdir(runtime_dir):
+                shutil.rmtree(runtime_dir)
+                out["runtime_deleted_count"] = safe_int(out.get("runtime_deleted_count"), 0) + 1
+        except Exception:
+            pass
+
+        try:
+            theater_root = _temp_chat_theater_root()
+            prefix = f"{tid}+"
+            if os.path.isdir(theater_root):
+                for name in os.listdir(theater_root):
+                    lower = str(name or "").lower()
+                    if (not lower.endswith(".md")) or (not str(name).startswith(prefix)):
+                        continue
+                    p = os.path.join(theater_root, name)
+                    try:
+                        os.remove(p)
+                        out["runtime_deleted_count"] = safe_int(out.get("runtime_deleted_count"), 0) + 1
+                    except Exception:
+                        pass
+                    try:
+                        idx_path = _temp_chat_scene_file_index_path(p)
+                        if os.path.exists(idx_path):
+                            os.remove(idx_path)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        try:
+            purge = _purge_theater_chroma_memories(tid)
+        except Exception as e:
+            purge = {
+                "ok": False,
+                "mode": "theater_all",
+                "theater_id": tid,
+                "matched_count": 0,
+                "deleted_count": 0,
+                "scanned_count": 0,
+                "msg": str(e),
+            }
+        out["memory_purge"][tid] = purge
+        out["memory_deleted_count"] = safe_int(out.get("memory_deleted_count"), 0) + safe_int(
+            (purge or {}).get("deleted_count"),
+            0,
+        )
+
+    return out
+
+
+def _delete_theater_session(theater_id: Any, session_id: Any) -> Dict[str, Any]:
+    tid = _safe_theater_id(theater_id, "")
+    sid = _safe_theater_session_id(session_id, tid or "theater_001")
+    if (not tid) or (not sid):
+        return {"ok": False, "msg": "theater_id_or_session_id_missing"}
+    doc = _load_theater_sessions_doc()
+    rows = list(doc.get("sessions") or [])
+    before = len(rows)
+    rows = [
+        dict(x or {})
+        for x in rows
+        if not (
+            str((x or {}).get("session_id") or "").strip() == sid
+            and str((x or {}).get("theater_id") or "").strip() == tid
+        )
+    ]
+    _save_theater_sessions_doc({"version": doc.get("version", 1), "sessions": rows})
+
+    purge_result: Dict[str, Any] = {
+        "ok": True,
+        "mode": "theater_session",
+        "theater_id": tid,
+        "session_id": sid,
+        "matched_count": 0,
+        "deleted_count": 0,
+        "scanned_count": 0,
+        "matched_by_meta": 0,
+        "matched_by_turn_pair": 0,
+        "turn_pair_count": 0,
+        "msg": "",
+    }
+    try:
+        turn_pairs = _collect_theater_session_turn_pairs(tid, sid, max_turns=5000)
+        purge_result = _purge_theater_session_chroma_memories(tid, sid, turn_pairs=turn_pairs)
+    except Exception as e:
+        purge_result = {
+            "ok": False,
+            "mode": "theater_session",
+            "theater_id": tid,
+            "session_id": sid,
+            "matched_count": 0,
+            "deleted_count": 0,
+            "scanned_count": 0,
+            "matched_by_meta": 0,
+            "matched_by_turn_pair": 0,
+            "turn_pair_count": 0,
+            "msg": str(e),
+        }
+
+    deleted_runtime = False
+    deleted_temp_context = False
+    try:
+        path = _theater_runtime_session_path(tid, sid)
+        if os.path.exists(path):
+            os.remove(path)
+            deleted_runtime = True
+    except Exception:
+        deleted_runtime = False
+
+    try:
+        theater_name = str((_load_theater_config(tid) or {}).get("name") or tid).strip() or tid
+    except Exception:
+        theater_name = tid
+
+    try:
+        temp_file = _temp_chat_theater_file_path(tid, theater_name=theater_name, ensure=False)
+        if os.path.isfile(temp_file):
+            with open(temp_file, "r", encoding="utf-8", errors="ignore") as f:
+                src = str(f.read() or "").replace("\r", "")
+            matches = list(_TEMP_CHAT_TURN_SPLIT_RE.finditer(src))
+            if matches:
+                header = src[:matches[0].start()]
+                kept_blocks: List[str] = []
+                removed_count = 0
+                for m in matches:
+                    body = str(m.group(2) or "")
+                    hit_chat_id = ""
+                    mc = re.search(r"(?im)^\*\*ChatID:\*\*\s*(.*?)\s*$", body)
+                    if mc:
+                        hit_chat_id = str(mc.group(1) or "").strip()
+                    if hit_chat_id == sid:
+                        removed_count += 1
+                        continue
+                    kept_blocks.append(str(m.group(0) or "").strip())
+                if removed_count > 0:
+                    if kept_blocks:
+                        rebuilt = str(header or "").rstrip()
+                        if rebuilt:
+                            rebuilt += "\n\n"
+                        rebuilt += "\n\n".join(kept_blocks).strip() + "\n"
+                        with open(temp_file, "w", encoding="utf-8") as f:
+                            f.write(rebuilt)
+                    else:
+                        os.remove(temp_file)
+                    deleted_temp_context = True
+
+                    idx_path = _temp_chat_window_index_path(
+                        _theater_temp_chat_agent_id(),
+                        _theater_temp_chat_user_id(tid),
+                        _theater_temp_chat_window_name(tid, sid),
+                        scene="theater",
+                        theater_id=tid,
+                        theater_name=theater_name,
+                    )
+                    if (not os.path.isfile(temp_file)) and os.path.exists(idx_path):
+                        os.remove(idx_path)
+    except Exception:
+        deleted_temp_context = False
+
+    return {
+        "ok": True,
+        "deleted": max(0, before - len(rows)),
+        "runtime_deleted": deleted_runtime,
+        "temp_context_deleted": deleted_temp_context,
+        "memory_deleted_count": safe_int((purge_result or {}).get("deleted_count"), 0),
+        "memory_purge": purge_result,
+        "theater_id": tid,
+        "session_id": sid,
+    }
+
+
+def _theater_runtime_root() -> str:
+    p = os.path.join(_runtime_logs_dir(), "theater")
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _theater_runtime_session_path(theater_id: Any, session_id: Any) -> str:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    sid = _safe_theater_session_id(session_id, tid)
+    d = os.path.join(_theater_runtime_root(), tid)
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, f"{sid}.jsonl")
+
+
+def _theater_temp_chat_agent_id() -> str:
+    # 剧场上下文使用稳定 agent 目录，避免切换会话 Agent 时历史被切散。
+    return _normalize_agent_id("theater", _default_agent_id_from_config())
+
+
+def _theater_temp_chat_user_id(theater_id: Any) -> str:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    return _safe_id_token(f"theater_ctx_{tid}", f"theater_ctx_{tid}")
+
+
+def _theater_temp_chat_window_name(theater_id: Any, session_id: Any) -> str:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    sid = _safe_theater_session_id(session_id, tid)
+    return _normalize_chat_window_name(f"theater_{tid}_{sid}", sid)
+
+
+def _load_theater_recent_turns(theater_id: Any, session_id: Any, max_turns: int = 8) -> List[Dict[str, str]]:
+    safe_n = max(1, min(40, safe_int(max_turns, 8)))
+    tid = _safe_theater_id(theater_id, "theater_001")
+    sid = _safe_theater_session_id(session_id, tid)
+
+    # 优先读取 temp_chat 的 Markdown 回合记录（与私聊/群聊同格式，便于管理员直接阅读）。
+    try:
+        theater_name = str((_load_theater_config(tid) or {}).get("name") or tid).strip() or tid
+        turns = _load_temp_chat_window_turns(
+            _theater_temp_chat_agent_id(),
+            _theater_temp_chat_user_id(tid),
+            _theater_temp_chat_window_name(tid, sid),
+            max_turns=safe_n,
+            scene="theater",
+            chat_id=sid,
+            theater_id=tid,
+            theater_name=theater_name,
+        )
+        rows: List[Dict[str, str]] = []
+        for turn in turns:
+            user_text = str((turn or {}).get("user_text") or "").strip()
+            assistant_text = str((turn or {}).get("assistant_text") or "").strip()
+            if user_text or assistant_text:
+                rows.append({"user": user_text, "assistant": assistant_text})
+        if rows:
+            return rows[-safe_n:]
+    except Exception:
+        pass
+
+    # 兼容历史 jsonl（旧剧场临时上下文格式）。
+    path = _theater_runtime_session_path(tid, sid)
+    if not os.path.exists(path):
+        return []
+    rows: List[Dict[str, str]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = str(line or "").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                user_text = str(obj.get("user") or "").strip()
+                assistant_text = str(obj.get("assistant") or "").strip()
+                if user_text or assistant_text:
+                    rows.append({"user": user_text, "assistant": assistant_text})
+    except Exception:
+        return []
+    return rows[-safe_n:]
+
+
+def _pick_theater_item_by_id(items: List[Dict[str, Any]], key_name: str, wanted_id: str) -> Optional[Dict[str, Any]]:
+    wid = str(wanted_id or "").strip()
+    if not wid:
+        return None
+    for row in items:
+        if str((row or {}).get(key_name) or "").strip() == wid:
+            return row if isinstance(row, dict) else None
+    return None
+
+
+def _regex_flags_from_text(flags_text: str) -> int:
+    flags = 0
+    txt = str(flags_text or "").strip().lower()
+    if "i" in txt:
+        flags |= re.IGNORECASE
+    if "m" in txt:
+        flags |= re.MULTILINE
+    if "s" in txt:
+        flags |= re.DOTALL
+    return flags
+
+
+def _apply_theater_regex_rules(
+    user_input: str,
+    regex_rules: List[Dict[str, Any]],
+    anti_regex_rules: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    src_text = str(user_input or "").strip()
+    regex_hits: List[str] = []
+    filtered_text = src_text
+    anti_hits: List[str] = []
+
+    for idx, raw_rule in enumerate(list(regex_rules or [])):
+        rule = _normalize_theater_regex_rule(raw_rule, idx=idx)
+        if not safe_bool(rule.get("enabled"), True):
+            continue
+        pattern = str(rule.get("pattern") or "").strip()
+        inject = str(rule.get("inject") or "").strip()
+        if (not pattern) or (not inject):
+            continue
+        try:
+            if re.search(pattern, src_text, _regex_flags_from_text(rule.get("flags") or "i")):
+                regex_hits.append(inject)
+        except Exception:
+            continue
+
+    for idx, raw_rule in enumerate(list(anti_regex_rules or [])):
+        rule = _normalize_theater_regex_rule(raw_rule, idx=idx)
+        if not safe_bool(rule.get("enabled"), True):
+            continue
+        pattern = str(rule.get("pattern") or "").strip()
+        if not pattern:
+            continue
+        try:
+            next_text, repl_count = re.subn(
+                pattern,
+                "",
+                filtered_text,
+                flags=_regex_flags_from_text(rule.get("flags") or "i"),
+            )
+            if repl_count > 0:
+                filtered_text = re.sub(r"\s+", " ", next_text).strip()
+                anti_hits.append(str(rule.get("name") or rule.get("rule_id") or pattern))
+        except Exception:
+            continue
+
+    return {
+        "regex_hits": regex_hits,
+        "anti_hits": anti_hits,
+        "filtered_user_input": filtered_text or src_text,
+    }
+
+
+def _theater_memory_inject_line(rec: Any, query: str) -> str:
+    meta = dict(getattr(rec, "metadata", {}) or {})
+    body = str(getattr(rec, "text", "") or "").strip()
+    if not body:
+        body = str(meta.get("_focus_preview") or "").strip()
+    if not body:
+        return ""
+    body = _preview_text_with_query(body, query, max_len=760)
+    layer = str(meta.get("layer") or "").strip().lower()
+    source = str(meta.get("source") or "").strip().lower()
+    tag = layer or source or "memory"
+    return f"[{tag}] {body}"
+
+
+def _collect_theater_memory_snippets(
+    query: str,
+    meta: Optional[Dict[str, Any]],
+    top_k: int = 4,
+    allow_conv_fallback: bool = False,
+) -> Dict[str, Any]:
+    q = str(query or "").strip()
+    if not q:
+        return {"texts": [], "hit_count": 0, "layers_used": []}
+
+    mm = dict(meta or {})
+    theater_id = _safe_theater_id(mm.get("theater_id") or mm.get("theaterId") or mm.get("owner_id"), "")
+    mm["scene"] = "theater"
+    mm["theater_id"] = theater_id
+    mm["channel_type"] = "theater"
+    mm["owner_id"] = theater_id
+    mm["rag_allow_conv_fallback"] = bool(allow_conv_fallback)
+    safe_top_k = max(1, min(12, safe_int(top_k, 4)))
+    rag_queries = _merge_search_queries([q], _memory_focus_keywords(q), _memory_query_candidates(q))
+    rag_result = _run_layered_rag_search(rag_queries, mm, top_k=safe_top_k)
+    records = list(rag_result.get("records") or []) if isinstance(rag_result, dict) else []
+
+    texts: List[str] = []
+    for rec in records:
+        line = _theater_memory_inject_line(rec, q)
+        if line:
+            texts.append(line)
+
+    layers_used: List[str] = []
+    if isinstance(rag_result, dict):
+        layers_used = [str(x or "").strip() for x in list(rag_result.get("layers_used") or []) if str(x or "").strip()]
+    if not layers_used:
+        for rec in records:
+            meta_row = dict(getattr(rec, "metadata", {}) or {})
+            layer_name = str(meta_row.get("layer") or "").strip().lower()
+            if (not layer_name) or (layer_name in layers_used):
+                continue
+            layers_used.append(layer_name)
+
+    return {
+        "texts": texts,
+        "hit_count": len(texts),
+        "layers_used": layers_used,
+    }
+
+
+def _looks_like_upstream_session_alert(text: Any) -> bool:
+    t = str(text or "").strip().lower()
+    if not t:
+        return False
+    t = re.sub(r"\s+", " ", t)
+    keys = [
+        "alert message: session id is invalid or not set",
+        "session id is invalid or not set",
+        "session_id is invalid or not set",
+    ]
+    return any(k in t for k in keys)
+
+
+def _should_skip_error_turn_persist(assistant_text: Any) -> bool:
+    t = str(assistant_text or "").strip()
+    if not t:
+        return False
+    low = re.sub(r"\s+", " ", t.lower())
+    if low.startswith("❌"):
+        return True
+    if _looks_like_upstream_session_alert(low):
+        return True
+    markers = [
+        "上游模型网关会话异常",
+        "theater chat error",
+        "internal server error",
+        "new api call failed",
+        "new api streaming call failed",
+        "new api fallback failed",
+        "new api network error",
+        "new api rate-limited",
+        "fallback failed:",
+    ]
+    return any(k in low for k in markers)
+
+
+def _build_theater_system_prompt(
+    user_input: str,
+    meta: Optional[Dict[str, Any]],
+    theater_cfg: Dict[str, Any],
+    agent_cfg: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    m = dict(meta or {})
+    cfg = _normalize_theater_config(theater_cfg)
+    cards_doc = _load_theater_cards_doc()
+    worldbooks_doc = _load_theater_worldbooks_doc()
+    presets_doc = _load_theater_prompt_presets_doc()
+
+    cards = list(cards_doc.get("items") or []) if isinstance(cards_doc.get("items"), list) else []
+    worldbooks = list(worldbooks_doc.get("items") or []) if isinstance(worldbooks_doc.get("items"), list) else []
+    presets = list(presets_doc.get("items") or []) if isinstance(presets_doc.get("items"), list) else []
+
+    character = _pick_theater_item_by_id(cards, "character_card_id", cfg.get("character_card_id"))
+    preset = _pick_theater_item_by_id(presets, "prompt_preset_id", cfg.get("prompt_preset_id"))
+
+    rule_result = _apply_theater_regex_rules(
+        user_input=user_input,
+        regex_rules=list(cfg.get("regex_rules") or []),
+        anti_regex_rules=list(cfg.get("anti_regex_rules") or []),
+    )
+    filtered_input = str(rule_result.get("filtered_user_input") or user_input).strip()
+
+    worldbook_blocks: List[str] = []
+    src_text = str(filtered_input or user_input or "").strip().lower()
+    for wb_id in list(cfg.get("worldbook_ids") or []):
+        wb = _pick_theater_item_by_id(worldbooks, "worldbook_id", wb_id)
+        if not isinstance(wb, dict):
+            continue
+        entries = list(wb.get("entries") or []) if isinstance(wb.get("entries"), list) else []
+        for item in entries:
+            row = item if isinstance(item, dict) else {}
+            if not safe_bool(row.get("enabled"), True):
+                continue
+            kw_list = [str(x or "").strip().lower() for x in list(row.get("keywords") or []) if str(x or "").strip()]
+            text = str(row.get("content") or "").strip()
+            if (not kw_list) or (not text):
+                continue
+            if any(kw in src_text for kw in kw_list):
+                worldbook_blocks.append(text)
+
+    theater_id = str(cfg.get("theater_id") or "").strip()
+    mem_texts: List[str] = []
+    memory_debug: Dict[str, Any] = {
+        "enabled": safe_bool(cfg.get("memory_enabled"), True),
+        "hit_count": 0,
+        "layers_used": [],
+    }
+
+    theater_history = _load_theater_recent_turns(
+        theater_id=theater_id,
+        session_id=m.get("chat_id") or m.get("session_id") or m.get("window_stamp") or m.get("chat_title") or "",
+        max_turns=safe_int(cfg.get("context_turn_n"), 8),
+    )
+    first_message_text = str((character or {}).get("first_message") or "").strip() if isinstance(character, dict) else ""
+    is_first_turn = (len(theater_history) <= 0)
+    first_message_injected = bool(first_message_text and is_first_turn)
+
+    if safe_bool(cfg.get("memory_enabled"), True):
+        mem_meta = dict(m or {})
+        mem_meta["theater_id"] = theater_id
+        allow_conv_fallback = (len(theater_history) <= 0)
+        memory_debug["allow_conv_fallback"] = bool(allow_conv_fallback)
+        try:
+            mem_res = _collect_theater_memory_snippets(
+                query=filtered_input or user_input,
+                meta=mem_meta,
+                top_k=3,
+                allow_conv_fallback=allow_conv_fallback,
+            )
+            mem_texts = [str(x or "").strip() for x in list(mem_res.get("texts") or []) if str(x or "").strip()]
+            if (not mem_texts) and (not allow_conv_fallback):
+                mem_res = _collect_theater_memory_snippets(
+                    query=filtered_input or user_input,
+                    meta=mem_meta,
+                    top_k=3,
+                    allow_conv_fallback=True,
+                )
+                mem_texts = [str(x or "").strip() for x in list(mem_res.get("texts") or []) if str(x or "").strip()]
+                memory_debug["allow_conv_fallback"] = True
+            memory_debug["hit_count"] = safe_int(mem_res.get("hit_count"), len(mem_texts))
+            memory_debug["layers_used"] = [str(x or "").strip() for x in list(mem_res.get("layers_used") or []) if str(x or "").strip()]
+        except Exception:
+            mem_texts = []
+            memory_debug["hit_count"] = 0
+            memory_debug["layers_used"] = []
+
+    lines: List[str] = []
+    if preset and str(preset.get("content") or "").strip():
+        lines.append("【Prompt预设】\n" + str(preset.get("content") or "").strip())
+    if character and str(character.get("content") or "").strip():
+        lines.append("【角色卡】\n" + str(character.get("content") or "").strip())
+    if character and str(character.get("speech_style_requirements") or "").strip():
+        lines.append("【语言风格要求】\n" + str(character.get("speech_style_requirements") or "").strip())
+    if first_message_injected:
+        lines.append(
+            "【首轮开场白注入】\n"
+            "当前是新聊天会话首轮回复，请优先使用以下开场白作为本轮回复开头（可做轻微衔接，不改变核心语义）。"
+            "开场白之后，必须继续针对本轮 user 消息的具体问题/请求给出实质性回答，不得只输出开场白。\n"
+            + first_message_text
+        )
+    if worldbook_blocks:
+        lines.append("【世界书命中块】\n" + "\n\n".join(worldbook_blocks[:8]))
+    if rule_result.get("regex_hits"):
+        lines.append("【正则命中注入块】\n" + "\n".join([str(x) for x in list(rule_result.get("regex_hits") or [])]))
+    if rule_result.get("anti_hits"):
+        lines.append("【逆则过滤结果】\n- 命中规则：" + "，".join([str(x) for x in list(rule_result.get("anti_hits") or [])]))
+    if theater_history:
+        hist_lines: List[str] = []
+        for turn in theater_history:
+            u = str((turn or {}).get("user") or "").strip()
+            a = str((turn or {}).get("assistant") or "").strip()
+            if u:
+                hist_lines.append(f"用户：{u}")
+            if a:
+                hist_lines.append(f"助手：{a}")
+        if hist_lines:
+            lines.append("【临时上下文】\n" + "\n".join(hist_lines))
+    if mem_texts:
+        lines.append("【剧场记忆召回】\n" + "\n".join([f"- {str(x)}" for x in mem_texts[:3]]))
+    lines.append(
+        "【本轮输入回复约束】\n"
+        "你将收到一条独立的 user role 消息（即本轮用户输入）。"
+        "本轮回复必须优先、直接回答该输入中的问题或请求；"
+        "历史上下文与记忆仅可作为补充依据，不得替代对本轮输入的回答，"
+        "也不得声称“未收到本轮输入”。"
+    )
+    # 用户输入只放在 user role，避免 system + user 双注入导致模型误判“重复输入”。
+    return {
+        "system_prompt": "\n\n".join([x for x in lines if str(x or "").strip()]),
+        "filtered_user_input": filtered_input or str(user_input or "").strip(),
+        "memory_texts": mem_texts,
+        "memory_debug": memory_debug,
+        "regex_hits": list(rule_result.get("regex_hits") or []),
+        "anti_hits": list(rule_result.get("anti_hits") or []),
+        "first_message_injected": first_message_injected,
+    }
+
+
+def _theater_reply_once(
+    user_input: str,
+    meta: Optional[Dict[str, Any]],
+    theater_cfg: Dict[str, Any],
+    agent_cfg: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    m = dict(meta or {})
+    cfg = _normalize_theater_config(theater_cfg)
+    agent_row = _normalize_agent_entry(agent_cfg or _get_agent_config(m.get("agent_id") or _default_agent_id_from_config()), _default_agent_id_from_config())
+    prompt_pack = _build_theater_system_prompt(user_input=user_input, meta=m, theater_cfg=cfg, agent_cfg=agent_row)
+    user_content = str(prompt_pack.get("filtered_user_input") or user_input).strip() or str(user_input or "").strip()
+    messages = [
+        {"role": "system", "content": str(prompt_pack.get("system_prompt") or "").strip()},
+        {"role": "user", "content": user_content},
+    ]
+
+    provider_override = None
+    base_url_override = None
+    api_key_override = None
+    model_override = None
+    if safe_bool(cfg.get("api_override_enabled"), False):
+        provider_override = str(cfg.get("provider") or "").strip().lower() or None
+        model_override = str(cfg.get("model") or "").strip() or None
+        # 剧场模式选择本地 ollama 时，始终走全局 Ollama 地址，避免残留 newapi 地址导致 /api/chat 404。
+        if provider_override == "ollama":
+            base_url_override = None
+            api_key_override = None
+        else:
+            base_url_override = str(cfg.get("api_base_url") or "").strip() or None
+            api_key_override = str(cfg.get("api_key") or "").strip() or None
+    else:
+        model_override = str((_agent_model_runtime(agent_row) or {}).get("model") or "").strip() or None
+
+    with _model_lock:
+        raw = call_model(
+            messages,
+            stream=False,
+            max_tokens=safe_int(cfg.get("max_tokens"), 1200),
+            temperature=safe_float(cfg.get("temperature"), 0.9),
+            top_p=safe_float(cfg.get("top_p"), 0.92),
+            top_k=safe_int(cfg.get("top_k"), 40),
+            provider_override=provider_override,
+            base_url_override=base_url_override,
+            api_key_override=api_key_override,
+            model_override=model_override,
+        )
+
+    raw_text = clean_reply_text(str(raw or "").strip())
+    call_meta = _get_last_call_meta()
+    reasoning_text, visible = extract_reasoning_if_any(
+        _effective_model_name_for_reasoning(call_meta),
+        raw_text,
+    )
+    if not str(reasoning_text or "").strip():
+        reasoning_text = _reasoning_from_call_meta(call_meta)
+    reply = clean_reply_text(str(visible or raw_text or "").strip())
+    if _looks_like_upstream_session_alert(reply):
+        retry_reply = ""
+        retry_reasoning = ""
+        try:
+            with _model_lock:
+                raw_retry = call_model(
+                    messages,
+                    stream=False,
+                    max_tokens=safe_int(cfg.get("max_tokens"), 1200),
+                    temperature=safe_float(cfg.get("temperature"), 0.9),
+                    top_p=safe_float(cfg.get("top_p"), 0.92),
+                    top_k=safe_int(cfg.get("top_k"), 40),
+                    provider_override=provider_override,
+                    base_url_override=base_url_override,
+                    api_key_override=api_key_override,
+                    model_override=model_override,
+                )
+            retry_raw_text = clean_reply_text(str(raw_retry or "").strip())
+            retry_call_meta = _get_last_call_meta()
+            retry_reasoning_raw, retry_visible = extract_reasoning_if_any(
+                _effective_model_name_for_reasoning(retry_call_meta),
+                retry_raw_text,
+            )
+            retry_reasoning = str(retry_reasoning_raw or _reasoning_from_call_meta(retry_call_meta) or "").strip()
+            retry_reply = clean_reply_text(str(retry_visible or retry_raw_text or "").strip())
+        except Exception:
+            retry_reply = ""
+            retry_reasoning = ""
+
+        if retry_reply and (not _looks_like_upstream_session_alert(retry_reply)):
+            reply = retry_reply
+            if retry_reasoning:
+                reasoning_text = retry_reasoning
+        else:
+            reply = "❌ 上游模型网关会话异常（Session ID 无效）。请稍后重试，或切换到本地 Ollama 模型。"
+
+    if not reply:
+        reply = "（剧场模式返回空回复）"
+    return {
+        "reply": reply,
+        "reasoning_text": str(reasoning_text or "").strip(),
+        "prompt_meta": prompt_pack,
+    }
+
+
 def _runtime_logs_dir() -> str:
     p = os.path.join(ALLOWED_DIR, "runtime_logs")
     os.makedirs(p, exist_ok=True)
@@ -13077,10 +14824,13 @@ def _runtime_private_root() -> str:
 
 _CHAT_LOG_DAY_CUTOFF_HOUR = 3
 _TEMP_CHAT_INDEX_FILE = "turn_index.json"
+_TEMP_CHAT_PRIVATE_INDEX_PREFIX = "_window_index_"
 _TEMP_CHAT_TURN_SPLIT_RE = re.compile(
     r"(?ms)^##\s*Turn\s+(\d+)\s*\n(.*?)(?=^##\s*Turn\s+\d+\s*\n|\Z)"
 )
 _TEMP_CHAT_DATE_RE = re.compile(r"_(\d{4}-\d{2}-\d{2})\.md$", re.IGNORECASE)
+_TEMP_CHAT_PRIVATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\+(.+)\.md$", re.IGNORECASE)
+_TEMP_CHAT_PRIVATE_LEGACY_FILE_RE = re.compile(r"^(.+?)_(\d{4}-\d{2}-\d{2})\.md$", re.IGNORECASE)
 _TEMP_CHAT_TURN_LOCK = threading.RLock()
 
 
@@ -13107,8 +14857,9 @@ def get_chat_log_date(dt: Optional[datetime.datetime] = None) -> str:
 
 
 def _temp_chat_root() -> str:
-    p = os.path.join(ALLOWED_DIR, "temp_chat")
-    os.makedirs(p, exist_ok=True)
+    p = _runtime_logs_dir()
+    for sub in ("private", "groups", "theater"):
+        os.makedirs(os.path.join(p, sub), exist_ok=True)
     return p
 
 
@@ -13116,56 +14867,294 @@ def _normalize_chat_window_name(name: Any, fallback: str = "private") -> str:
     return _safe_fs_name(name, fallback)
 
 
-def _temp_chat_agent_dir(agent_id: Any, ensure: bool = True) -> str:
+def _temp_chat_private_root() -> str:
+    return _runtime_private_root()
+
+
+def _temp_chat_groups_root() -> str:
+    return _runtime_groups_root()
+
+
+def _temp_chat_theater_root() -> str:
+    p = os.path.join(_runtime_logs_dir(), "theater")
+    os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _temp_chat_compound_label(primary_id: Any, display_name: Any, default_id: str = "unknown") -> str:
+    pid = _safe_id_token(primary_id, default_id)
+    pname = _safe_fs_name(display_name or pid, pid)
+    return _safe_fs_name(f"{pid}+{pname}", pid)
+
+
+def _temp_chat_split_compound_label(label: Any, default_id: str = "unknown") -> Tuple[str, str]:
+    raw = _safe_fs_name(label, "")
+    left = raw
+    right = ""
+    if "+" in raw:
+        left, right = raw.split("+", 1)
+    pid = _safe_id_token(left, default_id)
+    pname = _safe_fs_name(right or left or pid, pid)
+    return pid, pname
+
+
+def _temp_chat_group_id_from_inputs(group_id: Any, user_id: Any, window_name: Any) -> str:
+    def _norm_gid(value: Any) -> str:
+        token = _safe_id_token(value, "")
+        if token.lower().startswith("group_"):
+            token = _safe_id_token(token[len("group_"):], "")
+        return token
+
+    gid = _norm_gid(group_id)
+    if gid:
+        return gid
+    uid = _safe_id_token(user_id, "")
+    if uid.lower().startswith("group_ctx_"):
+        cand = _norm_gid(uid[len("group_ctx_"):])
+        return cand or "unknown_group"
+    wname = _normalize_chat_window_name(window_name, "group")
+    if wname.lower().startswith("group_"):
+        cand = _norm_gid(wname[len("group_"):])
+        return cand or "unknown_group"
+    cand = _norm_gid(wname or uid)
+    return cand or "unknown_group"
+
+
+def _temp_chat_theater_id_from_inputs(theater_id: Any, user_id: Any) -> str:
+    if str(theater_id or "").strip():
+        return _safe_theater_id(theater_id, "theater_001")
+    uid = _safe_id_token(user_id, "")
+    if uid.lower().startswith("theater_ctx_"):
+        return _safe_theater_id(uid[len("theater_ctx_"):], "theater_001")
+    return _safe_theater_id("theater_001", "theater_001")
+
+
+def _temp_chat_find_scene_file_by_id(root_dir: str, id_token: Any) -> str:
+    rid = _safe_id_token(id_token, "")
+    if (not rid) or (not os.path.isdir(root_dir)):
+        return ""
+    prefix = f"{rid}+"
+    best_path = ""
+    best_mtime = -1.0
+    try:
+        for name in os.listdir(root_dir):
+            p = os.path.join(root_dir, name)
+            if (not os.path.isfile(p)) or (not str(name).lower().endswith(".md")):
+                continue
+            if not str(name).startswith(prefix):
+                continue
+            try:
+                mtime = float(os.path.getmtime(p))
+            except Exception:
+                mtime = 0.0
+            if mtime >= best_mtime:
+                best_mtime = mtime
+                best_path = os.path.abspath(p)
+    except Exception:
+        return ""
+    return best_path
+
+
+def _temp_chat_group_file_path(group_id: Any, group_name: Any = "", ensure: bool = True) -> str:
+    gid = _temp_chat_group_id_from_inputs(group_id, "", "")
+    root = _temp_chat_groups_root()
+    if ensure:
+        os.makedirs(root, exist_ok=True)
+    existing = _temp_chat_find_scene_file_by_id(root, gid)
+    if (not existing) and (not str(gid).lower().startswith("group_")):
+        existing = _temp_chat_find_scene_file_by_id(root, f"group_{gid}")
+    if existing:
+        return existing
+    gname = _safe_fs_name(group_name or gid, gid)
+    return os.path.join(root, f"{_safe_fs_name(f'{gid}+{gname}', gid)}.md")
+
+
+def _temp_chat_theater_file_path(theater_id: Any, theater_name: Any = "", ensure: bool = True) -> str:
+    tid = _safe_theater_id(theater_id, "theater_001")
+    root = _temp_chat_theater_root()
+    if ensure:
+        os.makedirs(root, exist_ok=True)
+    existing = _temp_chat_find_scene_file_by_id(root, tid)
+    if existing:
+        return existing
+    tname = _safe_fs_name(theater_name or tid, tid)
+    return os.path.join(root, f"{_safe_fs_name(f'{tid}+{tname}', tid)}.md")
+
+
+def _temp_chat_scene_file_index_path(scene_file: str) -> str:
+    base, _ext = os.path.splitext(str(scene_file or "").strip())
+    return base + ".index.json"
+
+
+def _temp_chat_agent_dir(agent_id: Any, ensure: bool = True, agent_name: Any = "") -> str:
     aid = _normalize_agent_id(agent_id, _default_agent_id_from_config())
-    p = os.path.join(_temp_chat_root(), aid)
+    display = str(agent_name or _agent_display_name(_get_agent_config(aid)) or aid).strip() or aid
+    label = _temp_chat_compound_label(aid, display, aid)
+    p = os.path.join(_temp_chat_private_root(), label)
     if ensure:
         os.makedirs(p, exist_ok=True)
     return p
 
 
-def _temp_chat_user_dir(agent_id: Any, user_id: Any, ensure: bool = True) -> str:
+def _temp_chat_user_dir(
+    agent_id: Any,
+    user_id: Any,
+    ensure: bool = True,
+    agent_name: Any = "",
+    user_name: Any = "",
+) -> str:
     uid = _safe_id_token(user_id, "anonymous")
-    p = os.path.join(_temp_chat_agent_dir(agent_id, ensure=ensure), uid)
+    display = str(user_name or uid).strip() or uid
+    label = _temp_chat_compound_label(uid, display, uid)
+    p = os.path.join(_temp_chat_agent_dir(agent_id, ensure=ensure, agent_name=agent_name), label)
     if ensure:
         os.makedirs(p, exist_ok=True)
     return p
 
 
-def _temp_chat_window_dir(agent_id: Any, user_id: Any, window_name: Any, ensure: bool = True) -> str:
-    wname = _normalize_chat_window_name(window_name, "private")
-    p = os.path.join(_temp_chat_user_dir(agent_id, user_id, ensure=ensure), wname)
-    if ensure:
-        os.makedirs(p, exist_ok=True)
-    return p
-
-
-def _temp_chat_deleted_dir(agent_id: Any, user_id: Any, ensure: bool = True) -> str:
-    p = os.path.join(_temp_chat_user_dir(agent_id, user_id, ensure=ensure), "deleted")
-    if ensure:
-        os.makedirs(p, exist_ok=True)
-    return p
-
-
-def _temp_chat_file_name(agent_id: Any, user_id: Any, window_name: Any, log_date: Any) -> str:
-    aid = _normalize_agent_id(agent_id, _default_agent_id_from_config())
-    uid = _safe_id_token(user_id, "anonymous")
-    wname = _normalize_chat_window_name(window_name, "private")
-    date_text = str(log_date or "").strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
-        date_text = get_chat_log_date()
-    return f"{aid}_{uid}_{wname}_{date_text}.md"
-
-
-def _temp_chat_daily_file_path(agent_id: Any, user_id: Any, window_name: Any, log_date: Any) -> str:
-    return os.path.join(
-        _temp_chat_window_dir(agent_id, user_id, window_name, ensure=True),
-        _temp_chat_file_name(agent_id, user_id, window_name, log_date),
+def _temp_chat_window_dir(
+    agent_id: Any,
+    user_id: Any,
+    window_name: Any,
+    ensure: bool = True,
+    agent_name: Any = "",
+    user_name: Any = "",
+) -> str:
+    _ = _normalize_chat_window_name(window_name, "private")
+    return _temp_chat_user_dir(
+        agent_id,
+        user_id,
+        ensure=ensure,
+        agent_name=agent_name,
+        user_name=user_name,
     )
 
 
-def _temp_chat_window_index_path(agent_id: Any, user_id: Any, window_name: Any) -> str:
-    return os.path.join(_temp_chat_window_dir(agent_id, user_id, window_name, ensure=True), _TEMP_CHAT_INDEX_FILE)
+def _temp_chat_deleted_dir(
+    agent_id: Any,
+    user_id: Any,
+    ensure: bool = True,
+    agent_name: Any = "",
+    user_name: Any = "",
+) -> str:
+    p = os.path.join(
+        _temp_chat_user_dir(
+            agent_id,
+            user_id,
+            ensure=ensure,
+            agent_name=agent_name,
+            user_name=user_name,
+        ),
+        "_deleted",
+    )
+    if ensure:
+        os.makedirs(p, exist_ok=True)
+    return p
+
+
+def _temp_chat_file_name(
+    agent_id: Any,
+    user_id: Any,
+    window_name: Any,
+    log_date: Any,
+    scene: Any = "private",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
+) -> str:
+    scene_text = str(scene or "private").strip().lower() or "private"
+    aid = _normalize_agent_id(agent_id, _default_agent_id_from_config())
+    uid = _safe_id_token(user_id, "anonymous")
+    wname = _normalize_chat_window_name(window_name, "private")
+    _ = aid
+    _ = uid
+    if scene_text == "group":
+        gid = _temp_chat_group_id_from_inputs(group_id, user_id, window_name)
+        gname = _safe_fs_name(group_name or gid, gid)
+        return f"{_safe_fs_name(f'{gid}+{gname}', gid)}.md"
+    if scene_text == "theater":
+        tid = _temp_chat_theater_id_from_inputs(theater_id, user_id)
+        tname = _safe_fs_name(theater_name or tid, tid)
+        return f"{_safe_fs_name(f'{tid}+{tname}', tid)}.md"
+    date_text = str(log_date or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+        date_text = get_chat_log_date()
+    return f"{date_text}+{wname}.md"
+
+
+def _temp_chat_daily_file_path(
+    agent_id: Any,
+    user_id: Any,
+    window_name: Any,
+    log_date: Any,
+    scene: Any = "private",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
+) -> str:
+    scene_text = str(scene or "private").strip().lower() or "private"
+    if scene_text == "group":
+        gid = _temp_chat_group_id_from_inputs(group_id, user_id, window_name)
+        return _temp_chat_group_file_path(gid, group_name=group_name or gid, ensure=True)
+    if scene_text == "theater":
+        tid = _temp_chat_theater_id_from_inputs(theater_id, user_id)
+        return _temp_chat_theater_file_path(tid, theater_name=theater_name or tid, ensure=True)
+    return os.path.join(
+        _temp_chat_window_dir(
+            agent_id,
+            user_id,
+            window_name,
+            ensure=True,
+            agent_name=agent_name,
+            user_name=user_name,
+        ),
+        _temp_chat_file_name(
+            agent_id,
+            user_id,
+            window_name,
+            log_date,
+            scene=scene_text,
+        ),
+    )
+
+
+def _temp_chat_window_index_path(
+    agent_id: Any,
+    user_id: Any,
+    window_name: Any,
+    scene: Any = "private",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
+) -> str:
+    scene_text = str(scene or "private").strip().lower() or "private"
+    if scene_text == "group":
+        gid = _temp_chat_group_id_from_inputs(group_id, user_id, window_name)
+        p = _temp_chat_group_file_path(gid, group_name=group_name or gid, ensure=True)
+        return _temp_chat_scene_file_index_path(p)
+    if scene_text == "theater":
+        tid = _temp_chat_theater_id_from_inputs(theater_id, user_id)
+        p = _temp_chat_theater_file_path(tid, theater_name=theater_name or tid, ensure=True)
+        return _temp_chat_scene_file_index_path(p)
+    wname = _normalize_chat_window_name(window_name, "private")
+    return os.path.join(
+        _temp_chat_window_dir(
+            agent_id,
+            user_id,
+            wname,
+            ensure=True,
+            agent_name=agent_name,
+            user_name=user_name,
+        ),
+        f"{_TEMP_CHAT_PRIVATE_INDEX_PREFIX}{wname}.json",
+    )
 
 
 def _temp_chat_default_window_index(
@@ -13176,21 +15165,36 @@ def _temp_chat_default_window_index(
     scene: Any = "",
     chat_id: Any = "",
     window_stamp: Any = "",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
 ) -> Dict[str, Any]:
     aid = _normalize_agent_id(agent_id, _default_agent_id_from_config())
     uid = _safe_id_token(user_id, "anonymous")
     wname = _normalize_chat_window_name(window_name, "private")
     now_text = _now_str()
+    scene_text = str(scene or "").strip().lower()
     stamp = _normalize_private_window_stamp(window_stamp, fallback=_private_window_now_stamp())
+    gid = _temp_chat_group_id_from_inputs(group_id, uid, wname) if scene_text == "group" else ""
+    tid = _temp_chat_theater_id_from_inputs(theater_id, uid) if scene_text == "theater" else ""
     return {
-        "version": 1,
+        "version": 2,
         "agent_id": aid,
+        "agent_name": str(agent_name or _agent_display_name(_get_agent_config(aid)) or aid).strip() or aid,
         "user_id": uid,
+        "user_name": str(user_name or uid).strip() or uid,
         "window_name": wname,
         "chat_title": _safe_fs_name(chat_title or wname, wname),
-        "scene": str(scene or "").strip().lower(),
+        "scene": scene_text,
         "chat_id": str(chat_id or "").strip(),
         "window_stamp": stamp,
+        "group_id": gid,
+        "group_name": _safe_fs_name(group_name or gid, gid) if gid else "",
+        "theater_id": tid,
+        "theater_name": _safe_fs_name(theater_name or tid, tid) if tid else "",
         "last_turn_id": 0,
         "last_log_date": "",
         "last_file": "",
@@ -13207,8 +15211,25 @@ def _load_temp_chat_window_index(
     scene: Any = "",
     chat_id: Any = "",
     window_stamp: Any = "",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
 ) -> Dict[str, Any]:
-    idx_path = _temp_chat_window_index_path(agent_id, user_id, window_name)
+    idx_path = _temp_chat_window_index_path(
+        agent_id,
+        user_id,
+        window_name,
+        scene=scene,
+        agent_name=agent_name,
+        user_name=user_name,
+        group_id=group_id,
+        group_name=group_name,
+        theater_id=theater_id,
+        theater_name=theater_name,
+    )
     defaults = _temp_chat_default_window_index(
         agent_id=agent_id,
         user_id=user_id,
@@ -13217,6 +15238,12 @@ def _load_temp_chat_window_index(
         scene=scene,
         chat_id=chat_id,
         window_stamp=window_stamp,
+        agent_name=agent_name,
+        user_name=user_name,
+        group_id=group_id,
+        group_name=group_name,
+        theater_id=theater_id,
+        theater_name=theater_name,
     )
     try:
         if os.path.exists(idx_path):
@@ -13232,12 +15259,31 @@ def _load_temp_chat_window_index(
         **obj,
     }
     merged["agent_id"] = _normalize_agent_id(merged.get("agent_id"), defaults["agent_id"])
+    merged["agent_name"] = str(merged.get("agent_name") or defaults.get("agent_name") or merged["agent_id"]).strip() or merged["agent_id"]
     merged["user_id"] = _safe_id_token(merged.get("user_id"), defaults["user_id"])
+    merged["user_name"] = str(merged.get("user_name") or defaults.get("user_name") or merged["user_id"]).strip() or merged["user_id"]
     merged["window_name"] = _normalize_chat_window_name(merged.get("window_name") or defaults["window_name"], defaults["window_name"])
     merged["chat_title"] = _safe_fs_name(merged.get("chat_title") or chat_title or merged["window_name"], merged["window_name"])
     merged["scene"] = str(merged.get("scene") or scene or "").strip().lower()
     merged["chat_id"] = str(merged.get("chat_id") or chat_id or "").strip()
     merged["window_stamp"] = _normalize_private_window_stamp(merged.get("window_stamp"), fallback=defaults["window_stamp"])
+    merged["group_id"] = _temp_chat_group_id_from_inputs(
+        merged.get("group_id"),
+        merged.get("user_id"),
+        merged.get("window_name"),
+    ) if merged["scene"] == "group" else ""
+    merged["group_name"] = _safe_fs_name(
+        merged.get("group_name") or group_name or merged.get("group_id") or "",
+        merged.get("group_id") or "",
+    ) if merged["group_id"] else ""
+    merged["theater_id"] = _temp_chat_theater_id_from_inputs(
+        merged.get("theater_id"),
+        merged.get("user_id"),
+    ) if merged["scene"] == "theater" else ""
+    merged["theater_name"] = _safe_fs_name(
+        merged.get("theater_name") or theater_name or merged.get("theater_id") or "",
+        merged.get("theater_id") or "",
+    ) if merged["theater_id"] else ""
     merged["last_turn_id"] = max(0, safe_int(merged.get("last_turn_id"), 0))
     merged["last_log_date"] = str(merged.get("last_log_date") or "").strip()
     merged["last_file"] = str(merged.get("last_file") or "").strip()
@@ -13248,7 +15294,18 @@ def _load_temp_chat_window_index(
 
 def _save_temp_chat_window_index(index_payload: Dict[str, Any]) -> Dict[str, Any]:
     row = dict(index_payload or {})
-    idx_path = _temp_chat_window_index_path(row.get("agent_id"), row.get("user_id"), row.get("window_name"))
+    idx_path = _temp_chat_window_index_path(
+        row.get("agent_id"),
+        row.get("user_id"),
+        row.get("window_name"),
+        scene=row.get("scene"),
+        agent_name=row.get("agent_name"),
+        user_name=row.get("user_name"),
+        group_id=row.get("group_id"),
+        group_name=row.get("group_name"),
+        theater_id=row.get("theater_id"),
+        theater_name=row.get("theater_name"),
+    )
     row["last_turn_id"] = max(0, safe_int(row.get("last_turn_id"), 0))
     row["last_updated"] = str(row.get("last_updated") or _now_str()).strip()
     _write_json_atomic(idx_path, row)
@@ -13256,23 +15313,76 @@ def _save_temp_chat_window_index(index_payload: Dict[str, Any]) -> Dict[str, Any
 
 
 def _temp_chat_extract_file_date(name: str) -> str:
-    m = _TEMP_CHAT_DATE_RE.search(str(name or "").strip())
+    nm = str(name or "").strip()
+    m = _TEMP_CHAT_PRIVATE_FILE_RE.match(nm)
+    if m:
+        return str(m.group(1) or "").strip()
+    m = _TEMP_CHAT_DATE_RE.search(nm)
     if m:
         return str(m.group(1) or "").strip()
     return ""
 
 
-def _temp_chat_list_daily_files(agent_id: Any, user_id: Any, window_name: Any) -> List[Dict[str, str]]:
-    wdir = _temp_chat_window_dir(agent_id, user_id, window_name, ensure=False)
-    if not os.path.isdir(wdir):
+def _temp_chat_parse_private_file_name(name: str) -> Tuple[str, str]:
+    nm = str(name or "").strip()
+    if not nm:
+        return "", ""
+    m = _TEMP_CHAT_PRIVATE_FILE_RE.match(nm)
+    if m:
+        return str(m.group(1) or "").strip(), _normalize_chat_window_name(m.group(2) or "", "private")
+    m2 = _TEMP_CHAT_PRIVATE_LEGACY_FILE_RE.match(nm)
+    if m2:
+        stem = str(m2.group(1) or "").strip()
+        date_text = str(m2.group(2) or "").strip()
+        parts = [x for x in stem.split("_") if str(x or "").strip()]
+        if len(parts) >= 3:
+            return date_text, _normalize_chat_window_name("_".join(parts[2:]), "private")
+    return "", ""
+
+
+def _temp_chat_list_daily_files(
+    agent_id: Any,
+    user_id: Any,
+    window_name: Any,
+    scene: Any = "private",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
+) -> List[Dict[str, str]]:
+    scene_text = str(scene or "private").strip().lower() or "private"
+    if scene_text == "group":
+        gid = _temp_chat_group_id_from_inputs(group_id, user_id, window_name)
+        p = _temp_chat_group_file_path(gid, group_name=group_name or gid, ensure=False)
+        if os.path.isfile(p):
+            return [{"date": "", "path": os.path.abspath(p)}]
+        return []
+    if scene_text == "theater":
+        tid = _temp_chat_theater_id_from_inputs(theater_id, user_id)
+        p = _temp_chat_theater_file_path(tid, theater_name=theater_name or tid, ensure=False)
+        if os.path.isfile(p):
+            return [{"date": "", "path": os.path.abspath(p)}]
+        return []
+
+    wname = _normalize_chat_window_name(window_name, "private")
+    udir = _temp_chat_user_dir(
+        agent_id,
+        user_id,
+        ensure=False,
+        agent_name=agent_name,
+        user_name=user_name,
+    )
+    if not os.path.isdir(udir):
         return []
     rows: List[Dict[str, str]] = []
-    for nm in os.listdir(wdir):
-        p = os.path.join(wdir, nm)
+    for nm in os.listdir(udir):
+        p = os.path.join(udir, nm)
         if (not os.path.isfile(p)) or (not str(nm).lower().endswith(".md")):
             continue
-        date_text = _temp_chat_extract_file_date(nm)
-        if not date_text:
+        date_text, parsed_window = _temp_chat_parse_private_file_name(nm)
+        if (not date_text) or (parsed_window != wname):
             continue
         rows.append({"date": date_text, "path": os.path.abspath(p)})
     rows.sort(key=lambda r: str(r.get("date") or ""))
@@ -13286,16 +15396,31 @@ def _temp_chat_init_md_file_if_missing(
     window_name: Any,
     log_date: str,
     scene: Any = "",
+    chat_id: Any = "",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
 ) -> None:
     if os.path.exists(path):
         return
+    scene_text = str(scene or "").strip().lower() or "private"
     body = (
         "# 临时聊天记录\n\n"
         f"- Agent: {_normalize_agent_id(agent_id, _default_agent_id_from_config())}\n"
+        f"- AgentName: {str(agent_name or '').strip()}\n"
         f"- User: {_safe_id_token(user_id, 'anonymous')}\n"
+        f"- UserName: {str(user_name or '').strip()}\n"
         f"- Window: {_normalize_chat_window_name(window_name, 'private')}\n"
         f"- Date: {str(log_date or get_chat_log_date()).strip()}\n"
-        f"- Scene: {str(scene or '').strip().lower() or 'private'}\n\n"
+        f"- Scene: {scene_text}\n"
+        f"- ChatID: {str(chat_id or '').strip()}\n"
+        f"- GroupID: {str(group_id or '').strip()}\n"
+        f"- GroupName: {str(group_name or '').strip()}\n"
+        f"- TheaterID: {str(theater_id or '').strip()}\n"
+        f"- TheaterName: {str(theater_name or '').strip()}\n\n"
         "---\n\n"
     )
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -13320,14 +15445,39 @@ def _append_temp_chat_turn(
     window_stamp: Any = "",
     reasoning_text: Any = "",
     ts_text: Any = "",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
+    log_date_override: Any = "",
 ) -> Dict[str, Any]:
     aid = _normalize_agent_id(agent_id, _default_agent_id_from_config())
     uid = _safe_id_token(user_id, "anonymous")
     wname = _normalize_chat_window_name(window_name, "private")
     scene_text = str(scene or "").strip().lower() or "private"
     turn_time = str(ts_text or _now_str()).strip() or _now_str()
-    log_date = get_chat_log_date()
-    daily_path = _temp_chat_daily_file_path(aid, uid, wname, log_date)
+    log_date = str(log_date_override or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", log_date):
+        log_date = get_chat_log_date()
+    gid = _temp_chat_group_id_from_inputs(group_id, uid, wname) if scene_text == "group" else ""
+    gname = _safe_fs_name(group_name or gid, gid) if gid else ""
+    tid = _temp_chat_theater_id_from_inputs(theater_id, uid) if scene_text == "theater" else ""
+    tname = _safe_fs_name(theater_name or tid, tid) if tid else ""
+    daily_path = _temp_chat_daily_file_path(
+        aid,
+        uid,
+        wname,
+        log_date,
+        scene=scene_text,
+        agent_name=agent_name,
+        user_name=user_name,
+        group_id=gid,
+        group_name=gname,
+        theater_id=tid,
+        theater_name=tname,
+    )
 
     with _TEMP_CHAT_TURN_LOCK:
         idx = _load_temp_chat_window_index(
@@ -13338,6 +15488,12 @@ def _append_temp_chat_turn(
             scene=scene_text,
             chat_id=chat_id,
             window_stamp=window_stamp,
+            agent_name=agent_name,
+            user_name=user_name,
+            group_id=gid,
+            group_name=gname,
+            theater_id=tid,
+            theater_name=tname,
         )
         next_turn = max(0, safe_int(idx.get("last_turn_id"), 0)) + 1
         _temp_chat_init_md_file_if_missing(
@@ -13347,11 +15503,29 @@ def _append_temp_chat_turn(
             wname,
             log_date=log_date,
             scene=scene_text,
+            chat_id=chat_id,
+            agent_name=agent_name,
+            user_name=user_name,
+            group_id=gid,
+            group_name=gname,
+            theater_id=tid,
+            theater_name=tname,
         )
         reasoning_block = _clean_md_field_text(reasoning_text)
+        chat_id_text = str(chat_id or "").strip()
         block_lines = [
             f"## Turn {next_turn:03d}",
             f"**Time:** {turn_time}  ",
+            f"**Scene:** {scene_text}",
+            f"**ChatID:** {chat_id_text}",
+            f"**Window:** {wname}",
+        ]
+        if gid:
+            block_lines.append(f"**GroupID:** {gid}")
+        if tid:
+            block_lines.append(f"**TheaterID:** {tid}")
+        block_lines.extend(
+            [
             f"**User:** {_clean_md_field_text(user_text)}",
             "",
             f"**Assistant:** {_clean_md_field_text(assistant_text)}",
@@ -13360,13 +15534,20 @@ def _append_temp_chat_turn(
             "",
             "---",
             "",
-        ]
+            ]
+        )
         with open(daily_path, "a", encoding="utf-8") as f:
             f.write("\n".join(block_lines))
         idx["chat_title"] = _safe_fs_name(chat_title or idx.get("chat_title") or wname, wname)
         idx["scene"] = scene_text
         idx["chat_id"] = str(chat_id or idx.get("chat_id") or "").strip()
         idx["window_stamp"] = _normalize_private_window_stamp(idx.get("window_stamp") or window_stamp, fallback=_private_window_now_stamp())
+        idx["agent_name"] = str(agent_name or idx.get("agent_name") or aid).strip() or aid
+        idx["user_name"] = str(user_name or idx.get("user_name") or uid).strip() or uid
+        idx["group_id"] = gid
+        idx["group_name"] = gname
+        idx["theater_id"] = tid
+        idx["theater_name"] = tname
         idx["last_turn_id"] = next_turn
         idx["last_log_date"] = log_date
         idx["last_file"] = os.path.abspath(daily_path).replace("\\", "/")
@@ -13380,6 +15561,9 @@ def _append_temp_chat_turn(
         "chat_title": str(idx.get("chat_title") or wname).strip() or wname,
         "chat_id": str(idx.get("chat_id") or "").strip(),
         "window_stamp": str(idx.get("window_stamp") or "").strip(),
+        "scene": scene_text,
+        "group_id": gid,
+        "theater_id": tid,
         "turn_id": next_turn,
         "log_date": log_date,
         "path": os.path.abspath(daily_path),
@@ -13399,6 +15583,9 @@ def _parse_temp_chat_md_turns(raw_text: str) -> List[Dict[str, Any]]:
             turn_id = 1
         body = str(m.group(2) or "").strip()
         time_text = ""
+        scene_text = ""
+        chat_id = ""
+        window_text = ""
         user_text = ""
         assistant_text = ""
         reasoning_text = ""
@@ -13406,8 +15593,17 @@ def _parse_temp_chat_md_turns(raw_text: str) -> List[Dict[str, Any]]:
         mt = re.search(r"(?im)^\*\*Time:\*\*\s*(.+?)\s*$", body)
         if mt:
             time_text = str(mt.group(1) or "").strip()
+        ms = re.search(r"(?im)^\*\*Scene:\*\*\s*(.+?)\s*$", body)
+        if ms:
+            scene_text = str(ms.group(1) or "").strip().lower()
+        mc = re.search(r"(?im)^\*\*ChatID:\*\*\s*(.*?)\s*$", body)
+        if mc:
+            chat_id = str(mc.group(1) or "").strip()
+        mw = re.search(r"(?im)^\*\*Window:\*\*\s*(.*?)\s*$", body)
+        if mw:
+            window_text = _normalize_chat_window_name(mw.group(1) or "", "private")
 
-        mu = re.search(r"(?ims)^\*\*User:\*\*\s*(.*?)\n\s*\n\*\*Assistant:\*\*\s*(.*)$", body)
+        mu = re.search(r"(?ims)\*\*User:\*\*\s*(.*?)\n\s*\n\*\*Assistant:\*\*\s*(.*)$", body)
         if mu:
             user_text = str(mu.group(1) or "").strip()
             tail = str(mu.group(2) or "").strip()
@@ -13426,6 +15622,9 @@ def _parse_temp_chat_md_turns(raw_text: str) -> List[Dict[str, Any]]:
             {
                 "turn_id": turn_id,
                 "time": time_text,
+                "scene": scene_text,
+                "chat_id": chat_id,
+                "window_name": window_text,
                 "user_text": user_text,
                 "assistant_text": assistant_text,
                 "reasoning_text": reasoning_text,
@@ -13440,8 +15639,29 @@ def _load_temp_chat_window_turns(
     user_id: Any,
     window_name: Any,
     max_turns: int = 200,
+    scene: Any = "private",
+    chat_id: Any = "",
+    agent_name: Any = "",
+    user_name: Any = "",
+    group_id: Any = "",
+    group_name: Any = "",
+    theater_id: Any = "",
+    theater_name: Any = "",
 ) -> List[Dict[str, Any]]:
-    files = _temp_chat_list_daily_files(agent_id, user_id, window_name)
+    scene_text = str(scene or "private").strip().lower() or "private"
+    chat_id_text = str(chat_id or "").strip()
+    files = _temp_chat_list_daily_files(
+        agent_id,
+        user_id,
+        window_name,
+        scene=scene_text,
+        agent_name=agent_name,
+        user_name=user_name,
+        group_id=group_id,
+        group_name=group_name,
+        theater_id=theater_id,
+        theater_name=theater_name,
+    )
     if not files:
         return []
     cap = max(1, min(5000, safe_int(max_turns, 200)))
@@ -13456,6 +15676,19 @@ def _load_temp_chat_window_turns(
         except Exception:
             continue
         parsed = _parse_temp_chat_md_turns(raw)
+        if chat_id_text:
+            narrowed: List[Dict[str, Any]] = []
+            for item in parsed:
+                item_chat_id = str((item or {}).get("chat_id") or "").strip()
+                if item_chat_id == chat_id_text:
+                    narrowed.append(item)
+                elif item_chat_id:
+                    continue
+                elif scene_text == "theater":
+                    continue
+                else:
+                    narrowed.append(item)
+            parsed = narrowed
         if parsed:
             turns = parsed + turns
         if len(turns) >= cap:
@@ -13468,26 +15701,53 @@ def _load_temp_chat_window_turns(
 def _iter_temp_chat_window_records(user_id: Any = "", agent_id: Any = "") -> List[Dict[str, Any]]:
     uid = _safe_id_token(user_id, "") if str(user_id or "").strip() else ""
     aid = _normalize_agent_id(agent_id, "") if str(agent_id or "").strip() else ""
-    root = _temp_chat_root()
+    root = _temp_chat_private_root()
     out: List[Dict[str, Any]] = []
     if not os.path.isdir(root):
         return out
     try:
-        agent_dirs = [aid] if aid else [name for name in os.listdir(root) if os.path.isdir(os.path.join(root, name))]
-        for aid_row in agent_dirs:
-            a_dir = os.path.join(root, aid_row)
+        for agent_label in os.listdir(root):
+            a_dir = os.path.join(root, agent_label)
             if not os.path.isdir(a_dir):
                 continue
-            user_dirs = [uid] if uid else [name for name in os.listdir(a_dir) if os.path.isdir(os.path.join(a_dir, name))]
-            for uid_row in user_dirs:
-                u_dir = os.path.join(a_dir, uid_row)
+            aid_row, agent_name_row = _temp_chat_split_compound_label(agent_label, _default_agent_id_from_config())
+            if aid and aid_row != aid:
+                continue
+            for user_label in os.listdir(a_dir):
+                u_dir = os.path.join(a_dir, user_label)
                 if not os.path.isdir(u_dir):
                     continue
-                for wname in os.listdir(u_dir):
-                    w_dir = os.path.join(u_dir, wname)
-                    if (not os.path.isdir(w_dir)) or str(wname).strip().lower() == "deleted":
+                if str(user_label).strip().lower() in {"deleted", "_deleted"}:
+                    continue
+                uid_row, user_name_row = _temp_chat_split_compound_label(user_label, "anonymous")
+                if uid and uid_row != uid:
+                    continue
+
+                window_names: set = set()
+                for name in os.listdir(u_dir):
+                    p = os.path.join(u_dir, name)
+                    if not os.path.isfile(p):
                         continue
-                    idx_path = os.path.join(w_dir, _TEMP_CHAT_INDEX_FILE)
+                    low = str(name).lower()
+                    if low.startswith(_TEMP_CHAT_PRIVATE_INDEX_PREFIX.lower()) and low.endswith(".json"):
+                        win = _normalize_chat_window_name(str(name)[len(_TEMP_CHAT_PRIVATE_INDEX_PREFIX):-5], "private")
+                        if win:
+                            window_names.add(win)
+                        continue
+                    if low.endswith(".md"):
+                        _date_text, parsed_window = _temp_chat_parse_private_file_name(name)
+                        if parsed_window:
+                            window_names.add(parsed_window)
+
+                for wname in sorted(window_names):
+                    idx_path = _temp_chat_window_index_path(
+                        aid_row,
+                        uid_row,
+                        wname,
+                        scene="private",
+                        agent_name=agent_name_row,
+                        user_name=user_name_row,
+                    )
                     if os.path.exists(idx_path):
                         try:
                             with open(idx_path, "r", encoding="utf-8") as f:
@@ -13496,23 +15756,34 @@ def _iter_temp_chat_window_records(user_id: Any = "", agent_id: Any = "") -> Lis
                             idx = {}
                     else:
                         idx = {}
+
                     idx_row = _temp_chat_default_window_index(
                         agent_id=aid_row,
                         user_id=uid_row,
                         window_name=wname,
                         chat_title=wname,
-                        scene=idx.get("scene") if isinstance(idx, dict) else "",
+                        scene="private",
                         chat_id=idx.get("chat_id") if isinstance(idx, dict) else "",
                         window_stamp=idx.get("window_stamp") if isinstance(idx, dict) else "",
+                        agent_name=agent_name_row,
+                        user_name=user_name_row,
                     )
                     if isinstance(idx, dict):
                         idx_row.update(idx)
-                    files = _temp_chat_list_daily_files(aid_row, uid_row, wname)
+
+                    files = _temp_chat_list_daily_files(
+                        aid_row,
+                        uid_row,
+                        wname,
+                        scene="private",
+                        agent_name=agent_name_row,
+                        user_name=user_name_row,
+                    )
                     latest_file = str(idx_row.get("last_file") or "").strip()
                     if (not latest_file) and files:
                         latest_file = str((files[-1] or {}).get("path") or "").strip()
                     if latest_file and (not os.path.isabs(latest_file)):
-                        latest_file = os.path.abspath(os.path.join(w_dir, latest_file))
+                        latest_file = os.path.abspath(os.path.join(u_dir, latest_file))
                     if latest_file and (not os.path.exists(latest_file)):
                         latest_file = ""
                     if (not latest_file) and files:
@@ -13530,7 +15801,9 @@ def _iter_temp_chat_window_records(user_id: Any = "", agent_id: Any = "") -> Lis
                         {
                             "chat_id": str(idx_row.get("chat_id") or "").strip(),
                             "agent_id": _normalize_agent_id(idx_row.get("agent_id"), aid_row),
+                            "agent_name": str(idx_row.get("agent_name") or agent_name_row or aid_row).strip() or aid_row,
                             "user_id": _safe_id_token(idx_row.get("user_id"), uid_row),
+                            "user_name": str(idx_row.get("user_name") or user_name_row or uid_row).strip() or uid_row,
                             "chat_title": _safe_fs_name(idx_row.get("chat_title") or wname, wname),
                             "window_name": _normalize_chat_window_name(idx_row.get("window_name") or wname, wname),
                             "window_stamp": _normalize_private_window_stamp(idx_row.get("window_stamp"), fallback=""),
@@ -13543,7 +15816,7 @@ def _iter_temp_chat_window_records(user_id: Any = "", agent_id: Any = "") -> Lis
                             "updated_at": str(idx_row.get("last_updated") or idx_row.get("updated_at") or "").strip(),
                             "last_turn_id": max(0, safe_int(idx_row.get("last_turn_id"), 0)),
                             "last_log_date": str(idx_row.get("last_log_date") or "").strip(),
-                            "scene": str(idx_row.get("scene") or "").strip().lower(),
+                            "scene": "private",
                             "source": "temp_chat",
                         }
                     )
@@ -13551,6 +15824,310 @@ def _iter_temp_chat_window_records(user_id: Any = "", agent_id: Any = "") -> Lis
         return out
     out.sort(key=lambda row: (-safe_float(row.get("mtime"), 0.0), str(row.get("chat_title") or ""), str(row.get("agent_id") or "")))
     return out
+
+
+def _legacy_temp_chat_root() -> str:
+    return os.path.join(ALLOWED_DIR, "temp_chat")
+
+
+def _has_legacy_runtime_chat_data() -> bool:
+    try:
+        if os.path.isdir(_legacy_temp_chat_root()):
+            return True
+    except Exception:
+        pass
+    try:
+        for root_dir, _dirs, files in os.walk(_runtime_private_root()):
+            for nm in files:
+                low = str(nm).lower()
+                if low.endswith(".txt") or low.endswith(_PRIVATE_WINDOW_META_SUFFIX.lower()):
+                    return True
+    except Exception:
+        pass
+    try:
+        for root_dir, _dirs, files in os.walk(_runtime_groups_root()):
+            for nm in files:
+                low = str(nm).lower()
+                if low.startswith("group_") and low.endswith(".txt"):
+                    return True
+    except Exception:
+        pass
+    try:
+        for root_dir, _dirs, files in os.walk(_theater_runtime_root()):
+            for nm in files:
+                if str(nm).lower().endswith(".jsonl"):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _migrate_legacy_temp_chat_to_runtime_logs() -> Dict[str, Any]:
+    stats = {
+        "windows": 0,
+        "turns": 0,
+        "migrated_turns": 0,
+        "skipped_turns": 0,
+        "errors": 0,
+    }
+    legacy_root = _legacy_temp_chat_root()
+    if not os.path.isdir(legacy_root):
+        return stats
+
+    seen_sig = set()
+    for aid_raw in os.listdir(legacy_root):
+        a_dir = os.path.join(legacy_root, aid_raw)
+        if not os.path.isdir(a_dir):
+            continue
+        for uid_raw in os.listdir(a_dir):
+            u_dir = os.path.join(a_dir, uid_raw)
+            if not os.path.isdir(u_dir):
+                continue
+            for win_raw in os.listdir(u_dir):
+                w_dir = os.path.join(u_dir, win_raw)
+                if not os.path.isdir(w_dir):
+                    continue
+                stats["windows"] += 1
+
+                idx_obj: Dict[str, Any] = {}
+                idx_path = os.path.join(w_dir, _TEMP_CHAT_INDEX_FILE)
+                if os.path.isfile(idx_path):
+                    try:
+                        with open(idx_path, "r", encoding="utf-8") as f:
+                            obj = json.load(f)
+                        if isinstance(obj, dict):
+                            idx_obj = obj
+                    except Exception:
+                        idx_obj = {}
+
+                aid = _normalize_agent_id(idx_obj.get("agent_id"), _normalize_agent_id(aid_raw, _default_agent_id_from_config()))
+                uid = _safe_id_token(idx_obj.get("user_id"), _safe_id_token(uid_raw, "anonymous"))
+                wname = _normalize_chat_window_name(idx_obj.get("window_name") or win_raw, win_raw)
+                scene_text = str(idx_obj.get("scene") or "").strip().lower()
+                if not scene_text:
+                    if uid.lower().startswith("group_ctx_") or wname.lower().startswith("group_"):
+                        scene_text = "group"
+                    elif uid.lower().startswith("theater_ctx_"):
+                        scene_text = "theater"
+                    else:
+                        scene_text = "private"
+
+                chat_title = _safe_fs_name(idx_obj.get("chat_title") or wname, wname)
+                base_chat_id = str(idx_obj.get("chat_id") or "").strip()
+                window_stamp = _normalize_private_window_stamp(idx_obj.get("window_stamp"), fallback=_private_window_now_stamp())
+                agent_name = _agent_display_name(_get_agent_config(aid)) or aid
+                user_name = str(idx_obj.get("user_name") or uid).strip() or uid
+                group_id = _temp_chat_group_id_from_inputs(idx_obj.get("group_id"), uid, wname) if scene_text == "group" else ""
+                group_name = _safe_fs_name(idx_obj.get("group_name") or group_id, group_id) if group_id else ""
+                theater_id = _temp_chat_theater_id_from_inputs(idx_obj.get("theater_id"), uid) if scene_text == "theater" else ""
+                theater_name = ""
+                if theater_id:
+                    try:
+                        theater_name = str((_load_theater_config(theater_id) or {}).get("name") or idx_obj.get("theater_name") or theater_id).strip() or theater_id
+                    except Exception:
+                        theater_name = _safe_fs_name(idx_obj.get("theater_name") or theater_id, theater_id)
+
+                files: List[Dict[str, str]] = []
+                for nm in os.listdir(w_dir):
+                    p = os.path.join(w_dir, nm)
+                    if (not os.path.isfile(p)) or (not str(nm).lower().endswith(".md")):
+                        continue
+                    d = _temp_chat_extract_file_date(nm)
+                    files.append({"date": d, "path": os.path.abspath(p)})
+                files.sort(key=lambda row: (str(row.get("date") or ""), str(row.get("path") or "")))
+
+                for row in files:
+                    p = str(row.get("path") or "").strip()
+                    d = str(row.get("date") or "").strip()
+                    if not p:
+                        continue
+                    try:
+                        with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                            raw = f.read() or ""
+                    except Exception:
+                        stats["errors"] += 1
+                        continue
+                    turns = _parse_temp_chat_md_turns(raw)
+                    for turn in turns:
+                        stats["turns"] += 1
+                        user_text = str((turn or {}).get("user_text") or "").strip()
+                        assistant_text = str((turn or {}).get("assistant_text") or "").strip()
+                        if not (user_text or assistant_text):
+                            stats["skipped_turns"] += 1
+                            continue
+                        ts = str((turn or {}).get("time") or "").strip()
+                        turn_chat_id = str((turn or {}).get("chat_id") or base_chat_id).strip()
+                        sig = "||".join(
+                            [
+                                scene_text,
+                                str(turn_chat_id),
+                                str(ts),
+                                user_text,
+                                assistant_text,
+                            ]
+                        )
+                        if sig in seen_sig:
+                            stats["skipped_turns"] += 1
+                            continue
+                        seen_sig.add(sig)
+                        try:
+                            _append_temp_chat_turn(
+                                agent_id=aid,
+                                user_id=uid,
+                                window_name=wname,
+                                scene=scene_text,
+                                user_text=user_text,
+                                assistant_text=assistant_text,
+                                chat_title=chat_title,
+                                chat_id=turn_chat_id,
+                                window_stamp=window_stamp,
+                                reasoning_text=str((turn or {}).get("reasoning_text") or "").strip(),
+                                ts_text=ts,
+                                agent_name=agent_name,
+                                user_name=user_name,
+                                group_id=group_id,
+                                group_name=group_name,
+                                theater_id=theater_id,
+                                theater_name=theater_name,
+                                log_date_override=d,
+                            )
+                            stats["migrated_turns"] += 1
+                        except Exception:
+                            stats["errors"] += 1
+    return stats
+
+
+def _cleanup_legacy_runtime_chat_logs() -> Dict[str, Any]:
+    stats = {"removed_files": 0, "removed_dirs": 0, "errors": 0}
+
+    # 1) 旧主存：ALLOWED_DIR/temp_chat
+    legacy_root = _legacy_temp_chat_root()
+    if os.path.isdir(legacy_root):
+        try:
+            shutil.rmtree(legacy_root, ignore_errors=True)
+            stats["removed_dirs"] += 1
+        except Exception:
+            stats["errors"] += 1
+
+    # 2) 私聊旧 txt + sidecar
+    try:
+        for root_dir, _dirs, files in os.walk(_runtime_private_root()):
+            for nm in files:
+                low = str(nm).lower()
+                if low.endswith(".txt") or low.endswith(_PRIVATE_WINDOW_META_SUFFIX.lower()):
+                    p = os.path.join(root_dir, nm)
+                    try:
+                        os.remove(p)
+                        stats["removed_files"] += 1
+                    except Exception:
+                        stats["errors"] += 1
+    except Exception:
+        stats["errors"] += 1
+
+    # 3) 群聊旧 group_*.txt
+    try:
+        for root_dir, _dirs, files in os.walk(_runtime_groups_root()):
+            for nm in files:
+                low = str(nm).lower()
+                if low.startswith("group_") and low.endswith(".txt"):
+                    p = os.path.join(root_dir, nm)
+                    try:
+                        os.remove(p)
+                        stats["removed_files"] += 1
+                    except Exception:
+                        stats["errors"] += 1
+    except Exception:
+        stats["errors"] += 1
+
+    # 4) 剧场旧 jsonl
+    try:
+        for root_dir, _dirs, files in os.walk(_theater_runtime_root()):
+            for nm in files:
+                if str(nm).lower().endswith(".jsonl"):
+                    p = os.path.join(root_dir, nm)
+                    try:
+                        os.remove(p)
+                        stats["removed_files"] += 1
+                    except Exception:
+                        stats["errors"] += 1
+    except Exception:
+        stats["errors"] += 1
+
+    # 5) 清理空目录
+    for base_dir in (_runtime_private_root(), _runtime_groups_root(), _theater_runtime_root()):
+        try:
+            for root_dir, dirs, _files in os.walk(base_dir, topdown=False):
+                for dn in dirs:
+                    dp = os.path.join(root_dir, dn)
+                    try:
+                        if os.path.isdir(dp) and (not os.listdir(dp)):
+                            os.rmdir(dp)
+                            stats["removed_dirs"] += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    return stats
+
+
+def _normalize_runtime_chat_scene_file_names() -> Dict[str, Any]:
+    stats = {"renamed": 0, "errors": 0}
+    root = _runtime_groups_root()
+    try:
+        for nm in os.listdir(root):
+            p = os.path.join(root, nm)
+            if not os.path.isfile(p):
+                continue
+            low = str(nm).lower()
+            if low.endswith(".index.json"):
+                ext = ".index.json"
+                base = nm[:-len(ext)]
+            elif low.endswith(".md"):
+                ext = ".md"
+                base = nm[:-len(ext)]
+            else:
+                continue
+            if not str(base).lower().startswith("group_"):
+                continue
+            new_base = str(base)[len("group_"):].strip()
+            if not new_base:
+                continue
+            dst = os.path.join(root, f"{new_base}{ext}")
+            if os.path.abspath(dst) == os.path.abspath(p):
+                continue
+            if os.path.exists(dst):
+                continue
+            try:
+                os.replace(p, dst)
+                stats["renamed"] += 1
+            except Exception:
+                stats["errors"] += 1
+    except Exception:
+        stats["errors"] += 1
+    return stats
+
+
+def _migrate_and_cleanup_runtime_chat_logs() -> Dict[str, Any]:
+    marker_path = os.path.join(_runtime_logs_dir(), ".temp_chat_layout_migration_v2.json")
+    if (not _has_legacy_runtime_chat_data()) and os.path.exists(marker_path):
+        return {"ok": True, "skipped": True, "msg": "no_legacy_data"}
+
+    migration = _migrate_legacy_temp_chat_to_runtime_logs()
+    normalize = _normalize_runtime_chat_scene_file_names()
+    cleanup = _cleanup_legacy_runtime_chat_logs()
+    result = {
+        "ok": True,
+        "migration": migration,
+        "normalize": normalize,
+        "cleanup": cleanup,
+        "finished_at": _now_str(),
+    }
+    try:
+        _write_json_atomic(marker_path, result)
+    except Exception:
+        pass
+    return result
 
 
 _PRIVATE_WINDOW_META_SUFFIX = ".meta.json"
@@ -14118,7 +16695,7 @@ def _parse_runtime_header_meta(header_line: str) -> Dict[str, Any]:
             out["time"] = tok
             continue
         tok_low = tok.lower()
-        if tok in {"私聊", "群聊", "本地", "private", "group", "local"} and (not out["scene"]):
+        if tok in {"私聊", "群聊", "剧场", "本地", "private", "group", "theater", "local"} and (not out["scene"]):
             out["scene"] = tok
             continue
         if "=" in tok:
@@ -14216,6 +16793,66 @@ def _load_private_chat_context_messages(
         return fallback or parsed
 
     uid = _safe_id_token(user_id, "anonymous")
+
+    # 群聊上下文使用 runtime_logs/groups/<group_id+group_name>.md 单写入主存。
+    # 兼容调用方仍传 group_ctx_<gid> 作为 user_id 的老接口。
+    if uid.lower().startswith("group_ctx_"):
+        gid = _temp_chat_group_id_from_inputs("", uid, chat_title)
+        aid_for_group = _normalize_agent_id(agent_id, _default_agent_id_from_config())
+        turns_group = _load_temp_chat_window_turns(
+            aid_for_group,
+            uid,
+            _normalize_chat_window_name(chat_title, f"group_{gid}"),
+            max_turns=max_turns or max(200, IDLE_WORKER_RECENT_TURN_LIMIT * 20),
+            scene="group",
+            chat_id=chat_id,
+            group_id=gid,
+        )
+        out_group: List[Dict[str, str]] = []
+        for turn in turns_group:
+            seq = max(1, safe_int((turn or {}).get("turn_id"), 1))
+            ts = str((turn or {}).get("time") or "").strip()
+            user_text = str((turn or {}).get("user_text") or "").strip()
+            assistant_text = str((turn or {}).get("assistant_text") or "").strip()
+            reasoning_text = str((turn or {}).get("reasoning_text") or "").strip()
+            user_speaker, user_content = _split_prefixed_speaker_text(user_text)
+            if user_content:
+                out_group.append(
+                    {
+                        "role": "user",
+                        "content": user_content,
+                        "time": ts,
+                        "index": seq,
+                        "scene": "群聊",
+                        "user_id": gid,
+                        "speaker_name": user_speaker or gid,
+                        "display_name": user_speaker or gid,
+                        "source_kind": "runtime",
+                        "chat_title": _normalize_chat_window_name(chat_title, f"group_{gid}"),
+                    }
+                )
+            ai_speaker, ai_content = _split_prefixed_speaker_text(assistant_text)
+            if ai_content:
+                row_ai: Dict[str, Any] = {
+                    "role": "ai",
+                    "content": ai_content,
+                    "time": ts,
+                    "index": seq,
+                    "scene": "群聊",
+                    "user_id": gid,
+                    "agent_id": aid_for_group,
+                    "agent_name": ai_speaker or aid_for_group,
+                    "speaker_name": ai_speaker or aid_for_group,
+                    "display_name": ai_speaker or aid_for_group,
+                    "source_kind": "runtime",
+                    "chat_title": _normalize_chat_window_name(chat_title, f"group_{gid}"),
+                }
+                if reasoning_text:
+                    row_ai["reasoning_text"] = reasoning_text
+                out_group.append(row_ai)
+        if out_group:
+            return out_group
+
     rec = _find_private_window_record(uid, chat_title, agent_id, chat_id=chat_id, window_stamp=window_stamp)
     if isinstance(rec, dict):
         rec_path = str(rec.get("path") or "").strip().lower()
@@ -14224,14 +16861,19 @@ def _load_private_chat_context_messages(
             agent_label = _agent_display_name(_get_agent_config(aid)) or aid
             rec_uid = _safe_id_token(rec.get("user_id"), uid)
             rec_window = _normalize_chat_window_name(rec.get("window_name") or rec.get("chat_title") or chat_title, _safe_fs_name(chat_title, "default"))
+            rec_scene = str(rec.get("scene") or "private").strip().lower() or "private"
             turns = _load_temp_chat_window_turns(
                 aid,
                 rec_uid,
                 rec_window,
                 max_turns=max_turns or max(200, IDLE_WORKER_RECENT_TURN_LIMIT * 20),
+                scene=rec_scene,
+                chat_id=chat_id or rec.get("chat_id"),
+                agent_name=rec.get("agent_name"),
+                user_name=rec.get("user_name"),
             )
             out_md: List[Dict[str, str]] = []
-            scene_text = str(rec.get("scene") or "private").strip().lower() or "private"
+            scene_text = rec_scene
             scene_label = "群聊" if scene_text == "group" else "私聊"
             for turn in turns:
                 seq = max(1, safe_int((turn or {}).get("turn_id"), 1))
@@ -14477,8 +17119,8 @@ def _runtime_group_dir(group_id: Any) -> str:
 
 
 def _runtime_group_chat_path(group_id: Any) -> str:
-    gid = _safe_id_token(group_id, "unknown_group")
-    return os.path.join(_runtime_group_dir(gid), f"group_{gid}.txt")
+    gid = _temp_chat_group_id_from_inputs(group_id, "", "")
+    return _temp_chat_group_file_path(gid, group_name=gid, ensure=False)
 
 
 def _runtime_group_summary_path(group_id: Any) -> str:
@@ -14521,50 +17163,73 @@ def _rename_private_chat_context_file(
     is_md_window = str(rec.get("source") or "").strip().lower() == "temp_chat" or str(rec.get("path") or "").strip().lower().endswith(".md")
     if is_md_window:
         old_window = _normalize_chat_window_name(rec.get("window_name") or rec.get("chat_title") or old_t, old_t)
-        src_dir = _temp_chat_window_dir(bound_agent, uid, old_window, ensure=False)
-        if (not os.path.isdir(src_dir)) and str(rec.get("path") or "").strip():
-            src_dir = os.path.dirname(os.path.abspath(str(rec.get("path") or "").strip()))
-        dst_dir = _temp_chat_window_dir(bound_agent, uid, new_t, ensure=True)
+        rec_agent_name = str(rec.get("agent_name") or "").strip()
+        rec_user_name = str(rec.get("user_name") or "").strip()
+        user_dir = _temp_chat_user_dir(
+            bound_agent,
+            uid,
+            ensure=True,
+            agent_name=rec_agent_name,
+            user_name=rec_user_name,
+        )
         out["agent_id"] = bound_agent
         out["chat_id"] = str(rec.get("chat_id") or out["chat_id"]).strip()
         out["window_stamp"] = _normalize_private_window_stamp(rec.get("window_stamp") or window_stamp, fallback=_private_window_now_stamp())
-        out["src"] = os.path.abspath(src_dir).replace("\\", "/")
-        out["dst"] = os.path.abspath(dst_dir).replace("\\", "/")
-        if not os.path.isdir(src_dir):
-            out["msg"] = "source_not_found_skip"
-            return out
+        out["src"] = os.path.abspath(user_dir).replace("\\", "/")
+        out["dst"] = os.path.abspath(user_dir).replace("\\", "/")
         try:
-            if os.path.abspath(src_dir) != os.path.abspath(dst_dir):
-                if not os.path.exists(dst_dir):
-                    os.replace(src_dir, dst_dir)
-                else:
-                    for name in os.listdir(src_dir):
-                        src_file = os.path.join(src_dir, name)
-                        if not os.path.isfile(src_file):
-                            continue
-                        dst_file = os.path.join(dst_dir, name)
-                        if os.path.exists(dst_file):
-                            stem, ext = os.path.splitext(name)
-                            suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                            dst_file = os.path.join(dst_dir, f"{stem}__merge_{suffix}{ext}")
-                        os.replace(src_file, dst_file)
-                    try:
-                        os.rmdir(src_dir)
-                    except Exception:
-                        pass
+            old_rows = _temp_chat_list_daily_files(
+                bound_agent,
+                uid,
+                old_window,
+                scene="private",
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
+            )
+            if not old_rows:
+                out["msg"] = "source_not_found_skip"
+                return out
 
-            # 统一重命名日期文件，确保文件名满足 <agent_user_window_date.md>
-            for row in _temp_chat_list_daily_files(bound_agent, uid, new_t):
+            for row in old_rows:
                 p = str(row.get("path") or "").strip()
                 d = str(row.get("date") or "").strip()
                 if (not p) or (not d):
                     continue
-                target_name = _temp_chat_file_name(bound_agent, uid, new_t, d)
-                dst_file = os.path.join(dst_dir, target_name)
+                target_name = _temp_chat_file_name(
+                    bound_agent,
+                    uid,
+                    new_t,
+                    d,
+                    scene="private",
+                )
+                dst_file = os.path.join(user_dir, target_name)
                 if os.path.abspath(p) != os.path.abspath(dst_file):
                     if os.path.exists(dst_file):
-                        continue
+                        stem, ext = os.path.splitext(target_name)
+                        suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        dst_file = os.path.join(user_dir, f"{stem}__merge_{suffix}{ext}")
                     os.replace(p, dst_file)
+
+            old_idx_path = _temp_chat_window_index_path(
+                bound_agent,
+                uid,
+                old_window,
+                scene="private",
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
+            )
+            new_idx_path = _temp_chat_window_index_path(
+                bound_agent,
+                uid,
+                new_t,
+                scene="private",
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
+            )
+            if os.path.exists(old_idx_path) and os.path.abspath(old_idx_path) != os.path.abspath(new_idx_path):
+                if os.path.exists(new_idx_path):
+                    os.remove(new_idx_path)
+                os.replace(old_idx_path, new_idx_path)
 
             idx = _load_temp_chat_window_index(
                 bound_agent,
@@ -14574,15 +17239,26 @@ def _rename_private_chat_context_file(
                 scene=str(rec.get("scene") or "").strip().lower(),
                 chat_id=str(rec.get("chat_id") or "").strip(),
                 window_stamp=out["window_stamp"],
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
             )
             idx["chat_title"] = new_t
             idx["window_name"] = new_t
             idx["agent_id"] = bound_agent
+            idx["agent_name"] = rec_agent_name or idx.get("agent_name") or bound_agent
             idx["user_id"] = uid
+            idx["user_name"] = rec_user_name or idx.get("user_name") or uid
             idx["chat_id"] = out["chat_id"]
             idx["window_stamp"] = out["window_stamp"]
             idx["last_updated"] = _now_str()
-            daily_rows = _temp_chat_list_daily_files(bound_agent, uid, new_t)
+            daily_rows = _temp_chat_list_daily_files(
+                bound_agent,
+                uid,
+                new_t,
+                scene="private",
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
+            )
             if daily_rows:
                 idx["last_log_date"] = str((daily_rows[-1] or {}).get("date") or idx.get("last_log_date") or "").strip()
                 idx["last_file"] = str((daily_rows[-1] or {}).get("path") or idx.get("last_file") or "").replace("\\", "/")
@@ -14670,25 +17346,70 @@ def _delete_private_chat_context_file(
     is_md_window = str(rec.get("source") or "").strip().lower() == "temp_chat" or str(rec.get("path") or "").strip().lower().endswith(".md")
     if is_md_window:
         window_name = _normalize_chat_window_name(rec.get("window_name") or rec.get("chat_title") or safe_title, safe_title)
-        source_dir = _temp_chat_window_dir(bound_agent, uid, window_name, ensure=False)
-        if (not os.path.isdir(source_dir)) and str(rec.get("path") or "").strip():
-            source_dir = os.path.dirname(os.path.abspath(str(rec.get("path") or "").strip()))
-        deleted_dir = _temp_chat_deleted_dir(bound_agent, uid, ensure=True)
+        rec_agent_name = str(rec.get("agent_name") or "").strip()
+        rec_user_name = str(rec.get("user_name") or "").strip()
+        user_dir = _temp_chat_user_dir(
+            bound_agent,
+            uid,
+            ensure=False,
+            agent_name=rec_agent_name,
+            user_name=rec_user_name,
+        )
+        deleted_dir = _temp_chat_deleted_dir(
+            bound_agent,
+            uid,
+            ensure=True,
+            agent_name=rec_agent_name,
+            user_name=rec_user_name,
+        )
+        src_rows = _temp_chat_list_daily_files(
+            bound_agent,
+            uid,
+            window_name,
+            scene="private",
+            agent_name=rec_agent_name,
+            user_name=rec_user_name,
+        )
         out["agent_id"] = bound_agent
         out["chat_id"] = str(rec.get("chat_id") or out["chat_id"]).strip()
         out["window_stamp"] = _normalize_private_window_stamp(rec.get("window_stamp") or window_stamp, fallback=_private_window_now_stamp())
-        out["path"] = os.path.abspath(source_dir).replace("\\", "/")
+        out["path"] = os.path.abspath(user_dir if user_dir else str(rec.get("path") or "")).replace("\\", "/")
         out["title"] = str(rec.get("chat_title") or safe_title).strip() or safe_title
-        if not os.path.isdir(source_dir):
+        if not src_rows:
             out["msg"] = "source_not_found_skip"
             return out
         try:
-            base_name = os.path.basename(source_dir.rstrip("\\/")) or window_name
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_name = _normalize_chat_window_name(window_name, safe_title)
             dst_dir = os.path.abspath(os.path.join(deleted_dir, f"{base_name}__deleted_{ts}"))
             if os.path.exists(dst_dir):
                 dst_dir = os.path.abspath(os.path.join(deleted_dir, f"{base_name}__deleted_{ts}_{safe_int(time.time(), 0)}"))
-            os.replace(source_dir, dst_dir)
+            os.makedirs(dst_dir, exist_ok=True)
+            for row in src_rows:
+                src_path = str(row.get("path") or "").strip()
+                if (not src_path) or (not os.path.isfile(src_path)):
+                    continue
+                dst_path = os.path.join(dst_dir, os.path.basename(src_path))
+                if os.path.exists(dst_path):
+                    stem, ext = os.path.splitext(os.path.basename(src_path))
+                    dst_path = os.path.join(dst_dir, f"{stem}__deleted_{ts}{ext}")
+                os.replace(src_path, dst_path)
+
+            idx_path = _temp_chat_window_index_path(
+                bound_agent,
+                uid,
+                window_name,
+                scene="private",
+                agent_name=rec_agent_name,
+                user_name=rec_user_name,
+            )
+            if os.path.exists(idx_path):
+                idx_dst = os.path.join(dst_dir, os.path.basename(idx_path))
+                if os.path.exists(idx_dst):
+                    stem, ext = os.path.splitext(os.path.basename(idx_path))
+                    idx_dst = os.path.join(dst_dir, f"{stem}__deleted_{ts}{ext}")
+                os.replace(idx_path, idx_dst)
+
             out["deleted_path"] = dst_dir.replace("\\", "/")
             out["msg"] = "moved_to_deleted"
             return out
@@ -16075,24 +18796,84 @@ def _run_layered_rag_search(
     top_k: int = 3,
 ) -> Dict[str, Any]:
     m = dict(meta or {})
-    if str(m.get("scene") or "").strip().lower() == "group":
+    try:
+        ch, owner = resolve_channel_owner(m)
+    except Exception:
+        ch, owner = ("", "")
+    if ch:
+        m["channel_type"] = ch
+        m["owner_id"] = owner
+
+    scene = str(m.get("scene") or "").strip().lower()
+    if scene not in {"private", "group", "theater"}:
+        if ch == "group":
+            scene = "group"
+        elif ch == "theater":
+            scene = "theater"
+        else:
+            scene = "private"
+    m["scene"] = scene
+
+    if scene == "group":
         if not safe_bool(m.get("group_memory_enabled"), True):
             return {"records": [], "text": "", "layers_used": []}
         if not safe_bool(m.get("allow_group_rag"), True):
             return {"records": [], "text": "", "layers_used": []}
+    if scene == "theater":
+        if not safe_bool(m.get("memory_enabled"), True):
+            return {"records": [], "text": "", "layers_used": []}
+        theater_id = _safe_theater_id(
+            m.get("theater_id") or m.get("theaterId") or m.get("owner_id"),
+            "theater_001",
+        )
+        m["theater_id"] = theater_id
+        m["channel_type"] = "theater"
+        m["owner_id"] = theater_id
+        owner_scoped_root = resolve_scoped_persist_dir(
+            THEATER_MEMORY_ROOT,
+            channel_type="theater",
+            owner_id=theater_id,
+        )
+        m["theater_memory_root"] = owner_scoped_root
+        m["theater_memory_path"] = owner_scoped_root
+        m["memory_root_theater"] = owner_scoped_root
+        # 剧场问答优先保证能回到“可解释命中”，向量 miss 时允许词法兜底。
+        m["force_lexical_fallback"] = True
+
     query_rows = [str(x or "").strip() for x in list(queries or []) if str(x or "").strip()]
     if not query_rows:
         return {"records": [], "text": "", "layers_used": []}
 
-    layer_plan: List[Tuple[Optional[str], str]] = [
-        ("vault", "金库层"),
-        ("bookshelf", "书架层"),
-        (None, "仓库层"),
-    ]
+    if scene == "theater":
+        allow_conv_fallback = bool(
+            safe_bool(m.get("rag_allow_conv_fallback"), False)
+            or safe_bool(m.get("allow_conv_fallback"), False)
+        )
+        layer_plan: List[Tuple[Optional[str], str]] = [
+            ("kb", "知识库层"),
+            ("bookshelf", "书架层"),
+            ("vault", "金库层"),
+            ("online", "在线层"),
+            (None, "仓库层"),
+        ]
+        if allow_conv_fallback:
+            layer_plan.append(("conv", "对话层"))
+        per_query_top_k = max(max(1, safe_int(top_k, 3)) * 6, 24)
+        per_query_max_chars = 2400
+    else:
+        layer_plan = [
+            ("vault", "金库层"),
+            ("bookshelf", "书架层"),
+            (None, "仓库层"),
+        ]
+        per_query_top_k = max(max(1, safe_int(top_k, 3)), 3)
+        per_query_max_chars = 1200
+
     collected: List[Any] = []
     layers_used: List[str] = []
     seen = set()
     safe_top_k = max(1, safe_int(top_k, 3))
+    lookback_days = MEM_LOOKBACK_DAYS if safe_int(MEM_LOOKBACK_DAYS, 0) > 0 else None
 
     for layer_key, layer_label in layer_plan:
         layer_hit = False
@@ -16101,22 +18882,22 @@ def _run_layered_rag_search(
                 rows = retrieve_chat_memory_records(
                     query=query,
                     meta=m,
-                    top_k=max(safe_top_k, 3),
-                    lookback_days=MEM_LOOKBACK_DAYS,
+                    top_k=per_query_top_k,
+                    lookback_days=lookback_days,
                     layer=layer_key,
-                    max_chars=1200,
+                    max_chars=per_query_max_chars,
                 )
             except Exception:
                 rows = []
-            if (not rows) and layer_key is None and safe_int(MEM_LOOKBACK_DAYS, 0) > 0:
+            if (not rows) and (lookback_days is not None):
                 try:
                     rows = retrieve_chat_memory_records(
                         query=query,
                         meta=m,
-                        top_k=max(safe_top_k, 3),
+                        top_k=per_query_top_k,
                         lookback_days=None,
-                        layer=None,
-                        max_chars=1200,
+                        layer=layer_key,
+                        max_chars=per_query_max_chars,
                     )
                 except Exception:
                     rows = []
@@ -17302,7 +20083,7 @@ def _build_light_chain_system_prompt(
             if str(block or "").strip():
                 lines.append(str(block).strip())
 
-    lines.append("【本轮用户提问】\n" + str(user_input or "").strip())
+    # 当前轮次的用户问题只通过 user role 传入，避免 system + user 双注入造成“重复输入”误判。
 
     if planning_mode:
         lines.append(_build_light_tool_spec_text(tool_specs, meta=m))
@@ -18322,6 +21103,193 @@ def _apply_group_route_context(
     }
 
 
+def _theater_chat_response(
+    data: Dict[str, Any],
+    user_input: str,
+    meta: Dict[str, Any],
+    ctx_user_id: Any = "",
+    ctx_role: Any = "user",
+    ctx_nickname: Any = "",
+):
+    payload = data if isinstance(data, dict) else {}
+    upstream_meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    req_meta = dict(meta or {})
+    req_meta.update(upstream_meta if isinstance(upstream_meta, dict) else {})
+
+    theater_id_raw = (
+        payload.get("theater_id")
+        or payload.get("theaterId")
+        or req_meta.get("theater_id")
+        or req_meta.get("theaterId")
+        or req_meta.get("scene_id")
+        or ""
+    )
+    scene_raw = str(req_meta.get("scene") or "").strip().lower()
+    if (not theater_id_raw) and scene_raw.startswith("theater:"):
+        theater_id_raw = scene_raw.split(":", 1)[1].strip()
+    if (not theater_id_raw) and scene_raw.startswith("theater_"):
+        theater_id_raw = scene_raw
+    theater_id = _safe_theater_id(theater_id_raw, "")
+    if not theater_id:
+        return jsonify({"ok": False, "msg": "theater_id is required", "reply": "❌ 缺少 theater_id"}), 400
+
+    theater_cfg_raw = _get_theater_config(theater_id)
+    if not isinstance(theater_cfg_raw, dict):
+        return jsonify({"ok": False, "msg": f"theater_not_found: {theater_id}", "reply": "❌ theater 不存在"}), 404
+    theater_cfg = _normalize_theater_config(theater_cfg_raw)
+    if not safe_bool(theater_cfg.get("enabled"), True):
+        return jsonify({"ok": False, "msg": f"theater_disabled: {theater_id}", "reply": "❌ 当前 theater 已禁用"}), 200
+
+    session_id = _safe_theater_session_id(
+        payload.get("session_id")
+        or payload.get("sessionId")
+        or req_meta.get("session_id")
+        or req_meta.get("sessionId")
+        or req_meta.get("chat_id")
+        or req_meta.get("window_stamp")
+        or "",
+        theater_id,
+    )
+    session_name = (
+        payload.get("session_name")
+        or payload.get("sessionName")
+        or req_meta.get("chat_title")
+        or req_meta.get("session_name")
+        or req_meta.get("chat_name")
+        or f"会话 {session_id}"
+    )
+    session_row = _upsert_theater_session(theater_id, session_id, session_name)
+
+    user_id = str(
+        req_meta.get("user_id")
+        or payload.get("user_id")
+        or payload.get("userId")
+        or payload.get("qq")
+        or ctx_user_id
+        or "anonymous"
+    ).strip() or "anonymous"
+    role = "admin" if str(ctx_role or "").strip().lower() == "admin" else "user"
+    sender_name = _clean_display_name(req_meta.get("sender_name") or ctx_nickname or "")
+    nickname = _clean_display_name(req_meta.get("nickname") or ctx_nickname or sender_name or "")
+    if not sender_name:
+        sender_name = nickname or user_id
+    if not nickname:
+        nickname = sender_name or user_id
+
+    agent_id = _resolve_request_agent_id(payload, req_meta)
+    agent_cfg = _get_agent_config(agent_id)
+
+    merged_meta = dict(req_meta or {})
+    merged_meta.update(
+        {
+            "scene": "theater",
+            "theater_id": theater_id,
+            "channel_type": "theater",
+            "owner_id": theater_id,
+            "group_id": "",
+            "chat_id": session_id,
+            "session_id": session_id,
+            "chat_title": str((session_row or {}).get("name") or session_name or session_id).strip() or session_id,
+            "window_stamp": session_id,
+            "user_id": user_id,
+            "role": role,
+            "sender_name": sender_name,
+            "nickname": nickname,
+            "agent_id": agent_id,
+            "context_turn_n": safe_int(theater_cfg.get("context_turn_n"), 8),
+            "memory_enabled": safe_bool(theater_cfg.get("memory_enabled"), True),
+            "tool_enabled": safe_bool(theater_cfg.get("tool_enabled"), False),
+            "web_search_enabled": safe_bool(theater_cfg.get("web_search_enabled"), False),
+            "web_search_mode": "default" if safe_bool(theater_cfg.get("web_search_enabled"), False) else "off",
+            "file_tools_enabled": safe_bool(theater_cfg.get("file_tools_enabled"), False),
+        }
+    )
+    merged_meta["profile_user_id"] = _profile_user_id_for_ctx(user_id, scene="theater", group_id="")
+    merged_meta = _apply_agent_context(merged_meta, agent_cfg)
+
+    try:
+        reply_pack = _theater_reply_once(
+            user_input=user_input,
+            meta=merged_meta,
+            theater_cfg=theater_cfg,
+            agent_cfg=agent_cfg,
+        )
+    except Exception as e:
+        try:
+            print(f"[theater chat error] {e}")
+        except Exception:
+            pass
+        return jsonify({"ok": False, "msg": str(e), "reply": "❌ 剧场模式生成失败"}), 500
+
+    reply = clean_reply_text(str((reply_pack or {}).get("reply") or "").strip())
+    reasoning_text = str((reply_pack or {}).get("reasoning_text") or "").strip()
+    if not reply:
+        reply = "（剧场模式返回空回复）"
+
+    _upsert_theater_session(theater_id, session_id, str((session_row or {}).get("name") or session_name or session_id))
+
+    skip_save_for_alert = _should_skip_error_turn_persist(reply) or _should_skip_error_turn_persist(user_input)
+    if skip_save_for_alert:
+        memory_meta = {"strip_added": False, "profile_updated": False}
+    else:
+        memory_meta = _post_reply_housekeeping(
+            user_input=user_input,
+            reply=reply,
+            meta=merged_meta,
+            user_ctx_segments={},
+            reasoning_text=reasoning_text,
+        )
+
+    call_meta = _get_last_call_meta()
+    reply_source = ""
+    reply_note = ""
+    try:
+        if call_meta.get("fallback_used") and str(call_meta.get("final_provider") or "").strip().lower() == "ollama":
+            reply_source = "ollama_fallback"
+            reply_note = "本次回复由 Ollama 本地模型完成（NEW API 限流回退）"
+    except Exception:
+        reply_source = ""
+        reply_note = ""
+
+    prompt_meta = dict((reply_pack or {}).get("prompt_meta") or {})
+    theater_rag_debug = dict(prompt_meta.get("memory_debug") or {}) if isinstance(prompt_meta.get("memory_debug"), dict) else {}
+    try:
+        print(
+            "[theater rag] "
+            f"theater_id={theater_id} "
+            f"hits={safe_int(theater_rag_debug.get('hit_count'), 0)} "
+            f"layers={','.join([str(x) for x in list(theater_rag_debug.get('layers_used') or [])])}"
+        )
+    except Exception:
+        pass
+
+    resp_meta: Dict[str, Any] = {
+        "scene": "theater",
+        "theater_id": theater_id,
+        "session_id": session_id,
+        "memory": memory_meta,
+        "theater_config": theater_cfg,
+    }
+    if theater_rag_debug:
+        resp_meta["theater_rag"] = theater_rag_debug
+    if reasoning_text:
+        resp_meta["reasoning"] = {"text": reasoning_text}
+    return (
+        jsonify(
+            {
+                "ok": True,
+                "reply": reply,
+                "reply_source": reply_source,
+                "reply_note": reply_note,
+                "selected_agent_id": str(merged_meta.get("agent_id") or agent_id or "").strip(),
+                "reply_agent_id": str(merged_meta.get("agent_id") or agent_id or "").strip(),
+                "meta": resp_meta,
+            }
+        ),
+        200,
+    )
+
+
 # ========= 简易聊天接口（/chat）默认非流式，兼容第三方桥接客户端 =========
 @app.route("/chat", methods=["POST"])
 def chat_post():
@@ -18333,6 +21301,14 @@ def chat_post():
         upstream_meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         # 兼容其他上游：把常见字段也合并进 meta
         group_id = data.get("group_id") or data.get("groupId") or upstream_meta.get("group_id") or upstream_meta.get("groupId") or ""
+        theater_id = (
+            data.get("theater_id")
+            or data.get("theaterId")
+            or upstream_meta.get("theater_id")
+            or upstream_meta.get("theaterId")
+            or upstream_meta.get("scene_id")
+            or ""
+        )
         payload_user_id = data.get("user_id") or data.get("userId") or data.get("qq") or upstream_meta.get("user_id") or upstream_meta.get("userId") or ""
         payload_nickname = data.get("nickname") or data.get("name") or upstream_meta.get("sender_name") or upstream_meta.get("nickname") or ""
         user_id = str(payload_user_id or ctx_user_id or "").strip()
@@ -18386,7 +21362,24 @@ def chat_post():
         web_top_k = safe_int(upstream_meta.get("web_top_k", data.get("web_top_k")), 6)
 
         # scene：优先用上游 meta 的明确值
-        scene = upstream_meta.get("scene") or ("group" if str(group_id).strip() else "private")
+        scene_raw = upstream_meta.get("scene") or ("theater" if str(theater_id).strip() else ("group" if str(group_id).strip() else "private"))
+        scene_raw = str(scene_raw or "").strip()
+        scene_lower = scene_raw.lower()
+        if scene_lower.startswith("theater:"):
+            scene = "theater"
+            if not str(theater_id).strip():
+                theater_id = scene_raw.split(":", 1)[1].strip()
+        elif scene_lower.startswith("theater_"):
+            scene = "theater"
+            if not str(theater_id).strip():
+                theater_id = scene_raw
+        elif scene_lower == "theater":
+            scene = "theater"
+        elif scene_lower == "group":
+            scene = "group"
+        else:
+            scene = "private"
+
         if str(scene).strip().lower() == "group":
             sender_uid_hint = str(
                 upstream_meta.get("sender_user_id")
@@ -18402,6 +21395,7 @@ def chat_post():
             **(upstream_meta if isinstance(upstream_meta, dict) else {}),
             "scene": str(scene).strip(),
             "group_id": str(group_id).strip(),
+            "theater_id": str(theater_id).strip(),
             "user_id": str(user_id or "anonymous").strip(),
             "role": "admin" if str(ctx_role).strip().lower() == "admin" else "user",
             "sender_name": str(sender_name).strip() or str(user_id or "anonymous"),
@@ -18492,6 +21486,19 @@ def chat_post():
                     break
         if not user_input:
             return jsonify({"reply": "❌ Empty input"}), 400
+
+        if str(meta.get("scene") or "").strip().lower() == "theater":
+            _admin_uid, err = _require_admin_session()
+            if err is not None:
+                return err
+            return _theater_chat_response(
+                data=data if isinstance(data, dict) else {},
+                user_input=user_input,
+                meta=meta,
+                ctx_user_id=ctx_user_id,
+                ctx_role=ctx_role,
+                ctx_nickname=ctx_nickname,
+            )
 
         group_route_ctx = _apply_group_route_context(
             data=data if isinstance(data, dict) else {},
@@ -19126,6 +22133,34 @@ def call_model(
     active_newapi_model = str(model_override if (provider == "newapi" and model_override not in (None, "")) else NEWAPI_MODEL or "").strip()
     active_ollama_base_url = str(base_url_override if (provider == "ollama" and base_url_override not in (None, "")) else OLLAMA_BASE_URL or "").strip()
     active_ollama_model = str(model_override if (provider == "ollama" and model_override not in (None, "")) else MODEL_NAME or "").strip()
+
+    def _sanitize_ollama_runtime_base_url(raw_base: Any) -> str:
+        requested = str(raw_base or "").strip()
+        default_base = str(OLLAMA_BASE_URL or "").strip()
+        requested_norm = _normalize_ollama_base(requested or default_base)
+        default_norm = _normalize_ollama_base(default_base)
+        newapi_norm = _normalize_ollama_base(str(NEWAPI_BASE_URL or "").strip())
+        low_requested = requested.lower()
+
+        # 防误配：provider=ollama 但把 NEWAPI 域名填进了 base_url，会被拼成 /api/chat 导致 404。
+        if newapi_norm and requested_norm and requested_norm == newapi_norm:
+            try:
+                print(
+                    f"[OLLAMA base warn] provider=ollama but base_url points to NEWAPI "
+                    f"({requested}); fallback={default_norm or default_base}"
+                )
+            except Exception:
+                pass
+            return default_norm or default_base or requested_norm
+
+        # 明显是 OpenAI/newapi 路径时也兜底到本地默认 Ollama 地址。
+        if "/chat/completions" in low_requested or "/responses" in low_requested:
+            return default_norm or default_base or requested_norm
+
+        return requested_norm or default_norm or default_base
+
+    if provider == "ollama":
+        active_ollama_base_url = _sanitize_ollama_runtime_base_url(active_ollama_base_url)
     try:
         local_request_timeout_s = max(1, min(int(MAX_REQUEST_SECONDS), int(math.ceil(float(request_timeout_s)))))
     except Exception:
@@ -19937,6 +22972,8 @@ def call_model(
     base = active_ollama_base_url.rstrip("/").replace("/v1", "")
     chat_url = f"{base}/api/chat"
     gen_url  = f"{base}/api/generate"
+    default_base = _normalize_ollama_base(str(OLLAMA_BASE_URL or "").strip()).rstrip("/")
+    fallback_chat_url = f"{default_base}/api/chat" if default_base else ""
 
     def _gen_fallback_with_generate(msgs):
         sys_txt = "\n".join([_flatten_msg_content(m.get("content")) for m in msgs if m.get("role")=="system"]).strip()
@@ -19979,9 +23016,10 @@ def call_model(
         def _gen():
             got = False
             reasoning_chunks: List[str] = []
+            runtime_chat_url = chat_url
             try:
                 with requests.post(
-                    chat_url,
+                    runtime_chat_url,
                     json=payload,
                     stream=True,
                     timeout=(max(1, min(local_connect_timeout_s, _remaining_request_budget_s())), _remaining_request_budget_s()),
@@ -20019,11 +23057,23 @@ def call_model(
                             got = True
                             yield chunk
             except Exception as e:
-                yield f"❌ Streaming call failed: {e}"
+                status = _http_status_from_exc(e)
+                if status in {404, 405} and fallback_chat_url and (fallback_chat_url != runtime_chat_url):
+                    try:
+                        print(
+                            f"[OLLAMA auto-fallback] chat endpoint 404/405 at {runtime_chat_url}, "
+                            f"retry with {fallback_chat_url}"
+                        )
+                    except Exception:
+                        pass
+                    runtime_chat_url = fallback_chat_url
+                else:
+                    yield f"❌ Streaming call failed: {e}"
+                    runtime_chat_url = runtime_chat_url
 
             if not got:
                 try:
-                    r = requests.post(chat_url, json={**payload, "stream": False}, timeout=_remaining_request_budget_s())
+                    r = requests.post(runtime_chat_url, json={**payload, "stream": False}, timeout=_remaining_request_budget_s())
                     r.raise_for_status()
                     data = r.json()
                     reasoning_hint = _normalize_reasoning_text(
@@ -20046,8 +23096,25 @@ def call_model(
         return _gen()
 
     try:
-        r = requests.post(chat_url, json=payload, timeout=_remaining_request_budget_s())
-        r.raise_for_status()
+        runtime_chat_url = chat_url
+        try:
+            r = requests.post(runtime_chat_url, json=payload, timeout=_remaining_request_budget_s())
+            r.raise_for_status()
+        except Exception as e:
+            status = _http_status_from_exc(e)
+            if status in {404, 405} and fallback_chat_url and (fallback_chat_url != runtime_chat_url):
+                try:
+                    print(
+                        f"[OLLAMA auto-fallback] chat endpoint 404/405 at {runtime_chat_url}, "
+                        f"retry with {fallback_chat_url}"
+                    )
+                except Exception:
+                    pass
+                runtime_chat_url = fallback_chat_url
+                r = requests.post(runtime_chat_url, json=payload, timeout=_remaining_request_budget_s())
+                r.raise_for_status()
+            else:
+                raise
         data = r.json()
         reasoning_hint = _normalize_reasoning_text(
             (data.get("message") or {}).get("thinking")
@@ -20155,9 +23222,10 @@ def read_file_auto(rel_or_name: str) -> str:
 
 
 # ============================================================
-# 18. 聊天落盘（私聊/群聊分流 + 每群一个文件）
-#   - 私聊：runtime_logs/private/<user_id>/<user_id>_<chat_title>.txt
-#   - 群聊：runtime_logs/groups/<group_id>/group_<group_id>.txt
+# 18. 聊天落盘（统一 runtime_logs 主存）
+#   - 私聊：runtime_logs/private/<agent_id+agent_name>/<user_id+user_name>/<date+window>.md
+#   - 群聊：runtime_logs/groups/<group_id+group_name>.md
+#   - 剧场：runtime_logs/theater/<theater_id+theater_name>.md
 # ============================================================
 def _now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -20167,6 +23235,8 @@ def _scene_label(meta: dict) -> str:
     scene = str(scene).strip().lower()
     if scene == "group":
         return "群聊"
+    if scene == "theater":
+        return "剧场"
     if scene == "private":
         return "私聊"
     return "未知场景"
@@ -20227,11 +23297,9 @@ def _pick_assistant_name(meta: dict) -> str:
 def save_chat(user_text: str, assistant_text: str, meta=None):
     """
     统一写入（主存为 Markdown）：
-    - temp_chat/<agent>/<user>/<window>/<agent_user_window_yyyy-mm-dd.md>
+    - runtime_logs/private|groups|theater（不再双写旧 txt/jsonl）
     - 逻辑日期切分点固定为 03:00
-    - Turn 编号按同一窗口连续递增（跨日期不重置）
-
-    兼容：群聊会额外保留旧 runtime_logs/groups/*.txt 追加，避免既有能力断裂。
+    - Turn 编号按同一窗口连续递增
     """
     try:
         meta = meta or {}
@@ -20241,32 +23309,54 @@ def save_chat(user_text: str, assistant_text: str, meta=None):
         _temp_chat_root()
 
         ts = _now_str()
-        scene = _scene_label(meta)
         scene_key = str(meta.get("scene") or meta.get("message_type") or "").strip().lower()
         group_id = str(meta.get("group_id") or "").strip()
         user_id  = str(meta.get("user_id")  or "").strip() or "anonymous"
         chat_title = _chat_title_from_meta(meta)
         chat_id = str(meta.get("chat_id") or "").strip()
         agent_id = _resolve_request_agent_id(meta, meta)
+        agent_name = _agent_display_name(_get_agent_config(agent_id)) or agent_id
         who = _pick_display_name(meta)
         bot = _pick_assistant_name(meta)
         reasoning_text = str(meta.get("reasoning_text") or meta.get("assistant_reasoning") or "").strip()
 
-        def _build_chat_header(turn_index: int = 0) -> str:
-            head_parts: List[str] = []
-            if turn_index > 0:
-                head_parts.append(f"[{turn_index}]")
-            head_parts.extend([f"[{ts}]", f"[{scene}]"])
-            if group_id:
-                head_parts.append(f"[group_id={group_id}]")
-            if user_id:
-                head_parts.append(f"[user_id={user_id}]")
-            head_parts.append(f"[{who}]")
-            return " ".join(head_parts)
-
         # 1) Markdown 主存：按 agent/user/window/date 归档 + 窗口级连续 Turn
-        if scene_key == "group" and group_id:
+        if scene_key == "theater":
+            theater_id = _safe_theater_id(
+                meta.get("theater_id") or meta.get("owner_id") or meta.get("scene_id") or "theater_001",
+                "theater_001",
+            )
+            theater_cfg = _load_theater_config(theater_id) or {}
+            theater_name = str(meta.get("theater_name") or meta.get("scene_name") or theater_cfg.get("name") or theater_id).strip() or theater_id
+            session_id = _safe_theater_session_id(
+                chat_id or meta.get("session_id") or meta.get("window_stamp") or meta.get("chat_title") or "",
+                theater_id,
+            )
+            session_name = str(meta.get("chat_title") or meta.get("session_name") or meta.get("chat_name") or session_id).strip() or session_id
+            _append_temp_chat_turn(
+                agent_id=_theater_temp_chat_agent_id(),
+                user_id=_theater_temp_chat_user_id(theater_id),
+                window_name=_theater_temp_chat_window_name(theater_id, session_id),
+                scene="theater",
+                user_text=str(user_text or "").strip(),
+                assistant_text=str(assistant_text or "").strip(),
+                chat_title=session_name,
+                chat_id=session_id,
+                window_stamp=meta.get("window_stamp") or session_id,
+                reasoning_text=reasoning_text,
+                ts_text=ts,
+                agent_name=agent_name,
+                user_name=who,
+                theater_id=theater_id,
+                theater_name=theater_name,
+            )
+            try:
+                _upsert_theater_session(theater_id, session_id, session_name)
+            except Exception:
+                pass
+        elif scene_key == "group" and group_id:
             window_name = f"group_{_safe_id_token(group_id, 'unknown_group')}"
+            group_name = str(meta.get("group_name") or meta.get("group_title") or group_id).strip() or group_id
             group_user_text = str(user_text or "").strip()
             if str(who or "").strip():
                 group_user_text = f"{who}: {group_user_text}".strip()
@@ -20285,20 +23375,10 @@ def save_chat(user_text: str, assistant_text: str, meta=None):
                 window_stamp=meta.get("window_stamp"),
                 reasoning_text=reasoning_text,
                 ts_text=ts,
-            )
-            # 群上下文聚合窗口（用于常规回复读取群最近上下文）
-            _append_temp_chat_turn(
-                agent_id=agent_id,
-                user_id=f"group_ctx_{_safe_id_token(group_id, 'unknown_group')}",
-                window_name=window_name,
-                scene="group",
-                user_text=group_user_text,
-                assistant_text=group_assistant_text,
-                chat_title=window_name,
-                chat_id=chat_id,
-                window_stamp=meta.get("window_stamp"),
-                reasoning_text=reasoning_text,
-                ts_text=ts,
+                agent_name=agent_name,
+                user_name=who,
+                group_id=group_id,
+                group_name=group_name,
             )
         else:
             if scene_key == "private":
@@ -20318,23 +23398,11 @@ def save_chat(user_text: str, assistant_text: str, meta=None):
                 window_stamp=meta.get("window_stamp"),
                 reasoning_text=reasoning_text,
                 ts_text=ts,
+                agent_name=agent_name,
+                user_name=who,
             )
 
-        # 2) 群聊兼容写入旧 txt（非主存）
-        if scene_key == "group" and group_id:
-            separator = f"{'-'*60}\n"
-            header = _build_chat_header(0)
-            block = (
-                f"{header}\n"
-                f"{who}: {str(user_text).strip()}\n"
-                f"{bot}: {str(assistant_text).strip()}\n"
-                f"{separator}"
-            )
-            g = _runtime_group_chat_path(group_id)
-            with open(g, "a", encoding="utf-8") as f:
-                f.write(block)
-
-        # 3) 在线长期记忆：JSONL + 多租户向量库（查重 + 命中强化）
+        # 2) 在线长期记忆：JSONL + 多租户向量库（查重 + 命中强化）
         try:
             _persist_online_memory(user_text, assistant_text, meta)
         except Exception as e:
@@ -20889,8 +23957,9 @@ def extract_scene_from_request(data: dict) -> dict:
     #兼容字段：group_id / user_id / sender / chat_type / message_type / session_id / meta 等。
 
     #返回字段（统一格式）：
-    #- scene: "private" / "group"
+    #- scene: "private" / "group" / "theater"
     #- group_id: str
+    #- theater_id: str
     #- user_id: str
     #- nickname: str         # 发言者昵称（用于日志显示）
     #- sender_name: str      # 兼容旧字段（等同 nickname）
@@ -20907,6 +23976,12 @@ def extract_scene_from_request(data: dict) -> dict:
         data = merged
 
     group_id = data.get("group_id") or data.get("groupId") or ""
+    theater_id = (
+        data.get("theater_id")
+        or data.get("theaterId")
+        or data.get("scene_id")
+        or ""
+    )
     user_id  = ctx_user_id or data.get("user_id") or data.get("userId") or data.get("qq") or ""
 
     # sender / nickname
@@ -20923,10 +23998,20 @@ def extract_scene_from_request(data: dict) -> dict:
     session_id = str(data.get("session_id") or data.get("sessionId") or "")
 
     # 推断场景
-    if str(group_id).strip():
+    if str(theater_id).strip():
+        scene = "theater"
+    elif chat_type.startswith("theater:") or chat_type.startswith("theater_") or chat_type == "theater":
+        scene = "theater"
+        if (not str(theater_id).strip()) and ":" in chat_type:
+            theater_id = chat_type.split(":", 1)[1].strip()
+        elif not str(theater_id).strip() and chat_type.startswith("theater_"):
+            theater_id = chat_type
+    elif str(group_id).strip():
         scene = "group"
     elif chat_type in ("group", "private"):
         scene = chat_type
+    elif "theater" in session_id.lower():
+        scene = "theater"
     elif "group" in session_id.lower():
         scene = "group"
     else:
@@ -20944,6 +24029,7 @@ def extract_scene_from_request(data: dict) -> dict:
         "scene": scene,
         "message_type": scene,  # 给旧逻辑兼容
         "group_id": str(group_id).strip(),
+        "theater_id": str(theater_id).strip(),
         "user_id": str(user_id).strip() or "anonymous",
         "role": "admin" if str(ctx_role).strip().lower() == "admin" else "user",
         "nickname": str(nickname).strip() or str(user_id).strip() or "anonymous",
@@ -24799,6 +27885,253 @@ def tools_save_group_settings():
         return jsonify({"ok": False, "msg": str(e)}), 200
 
 
+@app.route("/theater/config/list", methods=["GET", "OPTIONS"])
+def theater_config_list():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        _ensure_theater_storage()
+        cards_doc = _load_theater_cards_doc()
+        worldbooks_doc = _load_theater_worldbooks_doc()
+        presets_doc = _load_theater_prompt_presets_doc()
+        regex_doc = _load_theater_regex_doc()
+        return jsonify(
+            {
+                "ok": True,
+                "theaters": _list_theater_configs(),
+                "character_cards": list(cards_doc.get("items") or []),
+                "worldbooks": list(worldbooks_doc.get("items") or []),
+                "prompt_presets": list(presets_doc.get("items") or []),
+                "regex_rule_library": list(regex_doc.get("items") or []),
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] theater_config_list:", e)
+        return jsonify({"ok": False, "msg": str(e), "theaters": []}), 200
+
+
+@app.route("/theater/config/get", methods=["GET", "OPTIONS"])
+def theater_config_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        req_payload = request.args.to_dict(flat=True) if request.args else {}
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        theater_id = _safe_theater_id((req_payload or {}).get("theater_id"), "")
+        if not theater_id:
+            return jsonify({"ok": False, "msg": "theater_id is empty"}), 200
+        row = _get_theater_config(theater_id)
+        if not isinstance(row, dict):
+            return jsonify({"ok": False, "msg": "theater_not_found"}), 200
+        cards_doc = _load_theater_cards_doc()
+        worldbooks_doc = _load_theater_worldbooks_doc()
+        presets_doc = _load_theater_prompt_presets_doc()
+        regex_doc = _load_theater_regex_doc()
+        return jsonify(
+            {
+                "ok": True,
+                "config": row,
+                "character_cards": list(cards_doc.get("items") or []),
+                "worldbooks": list(worldbooks_doc.get("items") or []),
+                "prompt_presets": list(presets_doc.get("items") or []),
+                "regex_rule_library": list(regex_doc.get("items") or []),
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] theater_config_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/theater/config/save", methods=["POST", "OPTIONS"])
+def theater_config_save():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(silent=True) or {}
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        payload = data if isinstance(data, dict) else {}
+        config_payload = payload.get("config") if isinstance(payload.get("config"), dict) else payload
+        theater_id = _safe_theater_id(
+            (config_payload or {}).get("theater_id")
+            or payload.get("theater_id")
+            or payload.get("theaterId"),
+            "",
+        )
+        if not theater_id:
+            return jsonify({"ok": False, "msg": "theater_id is empty"}), 200
+        config_payload = dict(config_payload or {})
+        config_payload["theater_id"] = theater_id
+
+        all_theater_ids: List[str] = []
+        all_theater_ids_raw = payload.get("all_theater_ids")
+        has_all_theater_ids = isinstance(all_theater_ids_raw, list)
+        if has_all_theater_ids:
+            seen_ids = set()
+            for item in all_theater_ids_raw:
+                tid_item = _safe_theater_id(item, "")
+                if (not tid_item) or tid_item in seen_ids:
+                    continue
+                seen_ids.add(tid_item)
+                all_theater_ids.append(tid_item)
+        if has_all_theater_ids and theater_id and theater_id not in all_theater_ids:
+            all_theater_ids.append(theater_id)
+
+        saved_doc = _upsert_theater_config(config_payload)
+        deleted_theater_cleanup: Dict[str, Any] = {}
+        if has_all_theater_ids and all_theater_ids:
+            keep_set = set([x for x in all_theater_ids if x])
+            existing_ids = [
+                _safe_theater_id((row or {}).get("theater_id"), "")
+                for row in list(saved_doc.get("theaters") or [])
+            ]
+            remove_ids = [x for x in existing_ids if x and (x not in keep_set)]
+            if remove_ids:
+                deleted_theater_cleanup = _remove_theaters_and_cleanup(remove_ids)
+                saved_doc = _load_theater_registry()
+        saved_row = _get_theater_config(theater_id) or _normalize_theater_config(config_payload)
+
+        if "character_cards" in payload:
+            cards_src = list(payload.get("character_cards") or []) if isinstance(payload.get("character_cards"), list) else []
+            cards_doc = {"version": 1, "items": [_normalize_theater_card_item(x, i) for i, x in enumerate(cards_src)]}
+            _write_json_atomic(THEATER_CHARACTER_CARDS_FILE, cards_doc)
+        if "worldbooks" in payload:
+            worldbooks_src = list(payload.get("worldbooks") or []) if isinstance(payload.get("worldbooks"), list) else []
+            worldbooks_doc = {"version": 1, "items": [_normalize_theater_worldbook_item(x, i) for i, x in enumerate(worldbooks_src)]}
+            _write_json_atomic(THEATER_WORLDBOOKS_FILE, worldbooks_doc)
+        if "prompt_presets" in payload:
+            presets_src = list(payload.get("prompt_presets") or []) if isinstance(payload.get("prompt_presets"), list) else []
+            presets_doc = {"version": 1, "items": [_normalize_theater_prompt_preset_item(x, i) for i, x in enumerate(presets_src)]}
+            _write_json_atomic(THEATER_PROMPT_PRESETS_FILE, presets_doc)
+        if "regex_rule_library" in payload:
+            regex_doc = _normalize_theater_regex_library_doc(payload.get("regex_rule_library"))
+            _write_json_atomic(THEATER_REGEX_RULES_FILE, regex_doc)
+
+        cards_doc = _load_theater_cards_doc()
+        worldbooks_doc = _load_theater_worldbooks_doc()
+        presets_doc = _load_theater_prompt_presets_doc()
+        regex_doc = _load_theater_regex_doc()
+        return jsonify(
+            {
+                "ok": True,
+                "config": saved_row,
+                "theaters": list(saved_doc.get("theaters") or []),
+                "character_cards": list(cards_doc.get("items") or []),
+                "worldbooks": list(worldbooks_doc.get("items") or []),
+                "prompt_presets": list(presets_doc.get("items") or []),
+                "regex_rule_library": list(regex_doc.get("items") or []),
+                "deleted_theater_cleanup": deleted_theater_cleanup,
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] theater_config_save:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/theater/sessions", methods=["GET", "OPTIONS"])
+def theater_sessions():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        req_payload = request.args.to_dict(flat=True) if request.args else {}
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        theater_id = _safe_theater_id((req_payload or {}).get("theater_id"), "") if str((req_payload or {}).get("theater_id") or "").strip() else ""
+        sessions = _list_theater_sessions(theater_id)
+        return jsonify({"ok": True, "sessions": sessions}), 200
+    except Exception as e:
+        print("[ERROR] theater_sessions:", e)
+        return jsonify({"ok": False, "msg": str(e), "sessions": []}), 200
+
+
+@app.route("/theater/session/create", methods=["POST", "OPTIONS"])
+def theater_session_create():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(silent=True) or {}
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        payload = data if isinstance(data, dict) else {}
+        theater_id = _safe_theater_id(payload.get("theater_id") or payload.get("theaterId"), "")
+        if not theater_id:
+            return jsonify({"ok": False, "msg": "theater_id is empty"}), 200
+        session = _upsert_theater_session(
+            theater_id=theater_id,
+            session_id=payload.get("session_id") or payload.get("sessionId") or "",
+            name=payload.get("name") or payload.get("session_name") or payload.get("sessionName") or "",
+        )
+        return jsonify({"ok": True, "session": session, "sessions": _list_theater_sessions(theater_id)}), 200
+    except Exception as e:
+        print("[ERROR] theater_session_create:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/theater/session/delete", methods=["POST", "OPTIONS"])
+def theater_session_delete():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(silent=True) or {}
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        payload = data if isinstance(data, dict) else {}
+        theater_id = _safe_theater_id(payload.get("theater_id") or payload.get("theaterId"), "")
+        session_id = str(payload.get("session_id") or payload.get("sessionId") or "").strip()
+        if (not theater_id) or (not session_id):
+            return jsonify({"ok": False, "msg": "theater_id/session_id is empty"}), 200
+        ret = _delete_theater_session(theater_id, session_id)
+        return jsonify(
+            {
+                **ret,
+                "sessions": _list_theater_sessions(theater_id),
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] theater_session_delete:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/theater/chat", methods=["POST", "OPTIONS"])
+def theater_chat_post():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        _admin_uid, err = _require_admin_session()
+        if err is not None:
+            return err
+        data = request.get_json(force=True, silent=True) or {}
+        ctx_user_id, ctx_role, ctx_nickname = get_current_user_ctx(data)
+        text = str(data.get("message") or data.get("prompt") or data.get("input") or data.get("content") or "").strip()
+        if not text:
+            return jsonify({"ok": False, "msg": "empty_input", "reply": "❌ Empty input"}), 400
+        meta = dict(data.get("meta") or {}) if isinstance(data.get("meta"), dict) else {}
+        if "scene" not in meta:
+            meta["scene"] = "theater"
+        if "theater_id" not in meta:
+            meta["theater_id"] = data.get("theater_id") or data.get("theaterId") or ""
+        return _theater_chat_response(
+            data=data if isinstance(data, dict) else {},
+            user_input=text,
+            meta=meta,
+            ctx_user_id=ctx_user_id,
+            ctx_role=ctx_role,
+            ctx_nickname=ctx_nickname,
+        )
+    except Exception as e:
+        print("[ERROR] theater_chat_post:", e)
+        return jsonify({"ok": False, "msg": str(e), "reply": "❌ theater chat error"}), 500
+
+
 @app.route("/tools/list_chat_contexts", methods=["GET", "OPTIONS"])
 def tools_list_chat_contexts():
     if request.method == "OPTIONS":
@@ -25191,6 +28524,17 @@ def api_save_params():
             or next_agent_private_prompt
             or _default_agent_group_system_prompt()
         )
+        next_agent_theater_prompt = _normalize_prompt_multiline(
+            _as_str(
+                "agent_global_theater_system_prompt",
+                _as_str(
+                    "agent_theater_system_prompt",
+                    MODEL_CONFIG.get("agent_global_theater_system_prompt", next_agent_private_prompt or _default_agent_theater_system_prompt()),
+                ),
+            )
+            or next_agent_private_prompt
+            or _default_agent_theater_system_prompt()
+        )
 
         MODEL_CONFIG.update({
             "top_k": _as_int("top_k", MODEL_CONFIG.get("top_k", GEN_TOP_K)),
@@ -25211,6 +28555,7 @@ def api_save_params():
             "agent_global_system_prompt": next_agent_legacy_prompt,
             "agent_global_private_system_prompt": next_agent_private_prompt,
             "agent_global_group_system_prompt": next_agent_group_prompt,
+            "agent_global_theater_system_prompt": next_agent_theater_prompt,
             "assistant_enabled": _as_bool("assistant_enabled", MODEL_CONFIG.get("assistant_enabled", False)),
             "assistant_provider": _as_str("assistant_provider", MODEL_CONFIG.get("assistant_provider", "newapi")).lower() or "newapi",
             "assistant_base_url": _as_str("assistant_base_url", MODEL_CONFIG.get("assistant_base_url", "")).rstrip("/"),
@@ -25369,6 +28714,17 @@ def api_update_config():
             or next_agent_private_prompt
             or _default_agent_group_system_prompt()
         )
+        next_agent_theater_prompt = _normalize_prompt_multiline(
+            _get_str(
+                "agent_global_theater_system_prompt",
+                _get_str(
+                    "agent_theater_system_prompt",
+                    MODEL_CONFIG.get("agent_global_theater_system_prompt", next_agent_private_prompt or _default_agent_theater_system_prompt()),
+                ),
+            )
+            or next_agent_private_prompt
+            or _default_agent_theater_system_prompt()
+        )
 
         MODEL_CONFIG.update({
             "top_k": _get_int("top_k", MODEL_CONFIG.get("top_k", GEN_TOP_K)),
@@ -25389,6 +28745,7 @@ def api_update_config():
             "agent_global_system_prompt": next_agent_legacy_prompt,
             "agent_global_private_system_prompt": next_agent_private_prompt,
             "agent_global_group_system_prompt": next_agent_group_prompt,
+            "agent_global_theater_system_prompt": next_agent_theater_prompt,
             "assistant_enabled": _get_bool("assistant_enabled", MODEL_CONFIG.get("assistant_enabled", False)),
             "assistant_provider": _get_str("assistant_provider", MODEL_CONFIG.get("assistant_provider", "newapi")).lower() or "newapi",
             "assistant_base_url": _get_str("assistant_base_url", MODEL_CONFIG.get("assistant_base_url", "")).rstrip("/"),
@@ -25577,6 +28934,21 @@ def _extract_text_blocks_for_ingest(raw: str) -> list[str]:
     if not raw:
         return []
 
+    # 新结构：Markdown Turn 记录
+    if ("## Turn" in raw) and ("**User:**" in raw) and ("**Assistant:**" in raw):
+        out_md: list[str] = []
+        for turn in _parse_temp_chat_md_turns(raw):
+            user_text = str((turn or {}).get("user_text") or "").strip()
+            ai_text = str((turn or {}).get("assistant_text") or "").strip()
+            if not (user_text or ai_text):
+                continue
+            merged = f"{user_text}\n{ai_text}".strip()
+            if len(merged) < 8:
+                continue
+            out_md.append(merged)
+        if out_md:
+            return out_md
+
     sep = "\n" + "-" * 60 + "\n"
     chunks = [c.strip() for c in raw.split(sep) if c.strip()]
     out = []
@@ -25655,6 +29027,19 @@ def start_profile_b_ingest_thread():
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()
+
+# 启动前：迁移并清理旧临时聊天目录（v2 路径规则）
+try:
+    _chat_layout_result = _migrate_and_cleanup_runtime_chat_logs()
+    try:
+        print(f"[runtime_chat_layout] {_chat_layout_result}")
+    except Exception:
+        pass
+except Exception as _chat_layout_e:
+    try:
+        print(f"[runtime_chat_layout] failed: {_chat_layout_e}")
+    except Exception:
+        pass
 
 # 启动 Profile B ingest
 start_profile_b_ingest_thread()

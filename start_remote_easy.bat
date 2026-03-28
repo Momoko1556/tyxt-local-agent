@@ -26,6 +26,10 @@ echo ==========================================
 echo [INFO] Script version: %TYXT_REMOTE_EASY_VER%
 echo [INFO] Script path   : %~f0
 echo.
+echo [0/3] Cleaning stale cloudflared processes ...
+for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$ps = Get-Process -Name cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id -Unique; if($ps){$ps | ForEach-Object { Write-Output $_ }}"') do (
+  taskkill /F /PID %%P >nul 2>nul
+)
 
 echo [1/3] Checking cloudflared ...
 where cloudflared >nul 2>nul
@@ -83,13 +87,17 @@ if "%errorlevel%"=="0" (
   )
 )
 if /I "%BACKEND_SCHEME%"=="HTTP" goto backend_ready
-if /I "%BACKEND_SCHEME%"=="HTTPS" goto backend_ready
+if /I "%BACKEND_SCHEME%"=="HTTPS" (
+  echo [INFO] Existing backend is HTTPS-only.
+  echo [INFO] For remote tunnel stability, restart backend in HTTP mode.
+  set "BACKEND_SCHEME=NONE"
+)
 
 echo [2/3] Starting backend in another window ...
 for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-NetTCPConnection -State Listen -LocalPort 5000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if($p){$p | ForEach-Object { Write-Output $_ }}"') do (
   taskkill /F /PID %%P >nul 2>nul
 )
-start "TYXT Backend" cmd /k set TYXT_NO_BROWSER=1^& call "%~dp0start_agent.bat"
+start "TYXT Backend" cmd /k set TYXT_NO_BROWSER=1^& set TYXT_FORCE_HTTP=1^& call "%~dp0start_agent.bat"
 
 echo [2/3] Waiting backend health ...
 set /a TRY=0
@@ -147,7 +155,7 @@ echo [INFO] Press Ctrl+C to stop tunnel.
 echo [INFO] Tunnel target: %BACKEND_BASE%
 echo [INFO] Mobile frontend path: /mobile/ (append to the trycloudflare URL)
 if not "%TUNNEL_TLS_ARGS%"=="" echo [INFO] Tunnel origin args: %TUNNEL_TLS_ARGS%
-set "CF_EDGE_ARGS=--protocol http2 --edge-ip-version 4"
+set "CF_EDGE_ARGS=--edge-ip-version 4"
 echo [INFO] Tunnel edge args: %CF_EDGE_ARGS%
 echo [INFO] Auto reconnect: ON (delay=%CF_RETRY_DELAY_SEC%s, max_retries=%CF_RETRY_MAX%, 0 means infinite)
 echo.

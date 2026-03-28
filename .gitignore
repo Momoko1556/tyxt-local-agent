@@ -12,10 +12,13 @@ __pycache__/
 .vscode/
 .env
 *.log
+__*.log
 tmp_images/
 GPT-SoVITS-1007-cu124/
 memory_db/*
 !memory_db/.gitkeep
+memory_db_theater/*
+!memory_db_theater/.gitkeep
 profiles/*
 !profiles/.gitkeep
 memory_warehouse/*
@@ -30,6 +33,8 @@ agents/*
 !agents/.gitkeep
 agents/*/relationships/
 agents/*/relationship_params/
+configs/theater/*
+!configs/theater/.gitkeep
 
 # User-local configs / secrets
 config.json

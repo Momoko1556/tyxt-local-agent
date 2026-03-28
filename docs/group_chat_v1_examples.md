@@ -30,7 +30,7 @@
   "followup_max_agents": 1,
   "followup_max_reply_length": 0,
   "group_memory_enabled": true,
-  "group_memory_path": "E:/Ollama memory_project/group_memory/1024001",
+  "group_memory_path": "group_memory/1024001",
   "allow_group_rag": true,
   "allow_cross_domain_analysis": true
 }

@@ -24,7 +24,13 @@ import uuid
 import zipfile
 from typing import Any, Dict, Iterable, List, Optional
 
-from memory_store import CHROMA_PERSIST_DIR, LOCAL_OWNER_ID, MultiTenantChromaMemoryStore, resolve_scoped_persist_dir
+from memory_store import (
+    CHROMA_PERSIST_DIR,
+    CHROMA_PERSIST_DIR_THEATER,
+    LOCAL_OWNER_ID,
+    MultiTenantChromaMemoryStore,
+    resolve_scoped_persist_dir,
+)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -331,6 +337,39 @@ def _build_record_id(ts: int) -> str:
     return f"conv_{time.strftime('%Y%m%d_%H%M%S', time.localtime(ts))}_{uuid.uuid4().hex[:8]}"
 
 
+def _looks_like_scoped_owner_dir(path: str, channel_type: str, owner_id: str) -> bool:
+    root = os.path.abspath(str(path or "").strip())
+    if (not root) or (not channel_type) or (not owner_id):
+        return False
+    leaf = os.path.basename(root).strip().casefold()
+    parent = os.path.basename(os.path.dirname(root)).strip().casefold()
+    return leaf == str(owner_id).strip().casefold() and parent == str(channel_type).strip().casefold()
+
+
+def _resolve_import_persist_dir(owner_type: str, owner_id: str, persist_dir: Optional[str]) -> str:
+    channel_type = str(owner_type or "").strip().lower()
+    owner = str(owner_id or "").strip()
+    explicit = str(persist_dir or "").strip()
+    if explicit:
+        explicit_abs = os.path.abspath(explicit)
+        if _looks_like_scoped_owner_dir(explicit_abs, channel_type, owner):
+            return explicit_abs
+        return resolve_scoped_persist_dir(
+            explicit_abs,
+            channel_type=channel_type,
+            owner_id=owner,
+        )
+    if channel_type == "theater":
+        base = os.path.abspath(str(CHROMA_PERSIST_DIR_THEATER))
+    else:
+        base = os.path.abspath(str(CHROMA_PERSIST_DIR))
+    return resolve_scoped_persist_dir(
+        base,
+        channel_type=channel_type,
+        owner_id=owner,
+    )
+
+
 def import_chatgpt_export_records(
     input_path: str,
     owner_type: str = "local",
@@ -352,10 +391,10 @@ def import_chatgpt_export_records(
         }
 
     channel_type = str(owner_type or "local").strip().lower()
-    if channel_type not in {"local", "private", "group"}:
+    if channel_type not in {"local", "private", "group", "theater"}:
         return {
             "ok": False,
-            "error": f"owner-type 非法：{channel_type}（可选 local/private/group）",
+            "error": f"owner-type 非法：{channel_type}（可选 local/private/group/theater）",
             "input": input_path,
             "files": [str(x.get("path") or "") for x in sources],
         }
@@ -367,10 +406,10 @@ def import_chatgpt_export_records(
     os.makedirs(RAW_DIR, exist_ok=True)
 
     store = MultiTenantChromaMemoryStore(
-        persist_dir=resolve_scoped_persist_dir(
-            os.path.abspath(str(persist_dir or CHROMA_PERSIST_DIR)),
-            channel_type=channel_type,
+        persist_dir=_resolve_import_persist_dir(
+            owner_type=channel_type,
             owner_id=owner,
+            persist_dir=persist_dir,
         )
     )
 
@@ -650,7 +689,7 @@ def run_import(
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="导入 ChatGPT 导出 JSON 到 TYXT MemoryStore")
     parser.add_argument("--input", required=True, help="JSON 文件或目录")
-    parser.add_argument("--owner-type", default="local", choices=["local", "private", "group"])
+    parser.add_argument("--owner-type", default="local", choices=["local", "private", "group", "theater"])
     parser.add_argument("--owner-id", default=LOCAL_OWNER_ID)
     parser.add_argument("--max-records", type=int, default=0, help="0 表示不限制")
     return parser.parse_args(argv)

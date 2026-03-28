@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from memory_store import (
     CHROMA_PERSIST_DIR,
+    CHROMA_PERSIST_DIR_THEATER,
     LOCAL_OWNER_ID,
     MemoryRecord,
     MultiTenantChromaMemoryStore,
@@ -30,6 +31,9 @@ GROUP_CHATS_STORE_PATH = os.path.abspath(
 GROUP_MEMORY_ROOT = os.path.abspath(
     str(os.getenv("TYXT_GROUP_MEMORY_ROOT", os.path.join(PROJECT_ROOT, "group_memory")))
 )
+THEATER_MEMORY_ROOT = os.path.abspath(
+    str(os.getenv("TYXT_THEATER_MEMORY_ROOT", CHROMA_PERSIST_DIR_THEATER))
+)
 DEFAULT_TOPK = int(os.getenv("MEM_TOPK", "20"))
 LIGHT_TOPK = max(0, min(5, DEFAULT_TOPK))
 
@@ -39,7 +43,14 @@ DECAY_GRACE_DAYS = int(os.getenv("DECAY_GRACE_DAYS", "30"))
 DECAY_STEP_DAYS = int(os.getenv("DECAY_STEP_DAYS", "7"))
 DECAY_PER_STEP = float(os.getenv("DECAY_PER_STEP", "0.1"))
 LEXICAL_FALLBACK_MAX_SCAN = max(500, int(os.getenv("LEXICAL_FALLBACK_MAX_SCAN", "8000")))
-ENABLE_LEXICAL_FALLBACK_SCAN = str(os.getenv("ENABLE_LEXICAL_FALLBACK_SCAN", "0")).strip().lower() in {"1", "true", "yes", "on"}
+ENABLE_LEXICAL_FALLBACK_SCAN = str(os.getenv("ENABLE_LEXICAL_FALLBACK_SCAN", "1")).strip().lower() in {"1", "true", "yes", "on"}
+
+_CJK_BLOCK_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
+_CJK_STOP_TOKENS = {
+    "什么", "怎么", "为何", "为啥", "是否", "是不是", "吗", "呢", "吧", "啊", "呀", "嘛",
+    "了", "的", "是", "有", "在", "和", "跟", "与", "及", "请", "请问", "一下", "一个", "一些",
+    "多少", "几个", "哪个", "哪种", "哪里", "哪儿",
+}
 
 CHAT_MEM_STORE = MultiTenantChromaMemoryStore(
     persist_dir=CHROMA_PERSIST_DIR,
@@ -50,6 +61,7 @@ _MEM_STORE_CACHE: Dict[str, MultiTenantChromaMemoryStore] = {
     os.path.abspath(CHROMA_PERSIST_DIR): CHAT_MEM_STORE,
 }
 os.makedirs(GROUP_MEMORY_ROOT, exist_ok=True)
+os.makedirs(THEATER_MEMORY_ROOT, exist_ok=True)
 
 
 def _normalize_persist_dir(v: Any) -> str:
@@ -101,6 +113,21 @@ def get_memory_store(meta: Optional[Dict[str, Any]] = None) -> MultiTenantChroma
                 channel_type=channel_type,
                 owner_id=owner_id,
             )
+    elif channel_type == "theater":
+        explicit_theater_root = str(
+            mm.get("theater_memory_path")
+            or mm.get("theater_memory_root")
+            or mm.get("memory_root_theater")
+            or ""
+        ).strip()
+        if explicit_theater_root:
+            persist_dir = _normalize_persist_dir(explicit_theater_root)
+        else:
+            persist_dir = resolve_scoped_persist_dir(
+                THEATER_MEMORY_ROOT,
+                channel_type=channel_type,
+                owner_id=owner_id,
+            )
     else:
         base_dir = _normalize_persist_dir(mm.get("memory_root") or mm.get("agent_memory_root"))
         persist_dir = resolve_scoped_persist_dir(
@@ -120,6 +147,32 @@ def _legacy_memory_store_roots(meta: Optional[Dict[str, Any]] = None) -> List[st
     mm = meta if isinstance(meta, dict) else {}
     base_dir = _normalize_persist_dir(mm.get("memory_root") or mm.get("agent_memory_root"))
     channel_type, owner_id = resolve_channel_owner(mm)
+    if channel_type == "theater":
+        # theater 记忆强制物理隔离，不回退 private/group/local 的 legacy 根目录。
+        # 兼容历史导入路径误拼接：<theater_root>/theater/<theater_id>/theater/<theater_id>
+        explicit_theater_root = str(
+            mm.get("theater_memory_path")
+            or mm.get("theater_memory_root")
+            or mm.get("memory_root_theater")
+            or ""
+        ).strip()
+        if explicit_theater_root:
+            owner_root = _normalize_persist_dir(explicit_theater_root)
+        else:
+            owner_root = resolve_scoped_persist_dir(
+                THEATER_MEMORY_ROOT,
+                channel_type=channel_type,
+                owner_id=owner_id,
+            )
+        nested_root = resolve_scoped_persist_dir(
+            owner_root,
+            channel_type=channel_type,
+            owner_id=owner_id,
+        )
+        out: List[str] = []
+        if nested_root != owner_root and os.path.isdir(nested_root):
+            out.append(nested_root)
+        return out
     agent_root = resolve_scoped_persist_dir(base_dir, agent_id=mm.get("agent_id"))
     if channel_type == "group":
         explicit_group_root = str(
@@ -166,9 +219,12 @@ def resolve_channel_owner(meta: Optional[Dict[str, Any]]) -> Tuple[str, str]:
     scene = str(m.get("scene") or "").strip().lower()
     gid = str(m.get("group_id") or "").strip()
     uid = str(m.get("user_id") or "").strip()
+    tid = str(m.get("theater_id") or m.get("theaterId") or "").strip()
     channel_type = str(m.get("channel_type") or "").strip().lower()
     owner_id = str(m.get("owner_id") or "").strip()
 
+    if channel_type == "theater":
+        return "theater", (owner_id or tid or "unknown_theater")
     if channel_type and owner_id:
         if channel_type == "group":
             return "group", owner_id
@@ -182,9 +238,19 @@ def resolve_channel_owner(meta: Optional[Dict[str, Any]]) -> Tuple[str, str]:
         owner = scene.split(":", 1)[1].strip()
         if owner:
             return "private", owner
+    if scene.startswith("theater:"):
+        owner = scene.split(":", 1)[1].strip()
+        return "theater", (owner or tid or "unknown_theater")
+    if scene.startswith("theater_"):
+        return "theater", scene
+    if scene == "theater":
+        return "theater", (tid or owner_id or "unknown_theater")
 
     if scene in {"group"} or gid:
         return "group", (gid or "unknown_group")
+
+    if tid:
+        return "theater", tid
 
     if scene in {"local", "local_ui", "ui", "chat"}:
         return "local", LOCAL_OWNER_ID
@@ -212,17 +278,44 @@ def _sim_from_score(raw_score: Optional[float]) -> float:
     return 1.0 / (1.0 + d)
 
 
+def _expand_cjk_terms(src: str, limit: int = 24) -> List[str]:
+    out: List[str] = []
+    for block in _CJK_BLOCK_RE.findall(str(src or "")):
+        txt = str(block or "").strip()
+        if len(txt) < 2:
+            continue
+        out.append(txt)
+        compact = re.sub(r"[了的吗呢吧啊呀嘛么]", "", txt)
+        if len(compact) >= 2 and compact != txt:
+            out.append(compact)
+        for n in (3, 2):
+            if len(txt) < n:
+                continue
+            for i in range(0, len(txt) - n + 1):
+                token = txt[i : i + n]
+                if (not token) or token in _CJK_STOP_TOKENS:
+                    continue
+                out.append(token)
+                if len(out) >= max(6, int(limit)):
+                    return out[: max(6, int(limit))]
+    return out[: max(6, int(limit))]
+
+
 def _query_terms(query: str) -> List[str]:
     q = re.sub(r"\s+", " ", str(query or "")).strip().lower()
     if not q:
         return []
     pieces = re.split(r"[\s,，。！？!?:：;；/\\|()\[\]{}\"'`~@#$%^&*+=<>《》“”‘’·…-]+", q)
     terms = [p for p in pieces if p]
+    terms.extend(_expand_cjk_terms(q, limit=24))
     if q and q not in terms:
         terms.insert(0, q)
     out: List[str] = []
     seen = set()
     for t in terms:
+        t = str(t or "").strip().lower()
+        if not t:
+            continue
         if t in seen:
             continue
         seen.add(t)
@@ -491,54 +584,37 @@ def retrieve_chat_memory_records(
         raw_top_k = max(safe_top_k * 20, 240)
     else:
         raw_top_k = max(safe_top_k * 6, 80)
-    candidates = mem_store.search_raw(query=q, top_k=raw_top_k, filters=filters)
+    candidate_stores: List[MultiTenantChromaMemoryStore] = [mem_store]
+    for legacy_root in _legacy_memory_store_roots(meta):
+        candidate_stores.append(_get_or_create_store(legacy_root))
+    candidates: List[MemoryRecord] = []
+    for st in candidate_stores:
+        try:
+            candidates.extend(st.search_raw(query=q, top_k=raw_top_k, filters=filters))
+        except Exception:
+            continue
     selected = _select_by_final_score(candidates, top_k=safe_top_k, query=q, max_chars=max_chars)
 
     # 语义候选里若无关键词命中，则回退到 tenant 内词法扫描兜底。
     selected_lex_hits = sum(1 for r in selected if bool((getattr(r, "metadata", {}) or {}).get("_lex_hit")))
-    if ENABLE_LEXICAL_FALLBACK_SCAN and keyword_like and selected_lex_hits <= 0:
-        fallback_rows = _fallback_lexical_scan_records(
-            query=q,
-            channel_type=channel_type,
-            owner_id=owner_id,
-            top_k=safe_top_k,
-            lookback_days=lookback_days,
-            layer=layer,
-            mem_store=mem_store,
-        )
-        if fallback_rows:
-            selected = _select_by_final_score(fallback_rows, top_k=safe_top_k, query=q, max_chars=max_chars)
-
-    if not selected:
-        for legacy_root in _legacy_memory_store_roots(meta):
-            legacy_store = _get_or_create_store(legacy_root)
-            legacy_candidates = legacy_store.search_raw(query=q, top_k=raw_top_k, filters=filters)
-            legacy_selected = _select_by_final_score(legacy_candidates, top_k=safe_top_k, query=q, max_chars=max_chars)
-            legacy_lex_hits = sum(
-                1
-                for r in legacy_selected
-                if bool((getattr(r, "metadata", {}) or {}).get("_lex_hit"))
+    force_lexical_fallback = str((meta or {}).get("force_lexical_fallback", "")).strip().lower() in {"1", "true", "yes", "on"}
+    lexical_fallback_enabled = bool(ENABLE_LEXICAL_FALLBACK_SCAN or force_lexical_fallback)
+    if lexical_fallback_enabled and keyword_like and selected_lex_hits <= 0:
+        fallback_rows_all: List[MemoryRecord] = []
+        for st in candidate_stores:
+            fallback_rows = _fallback_lexical_scan_records(
+                query=q,
+                channel_type=channel_type,
+                owner_id=owner_id,
+                top_k=safe_top_k,
+                lookback_days=lookback_days,
+                layer=layer,
+                mem_store=st,
             )
-            if ENABLE_LEXICAL_FALLBACK_SCAN and keyword_like and legacy_lex_hits <= 0:
-                legacy_fallback_rows = _fallback_lexical_scan_records(
-                    query=q,
-                    channel_type=channel_type,
-                    owner_id=owner_id,
-                    top_k=safe_top_k,
-                    lookback_days=lookback_days,
-                    layer=layer,
-                    mem_store=legacy_store,
-                )
-                if legacy_fallback_rows:
-                    legacy_selected = _select_by_final_score(
-                        legacy_fallback_rows,
-                        top_k=safe_top_k,
-                        query=q,
-                        max_chars=max_chars,
-                    )
-            if legacy_selected:
-                selected = legacy_selected
-                break
+            if fallback_rows:
+                fallback_rows_all.extend(fallback_rows)
+        if fallback_rows_all:
+            selected = _select_by_final_score(fallback_rows_all, top_k=safe_top_k, query=q, max_chars=max_chars)
 
     return selected
 

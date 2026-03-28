@@ -11,6 +11,8 @@ English: [README.md](README.md)
 
 ## 新增功能
 
+- **剧场模式**
+  - 支持剧场会话、角色卡/预设、剧场临时上下文以及剧场专属记忆召回。
 - **群聊**
   - 支持群会话、群基础信息、群成员管理与群级记忆。
 - **多 Agent 协作**
@@ -220,9 +222,28 @@ profiles/                  运行时用户画像目录
 - `configs/user_profiles.json`
 - `configs/persona_config.json`
 - `configs/mcp_servers.json`
+- `configs/theater/*`
 - `memory_db/*`
+- `memory_db_theater/*`
 - `memory_warehouse/*`
 - `profiles/*`
+- `group_memory/*`
+- `state/*`
+- `agents/*`
+- `Ollama_agent_shared/runtime_logs/*`
+
+发布前安全检查参考：
+
+- [docs/REPO_SAFETY_AUDIT_2026-03-28.md](docs/REPO_SAFETY_AUDIT_2026-03-28.md)
+- [docs/REPO_SAFETY_AUDIT_2026-03-25.md](docs/REPO_SAFETY_AUDIT_2026-03-25.md)
+
+建议每次推送前执行：
+
+```bat
+git status --short
+git ls-files | rg "memory_db|memory_db_theater|runtime_logs|user_profiles|group_chats\\.json|config\\.json|\\.env"
+git grep -nE "([A-Za-z]:\\\\|/Users/|/home/)"
+```
 
 ## 常见问题
 

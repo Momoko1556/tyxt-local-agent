@@ -11,6 +11,8 @@ TYXT is a local-first AI assistant system for chat, memory, tools, and LAN multi
 
 ## What's New
 
+- **Theater Mode**
+  - Supports theater sessions, role cards/presets, scoped temporary context, and theater-specific memory retrieval.
 - **Group Chat**
   - Built-in group chat sessions with group metadata, member list, and group-level memory.
 - **Multi-Agent Collaboration**
@@ -224,9 +226,28 @@ This repo is prepared for public release, but keep these local/private files out
 - `configs/user_profiles.json`
 - `configs/persona_config.json`
 - `configs/mcp_servers.json`
+- `configs/theater/*`
 - `memory_db/*`
+- `memory_db_theater/*`
 - `memory_warehouse/*`
 - `profiles/*`
+- `group_memory/*`
+- `state/*`
+- `agents/*`
+- `Ollama_agent_shared/runtime_logs/*`
+
+Release safety references:
+
+- [docs/REPO_SAFETY_AUDIT_2026-03-28.md](docs/REPO_SAFETY_AUDIT_2026-03-28.md)
+- [docs/REPO_SAFETY_AUDIT_2026-03-25.md](docs/REPO_SAFETY_AUDIT_2026-03-25.md)
+
+Recommended pre-push checks:
+
+```bat
+git status --short
+git ls-files | rg "memory_db|memory_db_theater|runtime_logs|user_profiles|group_chats\\.json|config\\.json|\\.env"
+git grep -nE "([A-Za-z]:\\\\|/Users/|/home/)"
+```
 
 ## Troubleshooting
 

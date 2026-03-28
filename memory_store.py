@@ -28,6 +28,11 @@ CHROMA_PERSIST_DIR = os.getenv(
     os.path.join(PROJECT_ROOT, "memory_db"),
 )
 CHROMA_PERSIST_DIR = os.path.abspath(str(CHROMA_PERSIST_DIR))
+CHROMA_PERSIST_DIR_THEATER = os.getenv(
+    "TYXT_CHROMA_DIR_THEATER",
+    os.path.join(PROJECT_ROOT, "memory_db_theater"),
+)
+CHROMA_PERSIST_DIR_THEATER = os.path.abspath(str(CHROMA_PERSIST_DIR_THEATER))
 CHROMA_COLLECTION_NAME = os.getenv(
     "TYXT_CHROMA_COLLECTION",
     "tyxt_memory",
@@ -57,6 +62,7 @@ TYXT 记忆系统 · metadata 规范表（schema_version = 1）
     - 允许值：
         - "private"  私聊
         - "group"    群聊
+        - "theater"  剧场
         - "local"    本地 UI
 
 - owner_id: str
@@ -69,6 +75,7 @@ TYXT 记忆系统 · metadata 规范表（schema_version = 1）
     - 命名规则：
         - 私聊： "tyxt_u_<owner_id>"
         - 群聊： "tyxt_g_<owner_id>"
+        - 剧场： "tyxt_t_<theater_id>"
         - 本地： "tyxt_u_local_admin"
 
 - scene: str
@@ -141,8 +148,9 @@ TYXT_SCHEMA_VERSION = 1
 
 TYXT_CHANNEL_PRIVATE = "private"
 TYXT_CHANNEL_GROUP = "group"
+TYXT_CHANNEL_THEATER = "theater"
 TYXT_CHANNEL_LOCAL = "local"
-TYXT_CHANNEL_TYPES = [TYXT_CHANNEL_PRIVATE, TYXT_CHANNEL_GROUP, TYXT_CHANNEL_LOCAL]
+TYXT_CHANNEL_TYPES = [TYXT_CHANNEL_PRIVATE, TYXT_CHANNEL_GROUP, TYXT_CHANNEL_THEATER, TYXT_CHANNEL_LOCAL]
 
 TYXT_LAYER_VALUES = ["raw", "conv", "kb", "bookshelf", "vault", "online"]
 
@@ -285,6 +293,8 @@ def resolve_scoped_persist_dir(
 
     if channel == TYXT_CHANNEL_GROUP:
         owner = _safe_token(owner_id, default="unknown_group", max_len=96)
+    elif channel == TYXT_CHANNEL_THEATER:
+        owner = _safe_token(owner_id, default="unknown_theater", max_len=96)
     elif channel == TYXT_CHANNEL_LOCAL:
         owner = _safe_token(owner_id, default=LOCAL_OWNER_ID, max_len=96)
     else:
@@ -325,12 +335,15 @@ def make_collection_name(channel_type: str, owner_id: str) -> str:
     根据 channel_type 和 owner_id 生成 collection 名称。
     - private: tyxt_u_<qq>
     - group:   tyxt_g_<group_id>
+    - theater: tyxt_t_<theater_id>
     - local:   tyxt_u_local_admin
     """
     c = str(channel_type or "").strip().lower()
     owner = _safe_token(owner_id, default=LOCAL_OWNER_ID)
     if c == TYXT_CHANNEL_GROUP:
         return f"tyxt_g_{owner}"
+    if c == TYXT_CHANNEL_THEATER:
+        return f"tyxt_t_{_safe_token(owner, default='unknown_theater')}"
     if c == TYXT_CHANNEL_LOCAL:
         return f"tyxt_u_{_safe_token(owner or LOCAL_OWNER_ID, default=LOCAL_OWNER_ID)}"
     return f"tyxt_u_{owner}"
@@ -340,12 +353,15 @@ def parse_collection_name(collection_name: str) -> Tuple[str, str]:
     """
     反解析 collection 名 -> (channel_type, owner_id)
     - tyxt_g_<gid> -> ("group", gid)
+    - tyxt_t_<theater_id> -> ("theater", theater_id)
     - tyxt_u_local_admin -> ("local", "local_admin")
     - tyxt_u_<uid> -> ("private", uid)
     """
     name = str(collection_name or "").strip()
     if name.startswith("tyxt_g_"):
         return TYXT_CHANNEL_GROUP, name[len("tyxt_g_") :] or "unknown_group"
+    if name.startswith("tyxt_t_"):
+        return TYXT_CHANNEL_THEATER, name[len("tyxt_t_") :] or "unknown_theater"
     if name.startswith("tyxt_u_"):
         owner = name[len("tyxt_u_") :] or "unknown_user"
         if owner == LOCAL_OWNER_ID:
@@ -358,6 +374,7 @@ def _scene_to_channel_owner(meta: Dict[str, Any]) -> Tuple[str, str]:
     scene = str(meta.get("scene") or "").strip().lower()
     gid = str(meta.get("group_id") or "").strip()
     uid = str(meta.get("user_id") or "").strip()
+    theater_id = str(meta.get("theater_id") or meta.get("theaterId") or meta.get("scene_id") or "").strip()
 
     if scene.startswith(f"{TYXT_SCENE_QQ_GROUP}:"):
         return TYXT_CHANNEL_GROUP, _safe_token(scene.split(":", 1)[1], default=(gid or "unknown_group"))
@@ -365,6 +382,13 @@ def _scene_to_channel_owner(meta: Dict[str, Any]) -> Tuple[str, str]:
         owner = scene.split(":", 1)[1].strip()
         if owner:
             return TYXT_CHANNEL_PRIVATE, _safe_token(owner, default="unknown_user")
+    if scene.startswith("theater:"):
+        owner = scene.split(":", 1)[1].strip()
+        return TYXT_CHANNEL_THEATER, _safe_token(owner or theater_id, default="unknown_theater")
+    if scene.startswith("theater_"):
+        return TYXT_CHANNEL_THEATER, _safe_token(scene, default="unknown_theater")
+    if scene == TYXT_CHANNEL_THEATER:
+        return TYXT_CHANNEL_THEATER, _safe_token(theater_id or meta.get("owner_id"), default="unknown_theater")
 
     if scene in {TYXT_CHANNEL_LOCAL, TYXT_SCENE_LOCAL_UI_LEGACY, "ui", "chat"}:
         return TYXT_CHANNEL_LOCAL, _safe_token(meta.get("owner_id") or LOCAL_OWNER_ID, default=LOCAL_OWNER_ID)
@@ -387,6 +411,9 @@ def infer_channel_owner(meta: Optional[Dict[str, Any]]) -> Tuple[str, str]:
     m = dict(meta or {})
     channel_type = str(m.get("channel_type") or "").strip().lower()
     owner_id = str(m.get("owner_id") or "").strip()
+    if channel_type == TYXT_CHANNEL_THEATER:
+        theater_id = owner_id or str(m.get("theater_id") or m.get("theaterId") or "").strip()
+        return TYXT_CHANNEL_THEATER, _safe_token(theater_id, default="unknown_theater")
     if channel_type and owner_id:
         if channel_type == TYXT_CHANNEL_GROUP:
             return TYXT_CHANNEL_GROUP, _safe_token(owner_id, default="unknown_group")
@@ -432,6 +459,8 @@ def normalize_metadata(
     if not scene:
         if channel_type == TYXT_CHANNEL_GROUP:
             scene = f"{TYXT_SCENE_QQ_GROUP}:{owner_id}"
+        elif channel_type == TYXT_CHANNEL_THEATER:
+            scene = f"theater:{owner_id}"
         elif channel_type == TYXT_CHANNEL_PRIVATE:
             scene = f"{TYXT_SCENE_QQ_PRIVATE}:{owner_id}"
         else:
@@ -953,7 +982,7 @@ class MultiTenantChromaMemoryStore(MemoryStore):
                 names.append(name)
 
         for cname in sorted(set(names)):
-            if (not cname.startswith("tyxt_u_")) and (not cname.startswith("tyxt_g_")):
+            if (not cname.startswith("tyxt_u_")) and (not cname.startswith("tyxt_g_")) and (not cname.startswith("tyxt_t_")):
                 continue
             try:
                 channel_type, owner_id = parse_collection_name(cname)
