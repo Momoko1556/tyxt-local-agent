@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "version": "0.1.0",
+    "schema": "lobster-library-2/theme-pack.v1",
+    "topologyHash": "room-topology-v1"
+  },
+  "themes": [
+    {
+      "id": "midnight",
+      "label": "Midnight Study",
+      "tint": 3948870,
+      "roomFill": 1518381,
+      "roomStroke": 4749174
+    },
+    {
+      "id": "amber",
+      "label": "Amber Archive",
+      "tint": 7873706,
+      "roomFill": 2045736,
+      "roomStroke": 7358767
+    },
+    {
+      "id": "jade",
+      "label": "Jade Workshop",
+      "tint": 3763005,
+      "roomFill": 1069859,
+      "roomStroke": 4306264
+    }
+  ]
+}

@@ -10,6 +10,9 @@ __pycache__/
 *.pyc
 .venv/
 .vscode/
+.claude/
+CLAUDE.md
+__ui.diff
 .env
 *.log
 __*.log
@@ -45,6 +48,10 @@ configs/agents_registry.json
 configs/group_chats.json
 configs/agent_permissions.json
 configs/mcp_servers.json
+configs/*.bak
+configs/*.bak_*
+configs/gallery_intro.json
+configs/gallery_photos/
 
 # TYXT skills runtime state (keep skill source folders, ignore generated state)
 skills_state.json

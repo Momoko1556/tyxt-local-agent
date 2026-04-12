@@ -1,0 +1,176 @@
+{
+  "meta": {
+    "version": "0.3.0",
+    "schema": "claw-library/work-output.protocol.v3"
+  },
+  "outputCategories": [
+    {
+      "id": "document",
+      "label": "Document",
+      "summary": "Specs, handoff notes, research drafts, and delivery writeups",
+      "sampleContents": ["architecture delta", "handoff note", "delivery checklist"]
+    },
+    {
+      "id": "images",
+      "label": "Images",
+      "summary": "Scene slices, generated art, screenshots, and layered visual packs",
+      "sampleContents": ["layered room slice", "generated prop sheet", "visual QA screenshot"]
+    },
+    {
+      "id": "memory",
+      "label": "Memory",
+      "summary": "Daily logs, durable notes, and long-term context files",
+      "sampleContents": ["daily memory append", "durable memory flush", "project context note"]
+    },
+    {
+      "id": "skills",
+      "label": "Skills",
+      "summary": "Reusable skills, prompts, and runtime capability modules",
+      "sampleContents": ["skill registry update", "prompt contract", "skill packaging note"]
+    },
+    {
+      "id": "gateway",
+      "label": "Gateway",
+      "summary": "OpenClaw routing, config, and channel orchestration state",
+      "sampleContents": ["gateway sync snapshot", "channel route check", "config touch event"]
+    },
+    {
+      "id": "log",
+      "label": "Log",
+      "summary": "Runtime traces, daemon logs, and event feeds",
+      "sampleContents": ["daemon trace", "gateway error log", "operation audit line"]
+    },
+    {
+      "id": "mcp",
+      "label": "MCP",
+      "summary": "MCP server configs, builder outputs, and tool bridge state",
+      "sampleContents": ["mcporter config", "server registration note", "tool bridge probe"]
+    },
+    {
+      "id": "schedule",
+      "label": "Schedule",
+      "summary": "Cron jobs, wake events, and scheduled dispatch state",
+      "sampleContents": ["cron job review", "wake event update", "next-run check"]
+    },
+    {
+      "id": "alarm",
+      "label": "Alarm",
+      "summary": "Failed deliveries, blocked tasks, and alert conditions",
+      "sampleContents": ["failed delivery alert", "blocked queue notice", "runtime warning"]
+    },
+    {
+      "id": "agent",
+      "label": "Agent",
+      "summary": "Agent sessions, subagent runs, and active worker pods",
+      "sampleContents": ["agent session pulse", "subagent status", "worker handoff"]
+    },
+    {
+      "id": "task_queues",
+      "label": "Task Queues",
+      "summary": "Queued work, retries, and dispatch backlogs",
+      "sampleContents": ["queue checkpoint", "retry state", "task dispatch trace"]
+    },
+    {
+      "id": "break_room",
+      "label": "Break Room",
+      "summary": "Idle fallback, cooldown state, and recovery lounge",
+      "sampleContents": ["cooldown pause", "quiet idle loop", "buffer reset"]
+    }
+  ],
+  "interfaces": [
+    { "id": "document", "label": "Docs Shelf", "endpoint": "workspace/docs", "status": "online" },
+    { "id": "images", "label": "Image Stack", "endpoint": "workspace/art", "status": "online" },
+    { "id": "memory", "label": "Memory Ledger", "endpoint": "workspace/memory", "status": "online" },
+    { "id": "skills", "label": "Skill Registry", "endpoint": "workspace/skills", "status": "online" },
+    { "id": "gateway", "label": "Gateway Switchboard", "endpoint": ".openclaw/openclaw.json", "status": "online" },
+    { "id": "log", "label": "Log Console", "endpoint": ".openclaw/logs", "status": "online" },
+    { "id": "mcp", "label": "MCP Bridge", "endpoint": "workspace/config/mcporter.json", "status": "degraded" },
+    { "id": "schedule", "label": "Scheduler", "endpoint": ".openclaw/cron/jobs.json", "status": "online" },
+    { "id": "alarm", "label": "Alert Monitor", "endpoint": ".openclaw/delivery-queue/failed", "status": "degraded" },
+    { "id": "agent", "label": "Agent Pods", "endpoint": ".openclaw/agents", "status": "online" },
+    { "id": "task_queues", "label": "Queue Dispatcher", "endpoint": ".openclaw/tasks/task-queue.json", "status": "online" },
+    { "id": "break_room", "label": "Crew Lounge", "endpoint": "crew/break-room", "status": "online" }
+  ],
+  "states": [
+    {
+      "id": "idle",
+      "label": "Standby",
+      "zoneTypes": ["document", "images", "memory", "skills", "gateway", "log", "mcp", "schedule", "alarm", "agent", "task_queues"],
+      "interfaceIds": ["gateway", "document", "skills"],
+      "outputCategoryIds": ["document", "skills", "gateway"],
+      "detailTemplates": ["watching for the next access", "systems quiet, claws ready"]
+    },
+    {
+      "id": "writing",
+      "label": "Documenting",
+      "zoneTypes": ["document"],
+      "interfaceIds": ["document"],
+      "outputCategoryIds": ["document"],
+      "detailTemplates": ["drafting a document delta", "organizing a delivery note"]
+    },
+    {
+      "id": "cataloging",
+      "label": "Cataloging",
+      "zoneTypes": ["images", "skills"],
+      "interfaceIds": ["images", "skills"],
+      "outputCategoryIds": ["images", "skills"],
+      "detailTemplates": ["sorting modular assets", "reindexing capability shelves"]
+    },
+    {
+      "id": "documenting",
+      "label": "Memory Logging",
+      "zoneTypes": ["memory"],
+      "interfaceIds": ["memory"],
+      "outputCategoryIds": ["memory"],
+      "detailTemplates": ["writing durable memory", "recording progress checkpoint"]
+    },
+    {
+      "id": "syncing",
+      "label": "Gateway Sync",
+      "zoneTypes": ["gateway"],
+      "interfaceIds": ["gateway"],
+      "outputCategoryIds": ["gateway"],
+      "detailTemplates": ["syncing gateway state", "checking live bridge status"]
+    },
+    {
+      "id": "monitoring",
+      "label": "Log Review",
+      "zoneTypes": ["log"],
+      "interfaceIds": ["log"],
+      "outputCategoryIds": ["log"],
+      "detailTemplates": ["tailing the latest trace", "reviewing recent runtime logs"]
+    },
+    {
+      "id": "researching",
+      "label": "MCP Probe",
+      "zoneTypes": ["mcp"],
+      "interfaceIds": ["mcp"],
+      "outputCategoryIds": ["mcp"],
+      "detailTemplates": ["probing MCP routes", "checking tool handshake state"]
+    },
+    {
+      "id": "executing",
+      "label": "Dispatching",
+      "zoneTypes": ["schedule", "agent", "task_queues"],
+      "interfaceIds": ["schedule", "agent", "task_queues"],
+      "outputCategoryIds": ["schedule", "agent", "task_queues"],
+      "detailTemplates": ["dispatching queued work", "waking an agent run", "reviewing scheduled execution"]
+    },
+    {
+      "id": "error",
+      "label": "Alert Response",
+      "zoneTypes": ["alarm"],
+      "interfaceIds": ["alarm", "log"],
+      "outputCategoryIds": ["alarm", "log"],
+      "detailTemplates": ["triaging an active alert", "recovering from a failed delivery"]
+    },
+    {
+      "id": "resting",
+      "label": "Break Time",
+      "zoneTypes": ["break_room"],
+      "interfaceIds": ["break_room"],
+      "outputCategoryIds": ["break_room"],
+      "detailTemplates": ["cooling claws in the break room", "taking a short buffer between runs"]
+    }
+  ]
+}

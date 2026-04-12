@@ -1,0 +1,856 @@
+{
+  "meta": {
+    "version": "0.6.0",
+    "schema": "claw-library/map.logic.v6",
+    "baseResolution": {
+      "width": 1920,
+      "height": 1080
+    }
+  },
+  "renderLayers": [
+    {
+      "id": "floor",
+      "depth": 1
+    },
+    {
+      "id": "back_walls",
+      "depth": 8
+    },
+    {
+      "id": "mid_props",
+      "depth": 20
+    },
+    {
+      "id": "actor",
+      "depth": 30
+    },
+    {
+      "id": "fg_occluder",
+      "depth": 50
+    },
+    {
+      "id": "fx_overlay",
+      "depth": 70
+    }
+  ],
+  "rooms": [
+    {
+      "id": "document",
+      "label": "卧室",
+      "bounds": [
+        220,
+        700,
+        300,
+        260
+      ],
+      "labelAnchor": {
+        "x": 339,
+        "y": 737
+      }
+    },
+    {
+      "id": "mcp",
+      "label": "展厅",
+      "bounds": [
+        960,
+        54,
+        176,
+        168
+      ],
+      "labelAnchor": {
+        "x": 890,
+        "y": 100
+      }
+    },
+    {
+      "id": "images",
+      "label": "剧场",
+      "bounds": [
+        1228,
+        50,
+        235,
+        170
+      ],
+      "labelAnchor": {
+        "x": 1351,
+        "y": 113
+      }
+    },
+    {
+      "id": "memory",
+      "label": "工坊",
+      "bounds": [
+        197,
+        95,
+        419,
+        430
+      ],
+      "labelAnchor": {
+        "x": 361,
+        "y": 110
+      }
+    },
+    {
+      "id": "log",
+      "label": "档案室",
+      "bounds": [
+        1295,
+        325,
+        126,
+        130
+      ],
+      "labelAnchor": {
+        "x": 1511,
+        "y": 408
+      }
+    },
+    {
+      "id": "schedule",
+      "label": "档案室",
+      "bounds": [
+        1517,
+        325,
+        201,
+        130
+      ],
+      "labelAnchor": {
+        "x": 1618,
+        "y": 390
+      }
+    },
+    {
+      "id": "skills",
+      "label": "休息室",
+      "bounds": [
+        675,
+        50,
+        277,
+        250
+      ],
+      "labelAnchor": {
+        "x": 327,
+        "y": 408
+      }
+    },
+    {
+      "id": "gateway",
+      "label": "客厅",
+      "bounds": [
+        742,
+        320,
+        394,
+        300
+      ],
+      "labelAnchor": {
+        "x": 757,
+        "y": 349
+      }
+    },
+    {
+      "id": "agent",
+      "label": "主厅",
+      "bounds": [
+        935,
+        650,
+        251,
+        210
+      ],
+      "labelAnchor": {
+        "x": 785,
+        "y": 739
+      }
+    },
+    {
+      "id": "break_room",
+      "label": "书房",
+      "bounds": [
+        1262,
+        740,
+        402,
+        220
+      ],
+      "labelAnchor": {
+        "x": 1581,
+        "y": 737
+      }
+    },
+    {
+      "id": "task_queues",
+      "label": "客厅",
+      "bounds": [
+        742,
+        320,
+        394,
+        300
+      ],
+      "labelAnchor": {
+        "x": 939,
+        "y": 470
+      }
+    },
+    {
+      "id": "alarm",
+      "label": "剧场",
+      "bounds": [
+        1455,
+        50,
+        210,
+        170
+      ],
+      "labelAnchor": {
+        "x": 1559,
+        "y": 135
+      }
+    }
+  ],
+  "walkableZones": [
+    {
+      "id": "memory-room",
+      "points": [
+        {
+          "x": 231,
+          "y": 165
+        },
+        {
+          "x": 516,
+          "y": 165
+        },
+        {
+          "x": 600,
+          "y": 240
+        },
+        {
+          "x": 600,
+          "y": 420
+        },
+        {
+          "x": 549,
+          "y": 500
+        },
+        {
+          "x": 264,
+          "y": 500
+        },
+        {
+          "x": 206,
+          "y": 420
+        },
+        {
+          "x": 206,
+          "y": 240
+        }
+      ]
+    },
+    {
+      "id": "north-spine",
+      "points": [
+        {
+          "x": 692,
+          "y": 140
+        },
+        {
+          "x": 1605,
+          "y": 140
+        },
+        {
+          "x": 1643,
+          "y": 180
+        },
+        {
+          "x": 1589,
+          "y": 230
+        },
+        {
+          "x": 1295,
+          "y": 230
+        },
+        {
+          "x": 1253,
+          "y": 285
+        },
+        {
+          "x": 960,
+          "y": 285
+        },
+        {
+          "x": 918,
+          "y": 320
+        },
+        {
+          "x": 759,
+          "y": 320
+        },
+        {
+          "x": 692,
+          "y": 250
+        }
+      ]
+    },
+    {
+      "id": "center-hall",
+      "points": [
+        {
+          "x": 591,
+          "y": 360
+        },
+        {
+          "x": 1312,
+          "y": 360
+        },
+        {
+          "x": 1379,
+          "y": 430
+        },
+        {
+          "x": 1295,
+          "y": 500
+        },
+        {
+          "x": 759,
+          "y": 500
+        },
+        {
+          "x": 675,
+          "y": 450
+        },
+        {
+          "x": 591,
+          "y": 450
+        }
+      ]
+    },
+    {
+      "id": "right-ops",
+      "points": [
+        {
+          "x": 1320,
+          "y": 330
+        },
+        {
+          "x": 1681,
+          "y": 330
+        },
+        {
+          "x": 1714,
+          "y": 370
+        },
+        {
+          "x": 1714,
+          "y": 470
+        },
+        {
+          "x": 1329,
+          "y": 470
+        },
+        {
+          "x": 1262,
+          "y": 410
+        }
+      ]
+    },
+    {
+      "id": "left-drop",
+      "points": [
+        {
+          "x": 516,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 760
+        },
+        {
+          "x": 516,
+          "y": 760
+        }
+      ]
+    },
+    {
+      "id": "center-drop",
+      "points": [
+        {
+          "x": 792,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 760
+        },
+        {
+          "x": 792,
+          "y": 760
+        }
+      ]
+    },
+    {
+      "id": "lower-main",
+      "points": [
+        {
+          "x": 541,
+          "y": 660
+        },
+        {
+          "x": 1170,
+          "y": 660
+        },
+        {
+          "x": 1203,
+          "y": 720
+        },
+        {
+          "x": 1203,
+          "y": 980
+        },
+        {
+          "x": 591,
+          "y": 980
+        },
+        {
+          "x": 516,
+          "y": 900
+        },
+        {
+          "x": 516,
+          "y": 720
+        }
+      ]
+    },
+    {
+      "id": "right-diagonal",
+      "points": [
+        {
+          "x": 1228,
+          "y": 620
+        },
+        {
+          "x": 1329,
+          "y": 620
+        },
+        {
+          "x": 1480,
+          "y": 790
+        },
+        {
+          "x": 1446,
+          "y": 850
+        },
+        {
+          "x": 1354,
+          "y": 850
+        },
+        {
+          "x": 1228,
+          "y": 700
+        }
+      ]
+    },
+    {
+      "id": "break-room",
+      "points": [
+        {
+          "x": 1312,
+          "y": 760
+        },
+        {
+          "x": 1664,
+          "y": 760
+        },
+        {
+          "x": 1681,
+          "y": 790
+        },
+        {
+          "x": 1681,
+          "y": 1020
+        },
+        {
+          "x": 1371,
+          "y": 1020
+        },
+        {
+          "x": 1295,
+          "y": 930
+        },
+        {
+          "x": 1295,
+          "y": 790
+        }
+      ]
+    }
+  ],
+  "walkGraph": {
+    "nodes": [
+      {
+        "id": "DO1",
+        "x": 675,
+        "y": 860,
+        "roomId": "document"
+      },
+      {
+        "id": "ME1",
+        "x": 407,
+        "y": 320,
+        "roomId": "memory"
+      },
+      {
+        "id": "MC1",
+        "x": 1027,
+        "y": 610,
+        "roomId": "mcp"
+      },
+      {
+        "id": "IM1",
+        "x": 1358,
+        "y": 155,
+        "roomId": "images"
+      },
+      {
+        "id": "LG1",
+        "x": 1358,
+        "y": 430,
+        "roomId": "log"
+      },
+      {
+        "id": "SC1",
+        "x": 1459,
+        "y": 430,
+        "roomId": "schedule"
+      },
+      {
+        "id": "SK1",
+        "x": 789,
+        "y": 242,
+        "roomId": "skills"
+      },
+      {
+        "id": "GW1",
+        "x": 876,
+        "y": 610,
+        "roomId": "gateway"
+      },
+      {
+        "id": "AG1",
+        "x": 1061,
+        "y": 820,
+        "roomId": "agent"
+      },
+      {
+        "id": "BR1",
+        "x": 1463,
+        "y": 875,
+        "roomId": "break_room"
+      },
+      {
+        "id": "TQ1",
+        "x": 1610,
+        "y": 430,
+        "roomId": "task_queues"
+      },
+      {
+        "id": "AL1",
+        "x": 1572,
+        "y": 155,
+        "roomId": "alarm"
+      },
+      {
+        "id": "H1",
+        "x": 549,
+        "y": 375,
+        "roomId": "memory"
+      },
+      {
+        "id": "H2",
+        "x": 809,
+        "y": 375,
+        "roomId": "skills"
+      },
+      {
+        "id": "H3",
+        "x": 1061,
+        "y": 375,
+        "roomId": "mcp"
+      },
+      {
+        "id": "H4",
+        "x": 1371,
+        "y": 375,
+        "roomId": "log"
+      },
+      {
+        "id": "V1",
+        "x": 675,
+        "y": 700,
+        "roomId": "document"
+      },
+      {
+        "id": "V2",
+        "x": 851,
+        "y": 620,
+        "roomId": "gateway"
+      },
+      {
+        "id": "V3",
+        "x": 1061,
+        "y": 700,
+        "roomId": "agent"
+      },
+      {
+        "id": "V4",
+        "x": 1413,
+        "y": 760,
+        "roomId": "break_room"
+      }
+    ],
+    "edges": [
+      [
+        "DO1",
+        "H1"
+      ],
+      [
+        "ME1",
+        "H1"
+      ],
+      [
+        "MC1",
+        "H2"
+      ],
+      [
+        "IM1",
+        "AL1"
+      ],
+      [
+        "AL1",
+        "SC1"
+      ],
+      [
+        "LG1",
+        "H4"
+      ],
+      [
+        "SC1",
+        "H4"
+      ],
+      [
+        "H1",
+        "H2"
+      ],
+      [
+        "H2",
+        "H3"
+      ],
+      [
+        "H3",
+        "H4"
+      ],
+      [
+        "H1",
+        "V1"
+      ],
+      [
+        "V1",
+        "SK1"
+      ],
+      [
+        "H2",
+        "V2"
+      ],
+      [
+        "V2",
+        "GW1"
+      ],
+      [
+        "GW1",
+        "V3"
+      ],
+      [
+        "V3",
+        "AG1"
+      ],
+      [
+        "V3",
+        "V4"
+      ],
+      [
+        "V4",
+        "BR1"
+      ],
+      [
+        "V4",
+        "TQ1"
+      ]
+    ]
+  },
+  "collisionPolygons": [],
+  "occluders": [
+    {
+      "id": "gateway-front",
+      "x": 734,
+      "y": 820,
+      "width": 184,
+      "height": 24
+    },
+    {
+      "id": "skills-bench-front",
+      "x": 289,
+      "y": 915,
+      "width": 151,
+      "height": 20
+    },
+    {
+      "id": "break-bar-front",
+      "x": 1174,
+      "y": 885,
+      "width": 151,
+      "height": 22
+    },
+    {
+      "id": "taskq-desk-front",
+      "x": 1501,
+      "y": 885,
+      "width": 151,
+      "height": 22
+    }
+  ],
+  "workZones": [
+    {
+      "id": "document",
+      "label": "卧室",
+      "roomId": "document",
+      "type": "document",
+      "anchor": {
+        "x": 342,
+        "y": 901
+      },
+      "radius": 28
+    },
+    {
+      "id": "memory",
+      "label": "工坊",
+      "roomId": "memory",
+      "type": "memory",
+      "anchor": {
+        "x": 547,
+        "y": 241
+      },
+      "radius": 28
+    },
+    {
+      "id": "mcp",
+      "label": "展厅",
+      "roomId": "mcp",
+      "type": "mcp",
+      "anchor": {
+        "x": 911,
+        "y": 240
+      },
+      "radius": 22
+    },
+    {
+      "id": "images",
+      "label": "剧场",
+      "roomId": "images",
+      "type": "images",
+      "anchor": {
+        "x": 1346,
+        "y": 225
+      },
+      "radius": 24
+    },
+    {
+      "id": "log",
+      "label": "档案室",
+      "roomId": "log",
+      "type": "log",
+      "anchor": {
+        "x": 1223,
+        "y": 502
+      },
+      "radius": 22
+    },
+    {
+      "id": "schedule",
+      "label": "档案室",
+      "roomId": "schedule",
+      "type": "schedule",
+      "anchor": {
+        "x": 1499,
+        "y": 516
+      },
+      "radius": 22
+    },
+    {
+      "id": "skills",
+      "label": "休息室",
+      "roomId": "skills",
+      "type": "skills",
+      "anchor": {
+        "x": 489,
+        "y": 541
+      },
+      "radius": 24
+    },
+    {
+      "id": "gateway",
+      "label": "客厅",
+      "roomId": "gateway",
+      "type": "gateway",
+      "anchor": {
+        "x": 967,
+        "y": 602
+      },
+      "radius": 24
+    },
+    {
+      "id": "agent",
+      "label": "主厅",
+      "roomId": "agent",
+      "type": "agent",
+      "anchor": {
+        "x": 1041,
+        "y": 858
+      },
+      "radius": 24
+    },
+    {
+      "id": "break_room",
+      "label": "书房",
+      "roomId": "break_room",
+      "type": "break_room",
+      "anchor": {
+        "x": 1447,
+        "y": 856
+      },
+      "radius": 28
+    },
+    {
+      "id": "task_queues",
+      "label": "客厅",
+      "roomId": "task_queues",
+      "type": "task_queues",
+      "anchor": {
+        "x": 967,
+        "y": 602
+      },
+      "radius": 22
+    },
+    {
+      "id": "alarm",
+      "label": "剧场",
+      "roomId": "alarm",
+      "type": "alarm",
+      "anchor": {
+        "x": 1509,
+        "y": 208
+      },
+      "radius": 22
+    }
+  ]
+}

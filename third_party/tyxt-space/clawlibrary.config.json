@@ -1,0 +1,24 @@
+{
+  "openclaw": {
+    "home": "",
+    "workspace": ""
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 5173
+  },
+  "ui": {
+    "defaultLocale": "en",
+    "showDebugToggle": false,
+    "defaultDebugVisible": false,
+    "showInfoToggle": true,
+    "defaultInfoPanelVisible": true,
+    "showThemeToggle": false
+  },
+  "actor": {
+    "defaultVariantId": "capy-claw-emoji"
+  },
+  "telemetry": {
+    "pollMs": 2500
+  }
+}

@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.3.1
+﻿# TYXT Local Agent v1.4.0
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -11,19 +11,21 @@ TYXT is a local-first AI assistant system for chat, memory, tools, and LAN multi
 
 ## What's New
 
-- **Theater Mode**
-  - Supports theater sessions, role cards/presets, scoped temporary context, and theater-specific memory retrieval.
-- **Group Chat**
-  - Built-in group chat sessions with group metadata, member list, and group-level memory.
-- **Multi-Agent Collaboration**
-  - Router + worker style response flow for multi-agent conversations and relay handoff.
-- **Agent Permissions**
-  - Scene-based permission matrix (chat/work) for documents, profiles, relationship data, runtime logs, and more.
-- **Idle Work**
-  - Background rumination/deep-think modules with session controls (start/pause/resume/end) and progress tracking.
-- **Mobile Access and Login**
-  - Supports mobile login with account + API key over LAN/public tunnel.
-  - Backend can serve a mobile frontend entry at `/mobile/`.
+- **Workspace + Local CC Integration**
+  - Added Workspace mode with local Claude Code invocation support.
+  - Requires standalone install: https://github.com/Momoko1556/ClaudeCode_CN
+- **Lounge Zone**
+  - Private chat and group chat are now categorized under the Lounge zone.
+- **Creative Zone**
+  - Added Creative zone with character cards and worldbook support.
+  - Memory storage is security-isolated from the Lounge zone.
+- **Visual UI**
+  - Added TYXT visual space UI.
+  - Start by double-clicking: `start-tyxt-space.bat`
+- **Agent Permission Module**
+  - Added a dedicated Agent permission module.
+- **Tool Permission by Scene**
+  - Tool access can now be constrained by scene/domain permissions.
 
 ## Read This First (How to Download)
 

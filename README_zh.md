@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.3.1
+﻿# TYXT Local Agent v1.4.0
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -11,18 +11,21 @@ English: [README.md](README.md)
 
 ## 新增功能
 
-- **剧场模式**
-  - 支持剧场会话、角色卡/预设、剧场临时上下文以及剧场专属记忆召回。
-- **群聊**
-  - 支持群会话、群基础信息、群成员管理与群级记忆。
-- **多 Agent 协作**
-  - 采用 Router + Worker 的群聊/接力回复链路，支持多 Agent 联动回复。
-- **Agent 权限**
-  - 按场景（chat/work）配置权限矩阵，可控文档、画像、关系、运行日志等资源访问。
-- **待机作业**
-  - 支持反刍层、深度思考层后台作业，会话可开始/暂停/继续/结束并追踪进度。
-- **手机端接入**
-  - 支持手机端账号登录 + API Key 鉴权；后端可直接提供 `/mobile/` 入口。
+- **新增工作区 + 本地 CC 调用**
+  - 增加工作区（Workspace），支持本地 Claude Code 调用。
+  - 需自行下载并安装：https://github.com/Momoko1556/ClaudeCode_CN
+- **休闲区归类**
+  - 私聊与群聊统一归类为“休闲区”。
+- **新增创想区**
+  - 支持角色卡与世界书（Worldbook）。
+  - 创想区记忆库与休闲区记忆库安全隔离。
+- **新增可视化 UI**
+  - 新增 TYXT 可视化空间界面。
+  - 启动方式：双击 `start-tyxt-space.bat`
+- **新增 Agent 权限模块**
+  - 提供独立 Agent 权限管理能力。
+- **工具按场域授权**
+  - 工具模块可按场域定义权限边界。
 
 ## 新手教程（WebUI + 手机UI）
 

@@ -20,37 +20,32 @@ set "PYTHON_ARGS="
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
 if exist "%VENV_PY%" (
   set "PYTHON_EXE=%VENV_PY%"
-) else (
+) else if not "%TYXT_PYTHON_EXE%"=="" (
+  if exist "%TYXT_PYTHON_EXE%" (
+    set "PYTHON_EXE=%TYXT_PYTHON_EXE%"
+  )
+)
+if "%PYTHON_EXE%"=="" (
   where python >nul 2>nul
   if %errorlevel%==0 (
     set "PYTHON_EXE=python"
-  ) else (
-    where py >nul 2>nul
-    if %errorlevel%==0 (
-      set "PYTHON_EXE=py"
-      set "PYTHON_ARGS=-3"
-    )
   )
 )
-
 if "%PYTHON_EXE%"=="" (
-  echo [ERROR] Python not found. Please install Python and add it to PATH.
+  echo [ERROR] Python not found. Tried:
+  echo   1. %VENV_PY%
+  echo   2. TYXT_PYTHON_EXE env var: %TYXT_PYTHON_EXE%
+  echo   3. python in system PATH
+  echo   Set TYXT_PYTHON_EXE to your Python path, or create a .venv.
   echo.
   pause
   exit /b 1
 )
 
-if "%PYTHON_ARGS%"=="" (
-  echo Using interpreter: %PYTHON_EXE%
-) else (
-  echo Using interpreter: %PYTHON_EXE% %PYTHON_ARGS%
-)
-if exist "%VENV_PY%" (
-  echo [INFO] Virtual environment detected: .venv
-)
+echo Using interpreter: %PYTHON_EXE%
 echo.
 
-set "TYXT_UI_HTML=%~dp0frontend\TYXT_UI.html"
+if "%TYXT_UI_HTML%"=="" set "TYXT_UI_HTML=%~dp0frontend\TYXT_UI.html"
 set "TYXT_SSL_CERT_FILE=%~dp0certs\lan\server.pem"
 set "TYXT_SSL_KEY_FILE=%~dp0certs\lan\server-key.pem"
 set "USE_HTTPS=0"
@@ -93,7 +88,7 @@ if /I "%TYXT_NO_BROWSER%"=="1" (
 )
 echo.
 
-"%PYTHON_EXE%" %PYTHON_ARGS% "%~dp0ollama_multi_agent.py"
+"%PYTHON_EXE%" "%~dp0ollama_multi_agent.py"
 set "EXIT_CODE=%errorlevel%"
 
 echo.

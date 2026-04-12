@@ -1,0 +1,667 @@
+{
+  "meta": {
+    "version": "0.6.0",
+    "schema": "claw-library/asset.manifest.v6"
+  },
+  "assets": [
+    {
+      "id": "document-core",
+      "kind": "book",
+      "roomId": "document",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 365,
+        "y": 200
+      },
+      "footpoint": {
+        "x": 365,
+        "y": 236
+      },
+      "size": {
+        "width": 101,
+        "height": 72
+      },
+      "displaySize": {
+        "width": 101,
+        "height": 72
+      },
+      "occupancyBox": [
+        315,
+        170,
+        415,
+        238
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        87,
+        56
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 315,
+          "y": 164
+        },
+        {
+          "x": 415,
+          "y": 164
+        },
+        {
+          "x": 415,
+          "y": 238
+        },
+        {
+          "x": 315,
+          "y": 238
+        }
+      ]
+    },
+    {
+      "id": "memory-core",
+      "kind": "book",
+      "roomId": "memory",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 365,
+        "y": 470
+      },
+      "footpoint": {
+        "x": 365,
+        "y": 504
+      },
+      "size": {
+        "width": 101,
+        "height": 72
+      },
+      "displaySize": {
+        "width": 101,
+        "height": 72
+      },
+      "occupancyBox": [
+        315,
+        440,
+        415,
+        508
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        87,
+        56
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 315,
+          "y": 434
+        },
+        {
+          "x": 415,
+          "y": 434
+        },
+        {
+          "x": 415,
+          "y": 508
+        },
+        {
+          "x": 315,
+          "y": 508
+        }
+      ]
+    },
+    {
+      "id": "mcp-core",
+      "kind": "tool",
+      "roomId": "mcp",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 872,
+        "y": 185
+      },
+      "footpoint": {
+        "x": 872,
+        "y": 220
+      },
+      "size": {
+        "width": 111,
+        "height": 76
+      },
+      "displaySize": {
+        "width": 111,
+        "height": 76
+      },
+      "occupancyBox": [
+        817,
+        154,
+        927,
+        222
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        97,
+        60
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 817,
+          "y": 146
+        },
+        {
+          "x": 927,
+          "y": 146
+        },
+        {
+          "x": 927,
+          "y": 222
+        },
+        {
+          "x": 817,
+          "y": 222
+        }
+      ]
+    },
+    {
+      "id": "images-core",
+      "kind": "art",
+      "roomId": "images",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1455,
+        "y": 170
+      },
+      "footpoint": {
+        "x": 1455,
+        "y": 206
+      },
+      "size": {
+        "width": 106,
+        "height": 78
+      },
+      "displaySize": {
+        "width": 106,
+        "height": 78
+      },
+      "occupancyBox": [
+        1402,
+        138,
+        1507,
+        208
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        92,
+        62
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1402,
+          "y": 130
+        },
+        {
+          "x": 1507,
+          "y": 130
+        },
+        {
+          "x": 1507,
+          "y": 208
+        },
+        {
+          "x": 1402,
+          "y": 208
+        }
+      ]
+    },
+    {
+      "id": "log-core",
+      "kind": "marker",
+      "roomId": "log",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1488,
+        "y": 410
+      },
+      "footpoint": {
+        "x": 1488,
+        "y": 444
+      },
+      "size": {
+        "width": 102,
+        "height": 72
+      },
+      "displaySize": {
+        "width": 102,
+        "height": 72
+      },
+      "occupancyBox": [
+        1437,
+        382,
+        1539,
+        446
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        89,
+        56
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1437,
+          "y": 374
+        },
+        {
+          "x": 1539,
+          "y": 374
+        },
+        {
+          "x": 1539,
+          "y": 446
+        },
+        {
+          "x": 1437,
+          "y": 446
+        }
+      ]
+    },
+    {
+      "id": "schedule-core",
+      "kind": "marker",
+      "roomId": "schedule",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1496,
+        "y": 575
+      },
+      "footpoint": {
+        "x": 1496,
+        "y": 610
+      },
+      "size": {
+        "width": 106,
+        "height": 78
+      },
+      "displaySize": {
+        "width": 106,
+        "height": 78
+      },
+      "occupancyBox": [
+        1444,
+        542,
+        1549,
+        612
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        92,
+        62
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1444,
+          "y": 534
+        },
+        {
+          "x": 1549,
+          "y": 534
+        },
+        {
+          "x": 1549,
+          "y": 612
+        },
+        {
+          "x": 1444,
+          "y": 612
+        }
+      ]
+    },
+    {
+      "id": "skills-core",
+      "kind": "tool",
+      "roomId": "skills",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 365,
+        "y": 835
+      },
+      "footpoint": {
+        "x": 365,
+        "y": 872
+      },
+      "size": {
+        "width": 111,
+        "height": 78
+      },
+      "displaySize": {
+        "width": 111,
+        "height": 78
+      },
+      "occupancyBox": [
+        310,
+        802,
+        420,
+        874
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        97,
+        62
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 310,
+          "y": 794
+        },
+        {
+          "x": 420,
+          "y": 794
+        },
+        {
+          "x": 420,
+          "y": 874
+        },
+        {
+          "x": 310,
+          "y": 874
+        }
+      ]
+    },
+    {
+      "id": "gateway-core",
+      "kind": "tool",
+      "roomId": "gateway",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 818,
+        "y": 745
+      },
+      "footpoint": {
+        "x": 818,
+        "y": 782
+      },
+      "size": {
+        "width": 117,
+        "height": 82
+      },
+      "displaySize": {
+        "width": 117,
+        "height": 82
+      },
+      "occupancyBox": [
+        759,
+        710,
+        876,
+        784
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        104,
+        66
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 759,
+          "y": 702
+        },
+        {
+          "x": 876,
+          "y": 702
+        },
+        {
+          "x": 876,
+          "y": 784
+        },
+        {
+          "x": 759,
+          "y": 784
+        }
+      ]
+    },
+    {
+      "id": "agent-core",
+      "kind": "marker",
+      "roomId": "agent",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1144,
+        "y": 740
+      },
+      "footpoint": {
+        "x": 1144,
+        "y": 774
+      },
+      "size": {
+        "width": 99,
+        "height": 72
+      },
+      "displaySize": {
+        "width": 99,
+        "height": 72
+      },
+      "occupancyBox": [
+        1095,
+        710,
+        1194,
+        776
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        85,
+        56
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1095,
+          "y": 704
+        },
+        {
+          "x": 1194,
+          "y": 704
+        },
+        {
+          "x": 1194,
+          "y": 776
+        },
+        {
+          "x": 1095,
+          "y": 776
+        }
+      ]
+    },
+    {
+      "id": "breakroom-core",
+      "kind": "marker",
+      "roomId": "break_room",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1270,
+        "y": 930
+      },
+      "footpoint": {
+        "x": 1270,
+        "y": 968
+      },
+      "size": {
+        "width": 122,
+        "height": 84
+      },
+      "displaySize": {
+        "width": 122,
+        "height": 84
+      },
+      "occupancyBox": [
+        1209,
+        894,
+        1331,
+        970
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        109,
+        68
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1209,
+          "y": 886
+        },
+        {
+          "x": 1331,
+          "y": 886
+        },
+        {
+          "x": 1331,
+          "y": 970
+        },
+        {
+          "x": 1209,
+          "y": 970
+        }
+      ]
+    },
+    {
+      "id": "taskq-core",
+      "kind": "tool",
+      "roomId": "task_queues",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1580,
+        "y": 900
+      },
+      "footpoint": {
+        "x": 1580,
+        "y": 936
+      },
+      "size": {
+        "width": 111,
+        "height": 80
+      },
+      "displaySize": {
+        "width": 111,
+        "height": 80
+      },
+      "occupancyBox": [
+        1525,
+        866,
+        1636,
+        938
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        97,
+        64
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1525,
+          "y": 858
+        },
+        {
+          "x": 1636,
+          "y": 858
+        },
+        {
+          "x": 1636,
+          "y": 938
+        },
+        {
+          "x": 1525,
+          "y": 938
+        }
+      ]
+    },
+    {
+      "id": "alarm-core",
+      "kind": "marker",
+      "roomId": "alarm",
+      "layer": "mid_props",
+      "anchor": {
+        "x": 1530,
+        "y": 170
+      },
+      "footpoint": {
+        "x": 1530,
+        "y": 204
+      },
+      "size": {
+        "width": 101,
+        "height": 72
+      },
+      "displaySize": {
+        "width": 101,
+        "height": 72
+      },
+      "occupancyBox": [
+        1480,
+        140,
+        1580,
+        206
+      ],
+      "visibleBBox": [
+        7,
+        8,
+        87,
+        56
+      ],
+      "depthBand": 20,
+      "hitPolygon": [
+        {
+          "x": 1480,
+          "y": 132
+        },
+        {
+          "x": 1580,
+          "y": 132
+        },
+        {
+          "x": 1580,
+          "y": 206
+        },
+        {
+          "x": 1480,
+          "y": 206
+        }
+      ]
+    }
+  ],
+  "growthRules": [
+    {
+      "metric": "assetsCount",
+      "threshold": 1,
+      "reveal": [
+        "images-core"
+      ]
+    },
+    {
+      "metric": "skillsCount",
+      "threshold": 1,
+      "reveal": [
+        "skills-core"
+      ]
+    },
+    {
+      "metric": "textOutputs",
+      "threshold": 1,
+      "reveal": [
+        "document-core"
+      ]
+    }
+  ]
+}

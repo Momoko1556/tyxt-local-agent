@@ -43,6 +43,15 @@ DEFAULT_ENTRY_FUNCTION = "run"
 SKILL_TYPE_PYTHON = "python"
 SKILL_TYPE_MCP = "mcp"
 
+SCENE_ACCESS_WORKSPACE = "workspace"
+SCENE_ACCESS_LOUNGE = "lounge"
+SCENE_ACCESS_CREATIVE = "creative"
+SCENE_ACCESS_KEYS = (
+    SCENE_ACCESS_WORKSPACE,
+    SCENE_ACCESS_LOUNGE,
+    SCENE_ACCESS_CREATIVE,
+)
+
 _SCRIPT_EXTS = {".py", ".sh", ".bat", ".cmd", ".ps1", ".psm1", ".psd1", ".js"}
 
 # Warning-level patterns: potentially risky, require manual enable by admin.
@@ -89,6 +98,13 @@ class SkillDescriptor:
     skill_type: str = SKILL_TYPE_PYTHON
     server_name: str = ""
     tool_name: str = ""
+    scene_access: Dict[str, bool] = field(
+        default_factory=lambda: {
+            SCENE_ACCESS_WORKSPACE: True,
+            SCENE_ACCESS_LOUNGE: True,
+            SCENE_ACCESS_CREATIVE: True,
+        }
+    )
 
     def to_dict(self, admin_view: bool = True) -> Dict[str, Any]:
         base = {
@@ -103,6 +119,7 @@ class SkillDescriptor:
             "has_update": bool(self.has_update),
             "update_url": str(self.update_url or ""),
             "type": str(self.skill_type or SKILL_TYPE_PYTHON),
+            "scene_access": _normalize_scene_access(self.scene_access),
         }
         if self.server_name:
             base["server_name"] = str(self.server_name)
@@ -162,6 +179,7 @@ def _clone_descriptor(d: SkillDescriptor) -> SkillDescriptor:
         skill_type=str(getattr(d, "skill_type", SKILL_TYPE_PYTHON) or SKILL_TYPE_PYTHON).strip().lower() or SKILL_TYPE_PYTHON,
         server_name=str(getattr(d, "server_name", "") or "").strip(),
         tool_name=str(getattr(d, "tool_name", "") or "").strip(),
+        scene_access=_normalize_scene_access(getattr(d, "scene_access", None)),
     )
 
 
@@ -198,6 +216,7 @@ def _coerce_runtime_descriptor(obj: Any) -> Optional[SkillDescriptor]:
         skill_type=str(obj.get("type") or obj.get("skill_type") or SKILL_TYPE_PYTHON).strip().lower() or SKILL_TYPE_PYTHON,
         server_name=str(obj.get("mcp_server") or obj.get("server_name") or "").strip(),
         tool_name=str(obj.get("mcp_tool") or obj.get("tool_name") or "").strip(),
+        scene_access=_normalize_scene_access(obj.get("scene_access")),
     )
     return out
 
@@ -420,6 +439,52 @@ def _normalize_permissions(v: Any) -> Dict[str, bool]:
     }
 
 
+def _default_scene_access() -> Dict[str, bool]:
+    return {
+        SCENE_ACCESS_WORKSPACE: True,
+        SCENE_ACCESS_LOUNGE: True,
+        SCENE_ACCESS_CREATIVE: True,
+    }
+
+
+def _normalize_scene_bucket(scene: Any) -> str:
+    token = str(scene or "").strip().lower()
+    if token in {"workspace", "work", "office"}:
+        return SCENE_ACCESS_WORKSPACE
+    if token in {"creative", "theater", "theatre"}:
+        return SCENE_ACCESS_CREATIVE
+    if token in {"lounge", "private", "group", "chat", "local"}:
+        return SCENE_ACCESS_LOUNGE
+    return SCENE_ACCESS_LOUNGE
+
+
+def _normalize_scene_access(v: Any, default: Optional[Dict[str, bool]] = None) -> Dict[str, bool]:
+    base = dict(default or _default_scene_access())
+    src = v if isinstance(v, dict) else {}
+    out = {k: _safe_bool(base.get(k), True) for k in SCENE_ACCESS_KEYS}
+    if not src:
+        return out
+    for key in SCENE_ACCESS_KEYS:
+        if key in src:
+            out[key] = _safe_bool(src.get(key), out[key])
+    # Legacy aliases compatibility.
+    if "work" in src and SCENE_ACCESS_WORKSPACE not in src:
+        out[SCENE_ACCESS_WORKSPACE] = _safe_bool(src.get("work"), out[SCENE_ACCESS_WORKSPACE])
+    if "office" in src and SCENE_ACCESS_WORKSPACE not in src:
+        out[SCENE_ACCESS_WORKSPACE] = _safe_bool(src.get("office"), out[SCENE_ACCESS_WORKSPACE])
+    if "chat" in src and SCENE_ACCESS_LOUNGE not in src:
+        out[SCENE_ACCESS_LOUNGE] = _safe_bool(src.get("chat"), out[SCENE_ACCESS_LOUNGE])
+    if "private" in src and SCENE_ACCESS_LOUNGE not in src:
+        out[SCENE_ACCESS_LOUNGE] = _safe_bool(src.get("private"), out[SCENE_ACCESS_LOUNGE])
+    if "group" in src and SCENE_ACCESS_LOUNGE not in src:
+        out[SCENE_ACCESS_LOUNGE] = _safe_bool(src.get("group"), out[SCENE_ACCESS_LOUNGE])
+    if "theater" in src and SCENE_ACCESS_CREATIVE not in src:
+        out[SCENE_ACCESS_CREATIVE] = _safe_bool(src.get("theater"), out[SCENE_ACCESS_CREATIVE])
+    if "theatre" in src and SCENE_ACCESS_CREATIVE not in src:
+        out[SCENE_ACCESS_CREATIVE] = _safe_bool(src.get("theatre"), out[SCENE_ACCESS_CREATIVE])
+    return out
+
+
 def _validate_manifest(raw: Any) -> Tuple[bool, Optional[Dict[str, Any]], str]:
     if not isinstance(raw, dict):
         return False, None, "manifest is not a JSON object"
@@ -582,6 +647,7 @@ def _load_manifest(skill_dir: str) -> Tuple[bool, Optional[Dict[str, Any]], str]
 
 def _touch_state_record(state: Dict[str, Any], skill_id: str, safe_status: str, enabled_default: bool = False) -> Dict[str, Any]:
     now = _now_iso()
+    default_scene_access = _default_scene_access()
     row = state.get(skill_id)
     if not isinstance(row, dict):
         row = {
@@ -589,12 +655,14 @@ def _touch_state_record(state: Dict[str, Any], skill_id: str, safe_status: str, 
             "installed_at": now,
             "last_checked_at": now,
             "safe_status": safe_status,
+            "scene_access": dict(default_scene_access),
         }
     else:
         row["enabled"] = _safe_bool(row.get("enabled"), enabled_default)
         row["installed_at"] = str(row.get("installed_at") or now)
         row["last_checked_at"] = now
         row["safe_status"] = safe_status
+        row["scene_access"] = _normalize_scene_access(row.get("scene_access"), default=default_scene_access)
     state[skill_id] = row
     return row
 
@@ -715,6 +783,10 @@ def reload_skills() -> Dict[str, SkillDescriptor]:
         safe_status = SAFE_STATUS_WARNING if scan_level == SAFE_STATUS_WARNING else SAFE_STATUS_SAFE
         row = _touch_state_record(state, skill_id, safe_status, enabled_default=False)
         enabled = bool(row.get("enabled", False))
+        scene_access = _normalize_scene_access(
+            row.get("scene_access"),
+            default=_normalize_scene_access(manifest.get("scene_access")),
+        )
 
         if safe_status == SAFE_STATUS_WARNING:
             summary["warnings"] += 1
@@ -743,6 +815,7 @@ def reload_skills() -> Dict[str, SkillDescriptor]:
             skill_type=str(manifest.get("type") or manifest.get("skill_type") or SKILL_TYPE_PYTHON).strip().lower() or SKILL_TYPE_PYTHON,
             server_name=str(manifest.get("mcp_server") or manifest.get("server_name") or "").strip(),
             tool_name=str(manifest.get("mcp_tool") or manifest.get("tool_name") or "").strip(),
+            scene_access=scene_access,
         )
         descriptors[skill_id] = desc
         summary["loaded"] += 1
@@ -772,6 +845,10 @@ def reload_skills() -> Dict[str, SkillDescriptor]:
         rd.enabled = bool(row.get("enabled", False))
         rd.status = str(rd.status or SKILL_STATUS_NORMAL).strip() or SKILL_STATUS_NORMAL
         rd.safe_status = str(rd.safe_status or SAFE_STATUS_UNKNOWN).strip() or SAFE_STATUS_UNKNOWN
+        rd.scene_access = _normalize_scene_access(
+            row.get("scene_access"),
+            default=_normalize_scene_access(getattr(rd, "scene_access", None)),
+        )
         descriptors[sid] = rd
         summary["runtime_loaded"] += 1
 
@@ -800,6 +877,7 @@ def reload_skills() -> Dict[str, SkillDescriptor]:
             enabled=False,
             scan_reasons=list(item.get("details") or []),
             source="local",
+            scene_access=_default_scene_access(),
         )
         descriptors[sid] = desc
         if status == SKILL_STATUS_QUARANTINED:
@@ -873,6 +951,43 @@ def set_skill_enabled(skill_id: str, enabled: bool) -> Tuple[bool, str, Optional
         if sid in _CACHE:
             _CACHE[sid].enabled = bool(enabled)
     return True, "", load_all_skills(force=False).get(sid).to_dict(admin_view=True) if sid in load_all_skills(force=False) else None
+
+
+def set_skill_scene_access(skill_id: str, scene_access: Dict[str, Any]) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    sid = str(skill_id or "").strip()
+    if not sid:
+        return False, "missing_skill_id", None
+    skills = load_all_skills(force=False)
+    d = skills.get(sid)
+    if d is None:
+        return False, "skill_not_found", None
+    if d.status != SKILL_STATUS_NORMAL:
+        return False, f"skill_status_{d.status}", d.to_dict(admin_view=True)
+
+    state = _load_state_raw()
+    row = _touch_state_record(state, sid, d.safe_status, enabled_default=False)
+    normalized = _normalize_scene_access(scene_access, default=row.get("scene_access"))
+    row["scene_access"] = dict(normalized)
+    _save_state_raw(state)
+
+    with _LOCK:
+        if sid in _CACHE:
+            _CACHE[sid].scene_access = dict(normalized)
+    loaded = load_all_skills(force=False)
+    return True, "", loaded.get(sid).to_dict(admin_view=True) if sid in loaded else None
+
+
+def is_skill_scene_allowed(skill_id: str, scene: Any, default: bool = True) -> bool:
+    sid = str(skill_id or "").strip()
+    if not sid:
+        return bool(default)
+    skills = load_all_skills(force=False)
+    d = skills.get(sid)
+    if d is None:
+        return bool(default)
+    scene_key = _normalize_scene_bucket(scene)
+    row = _normalize_scene_access(getattr(d, "scene_access", None))
+    return bool(row.get(scene_key, bool(default)))
 
 
 def update_skill_safe_status(skill_id: str, safe_status: str) -> None:
@@ -1015,6 +1130,13 @@ def run_skill(skill_id: str, params: Dict[str, Any], context: Dict[str, Any]) ->
         return {"ok": False, "data": None, "error": f"skill_status_{d.status}"}
     if not d.enabled:
         return {"ok": False, "data": None, "error": "skill_disabled"}
+    scene_key = _normalize_scene_bucket(
+        (context.get("scene") if isinstance(context, dict) else "")
+        or (context.get("channel_type") if isinstance(context, dict) else "")
+    )
+    scene_access = _normalize_scene_access(getattr(d, "scene_access", None))
+    if not _safe_bool(scene_access.get(scene_key), True):
+        return {"ok": False, "data": None, "error": f"scene_permission_denied:{scene_key}"}
 
     # Permission gates against runtime capability flags.
     caps = {}

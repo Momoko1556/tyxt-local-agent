@@ -45,29 +45,26 @@ for %%I in (cloudflared.exe ngrok.exe) do (
 exit /b 0
 
 :kill_launchers
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = [string]$p.CommandLine; if (($name -eq 'cmd.exe' -or $name -eq 'powershell.exe' -or $name -eq 'pwsh.exe') -and $cmd) { $lc = $cmd.ToLowerInvariant(); if ($lc.Contains('start_agent.bat') -or $lc.Contains('start_remote_easy') -or $lc.Contains('start_remote_ngrok') -or $lc.Contains('start_') -or $lc.Contains('ollama_multi_agent.py') -or ($lc.Contains('cloudflared') -and $lc.Contains('tunnel')) -or $lc.Contains('ngrok.exe')) { [Console]::WriteLine($p.ProcessId) } } }"') do (
-  taskkill /F /T /PID %%P >nul 2>nul
-  echo [OK] killed launcher PID %%P
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = [string]$p.CommandLine; if (($name -eq 'cmd.exe' -or $name -eq 'powershell.exe' -or $name -eq 'pwsh.exe') -and $cmd) { $lc = $cmd.ToLowerInvariant(); if (($lc.Contains('start_agent.bat') -or $lc.Contains('start_local.bat') -or $lc.Contains('start_remote_easy.bat') -or $lc.Contains('start_remote_ngrok.bat') -or $lc.Contains('start-tyxt-space.bat') -or $lc.Contains('start-local-cc-safe.bat') -or $lc.Contains('ollama_multi_agent.py') -or ($lc.Contains('cloudflared') -and $lc.Contains('tunnel')) -or $lc.Contains('ngrok.exe')) -and (-not $lc.Contains('stop_all.bat'))) { [Console]::WriteLine($p.ProcessId) } } }"`) do (
+  call :kill_pid_if_numeric "%%P" "launcher"
 )
 exit /b 0
 
 :kill_backend
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = ([string]$p.CommandLine).ToLowerInvariant(); if (($name -eq 'python.exe' -or $name -eq 'pythonw.exe') -and $cmd.Contains('ollama_multi_agent.py')) { [Console]::WriteLine($p.ProcessId) } }"') do (
-  taskkill /F /T /PID %%P >nul 2>nul
-  echo [OK] killed backend PID %%P
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = ([string]$p.CommandLine).ToLowerInvariant(); if (($name -eq 'python.exe' -or $name -eq 'pythonw.exe') -and $cmd.Contains('ollama_multi_agent.py')) { [Console]::WriteLine($p.ProcessId) } }"`) do (
+  call :kill_pid_if_numeric "%%P" "backend"
 )
 exit /b 0
 
 :release_ports
-for /f %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$pids = @{}; foreach ($pt in 5000,5173) { $conns = Get-NetTCPConnection -State Listen -LocalPort $pt -ErrorAction SilentlyContinue; foreach ($c in @($conns)) { $pid = [int]$c.OwningProcess; if (-not $pids.ContainsKey($pid)) { $pids[$pid] = 1; [Console]::WriteLine($pid) } } }"') do (
-  taskkill /F /T /PID %%P >nul 2>nul
-  echo [OK] released listener owner PID %%P
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$pids = @{}; foreach ($pt in 5000,5173) { $conns = Get-NetTCPConnection -State Listen -LocalPort $pt -ErrorAction SilentlyContinue; foreach ($c in @($conns)) { $pid = [int]$c.OwningProcess; if (-not $pids.ContainsKey($pid)) { try { $proc = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $pid) -ErrorAction Stop; $n = ([string]$proc.Name).ToLowerInvariant(); $cl = ([string]$proc.CommandLine).ToLowerInvariant(); if (($n -eq 'python.exe' -or $n -eq 'pythonw.exe') -and $cl.Contains('ollama_multi_agent.py')) { $pids[$pid] = 1; [Console]::WriteLine($pid); continue }; if ($n -eq 'node.exe' -or $n -eq 'cloudflared.exe' -or $n -eq 'ngrok.exe') { $pids[$pid] = 1; [Console]::WriteLine($pid); continue } } catch {} } } }"`) do (
+  call :kill_pid_if_numeric "%%P" "listener owner"
 )
 exit /b 0
 
 :check_remaining
 set "REMAINING=0"
-for /f %%X in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$count = 0; $tp = Get-Process -Name cloudflared,ngrok -ErrorAction SilentlyContinue; if ($tp) { $count += @($tp).Count }; $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = ([string]$p.CommandLine).ToLowerInvariant(); if (($name -eq 'python.exe' -or $name -eq 'pythonw.exe') -and $cmd.Contains('ollama_multi_agent.py')) { $count += 1 } }; foreach ($pt in 5000,5173) { $conns = Get-NetTCPConnection -State Listen -LocalPort $pt -ErrorAction SilentlyContinue; if ($conns) { $count += @($conns).Count } }; [Console]::WriteLine($count)"') do (
+for /f "usebackq delims=" %%X in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$count = 0; $tp = Get-Process -Name cloudflared,ngrok -ErrorAction SilentlyContinue; if ($tp) { $count += @($tp).Count }; $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue; foreach ($p in $procs) { $name = ([string]$p.Name).ToLowerInvariant(); $cmd = ([string]$p.CommandLine).ToLowerInvariant(); if (($name -eq 'python.exe' -or $name -eq 'pythonw.exe') -and $cmd.Contains('ollama_multi_agent.py')) { $count += 1 }; if (($name -eq 'cmd.exe' -or $name -eq 'powershell.exe' -or $name -eq 'pwsh.exe') -and (-not $cmd.Contains('stop_all.bat')) -and ($cmd.Contains('start_agent.bat') -or $cmd.Contains('start_local.bat') -or $cmd.Contains('start_remote_easy.bat') -or $cmd.Contains('start_remote_ngrok.bat') -or $cmd.Contains('start-tyxt-space.bat') -or $cmd.Contains('start-local-cc-safe.bat'))) { $count += 1 } }; [Console]::WriteLine($count)"`) do (
   set "LEFT=%%X"
 )
 if not defined LEFT set "LEFT=0"
@@ -78,6 +75,15 @@ if "!REMAINING!"=="0" (
 ) else (
   echo [INFO] still remaining targets, continue next pass ...
 )
+exit /b 0
+
+:kill_pid_if_numeric
+set "KPID=%~1"
+set "KPID=%KPID:"=%"
+set "KIND=%~2"
+echo %KPID%| findstr /R "^[0-9][0-9]*$" >nul || exit /b 0
+taskkill /F /T /PID %KPID% >nul 2>nul
+echo [OK] killed %KIND% PID %KPID%
 exit /b 0
 
 :done_ok

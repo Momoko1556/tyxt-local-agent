@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ClawLibrary Remap Workbench</title>
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #09101f;
+        color: #dbe6ff;
+        font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      #root {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        width: 100%;
+        height: 100%;
+      }
+      .sidebar {
+        overflow: auto;
+        border-right: 1px solid rgba(91, 121, 222, 0.25);
+        background: rgba(8, 14, 28, 0.96);
+        padding: 16px;
+      }
+      .panel {
+        border: 1px solid rgba(84, 110, 208, 0.28);
+        border-radius: 14px;
+        background: rgba(14, 24, 48, 0.72);
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .panel h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+      .panel h3 {
+        margin: 12px 0 8px;
+        font-size: 13px;
+        color: #a9beff;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .row label {
+        font-size: 12px;
+        min-width: 58px;
+        color: #afc2f7;
+      }
+      .row input, .row select, .row textarea, .row button {
+        font: inherit;
+      }
+      .row input, .row select, .row textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid rgba(90, 116, 214, 0.35);
+        border-radius: 10px;
+        background: rgba(8, 14, 28, 0.9);
+        color: #e9f0ff;
+        padding: 7px 10px;
+      }
+      .row textarea {
+        min-height: 120px;
+        resize: vertical;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+      .buttonbar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .buttonbar button, .row button {
+        border: 1px solid #4f79ff;
+        background: rgba(20, 28, 56, 0.82);
+        color: #dbe6ff;
+        padding: 7px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .pill-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .pill {
+        padding: 6px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(93, 118, 209, 0.35);
+        background: rgba(14, 20, 44, 0.78);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .pill.active {
+        border-color: #8eb6ff;
+        background: rgba(45, 77, 170, 0.35);
+      }
+      .stage {
+        position: relative;
+        overflow: auto;
+        background: radial-gradient(circle at 20% 10%, rgba(43, 68, 138, 0.18), transparent 30%), #050912;
+      }
+      #canvas {
+        display: block;
+        margin: 16px auto;
+        width: min(100%, 1920px);
+        height: auto;
+        border: 1px solid rgba(85, 114, 216, 0.24);
+        border-radius: 14px;
+        background: #030817;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+      }
+      .hint {
+        color: #8fa5de;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/remap.ts"></script>
+  </body>
+  </html>

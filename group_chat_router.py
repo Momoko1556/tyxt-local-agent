@@ -70,6 +70,261 @@ def _norm_list(values: Any, max_items: int = 64) -> List[str]:
     return out
 
 
+def _has_nested_key(row: Any, keys: List[str]) -> bool:
+    node = row
+    for key in keys:
+        if not isinstance(node, dict) or key not in node:
+            return False
+        node = node.get(key)
+    return True
+
+
+def _trigger_rules_default(seed: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    src = seed if isinstance(seed, dict) else {}
+    mode = _norm_mode(src.get("mode"))
+    keyword_enabled = _safe_bool(src.get("keyword_enabled"), True)
+    proactive_enabled = _safe_bool(src.get("proactive_enabled"), False)
+    followup_enabled = _safe_bool(src.get("followup_enabled"), False)
+    if mode == "strict":
+        keyword_enabled = False
+        proactive_enabled = False
+    elif mode == "semi_active":
+        proactive_enabled = False
+    elif mode == "silent":
+        keyword_enabled = False
+        proactive_enabled = False
+        followup_enabled = False
+
+    return {
+        "version": 1,
+        "mode": mode,
+        "explicit": {
+            "at_reply": _safe_bool(src.get("at_reply"), True),
+            "name_reply": _safe_bool(src.get("name_reply"), True),
+            "nickname_reply": _safe_bool(src.get("nickname_reply"), _safe_bool(src.get("name_reply"), True)),
+            "quote_reply": _safe_bool(src.get("quote_reply"), True),
+            "admin_force_wakeup": _safe_bool(src.get("admin_force_wakeup"), True),
+        },
+        "keyword": {
+            "enabled": bool(keyword_enabled),
+            "terms": _norm_list(src.get("keyword_terms"), max_items=60),
+        },
+        "proactive": {
+            "enabled": bool(proactive_enabled),
+        },
+        "guard": {
+            "cooldown_seconds": _safe_int(src.get("cooldown_seconds"), 8, min_v=0, max_v=7200),
+            "anti_conflict_enabled": _safe_bool(src.get("anti_conflict_enabled"), True),
+        },
+        "followup": {
+            "enabled": bool(followup_enabled),
+            "window_seconds": _safe_int(src.get("followup_window_seconds"), 20, min_v=3, max_v=240),
+        },
+    }
+
+
+def _normalize_trigger_rules_v1(raw: Any, fallback: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+    base_seed = fallback if isinstance(fallback, dict) else _trigger_rules_default()
+    base = _trigger_rules_default(
+        {
+            "mode": base_seed.get("mode"),
+            "at_reply": ((base_seed.get("explicit") or {}).get("at_reply") if isinstance(base_seed.get("explicit"), dict) else True),
+            "name_reply": ((base_seed.get("explicit") or {}).get("name_reply") if isinstance(base_seed.get("explicit"), dict) else True),
+            "nickname_reply": (
+                (base_seed.get("explicit") or {}).get("nickname_reply")
+                if isinstance(base_seed.get("explicit"), dict) and ("nickname_reply" in (base_seed.get("explicit") or {}))
+                else ((base_seed.get("explicit") or {}).get("name_reply") if isinstance(base_seed.get("explicit"), dict) else True)
+            ),
+            "quote_reply": ((base_seed.get("explicit") or {}).get("quote_reply") if isinstance(base_seed.get("explicit"), dict) else True),
+            "admin_force_wakeup": ((base_seed.get("explicit") or {}).get("admin_force_wakeup") if isinstance(base_seed.get("explicit"), dict) else True),
+            "keyword_enabled": ((base_seed.get("keyword") or {}).get("enabled") if isinstance(base_seed.get("keyword"), dict) else True),
+            "keyword_terms": ((base_seed.get("keyword") or {}).get("terms") if isinstance(base_seed.get("keyword"), dict) else []),
+            "proactive_enabled": ((base_seed.get("proactive") or {}).get("enabled") if isinstance(base_seed.get("proactive"), dict) else False),
+            "cooldown_seconds": ((base_seed.get("guard") or {}).get("cooldown_seconds") if isinstance(base_seed.get("guard"), dict) else 8),
+            "anti_conflict_enabled": ((base_seed.get("guard") or {}).get("anti_conflict_enabled") if isinstance(base_seed.get("guard"), dict) else True),
+            "followup_enabled": ((base_seed.get("followup") or {}).get("enabled") if isinstance(base_seed.get("followup"), dict) else False),
+            "followup_window_seconds": ((base_seed.get("followup") or {}).get("window_seconds") if isinstance(base_seed.get("followup"), dict) else 20),
+        }
+    )
+
+    explicit_src = src.get("explicit") if isinstance(src.get("explicit"), dict) else {}
+    keyword_src = src.get("keyword") if isinstance(src.get("keyword"), dict) else {}
+    proactive_src = src.get("proactive") if isinstance(src.get("proactive"), dict) else {}
+    guard_src = src.get("guard") if isinstance(src.get("guard"), dict) else {}
+    followup_src = src.get("followup") if isinstance(src.get("followup"), dict) else {}
+
+    mode = _norm_mode(src.get("mode") if ("mode" in src) else base.get("mode"))
+    keyword_enabled = _safe_bool(keyword_src.get("enabled"), _safe_bool((base.get("keyword") or {}).get("enabled"), True))
+    proactive_enabled = _safe_bool(proactive_src.get("enabled"), _safe_bool((base.get("proactive") or {}).get("enabled"), False))
+    followup_enabled = _safe_bool(followup_src.get("enabled"), _safe_bool((base.get("followup") or {}).get("enabled"), False))
+
+    if mode == "strict":
+        keyword_enabled = False
+        proactive_enabled = False
+    elif mode == "semi_active":
+        proactive_enabled = False
+    elif mode == "silent":
+        keyword_enabled = False
+        proactive_enabled = False
+        followup_enabled = False
+
+    return {
+        "version": 1,
+        "mode": mode,
+        "explicit": {
+            "at_reply": _safe_bool(explicit_src.get("at_reply"), _safe_bool((base.get("explicit") or {}).get("at_reply"), True)),
+            "name_reply": _safe_bool(explicit_src.get("name_reply"), _safe_bool((base.get("explicit") or {}).get("name_reply"), True)),
+            "nickname_reply": _safe_bool(
+                explicit_src.get("nickname_reply"),
+                _safe_bool(
+                    (base.get("explicit") or {}).get("nickname_reply"),
+                    _safe_bool((base.get("explicit") or {}).get("name_reply"), True),
+                ),
+            ),
+            "quote_reply": _safe_bool(explicit_src.get("quote_reply"), _safe_bool((base.get("explicit") or {}).get("quote_reply"), True)),
+            "admin_force_wakeup": _safe_bool(
+                explicit_src.get("admin_force_wakeup"),
+                _safe_bool((base.get("explicit") or {}).get("admin_force_wakeup"), True),
+            ),
+        },
+        "keyword": {
+            "enabled": bool(keyword_enabled),
+            "terms": _norm_list(keyword_src.get("terms"), max_items=60)
+            if ("terms" in keyword_src)
+            else _norm_list((base.get("keyword") or {}).get("terms"), max_items=60),
+        },
+        "proactive": {
+            "enabled": bool(proactive_enabled),
+        },
+        "guard": {
+            "cooldown_seconds": _safe_int(
+                guard_src.get("cooldown_seconds"),
+                _safe_int((base.get("guard") or {}).get("cooldown_seconds"), 8),
+                min_v=0,
+                max_v=7200,
+            ),
+            "anti_conflict_enabled": _safe_bool(
+                guard_src.get("anti_conflict_enabled"),
+                _safe_bool((base.get("guard") or {}).get("anti_conflict_enabled"), True),
+            ),
+        },
+        "followup": {
+            "enabled": bool(followup_enabled),
+            "window_seconds": _safe_int(
+                followup_src.get("window_seconds"),
+                _safe_int((base.get("followup") or {}).get("window_seconds"), 20),
+                min_v=3,
+                max_v=240,
+            ),
+        },
+    }
+
+
+def _legacy_trigger_seed(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    triggers = cfg.get("trigger_settings") if isinstance(cfg.get("trigger_settings"), dict) else {}
+    return {
+        "mode": cfg.get("group_mode"),
+        "at_reply": triggers.get("at_reply"),
+        "name_reply": triggers.get("name_reply"),
+        "nickname_reply": triggers.get("nickname_reply"),
+        "quote_reply": triggers.get("quote_reply"),
+        "admin_force_wakeup": triggers.get("admin_force_wakeup"),
+        "keyword_enabled": triggers.get("keyword_trigger"),
+        "keyword_terms": cfg.get("trigger_keywords"),
+        "proactive_enabled": cfg.get("allow_proactive_reply"),
+        "cooldown_seconds": cfg.get("cooldown_seconds"),
+        "anti_conflict_enabled": cfg.get("anti_conflict_enabled"),
+        "followup_enabled": cfg.get("allow_followup_short_reply"),
+        "followup_window_seconds": cfg.get("followup_window_seconds"),
+    }
+
+
+def _get_nested_value(row: Any, keys: List[str]) -> Any:
+    node = row
+    for key in keys:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(key)
+    return node
+
+
+def _resolved_trigger_rules_v1(cfg: Dict[str, Any], meta: Dict[str, Any]) -> Dict[str, Any]:
+    group_cfg = cfg if isinstance(cfg, dict) else {}
+    route_meta = meta if isinstance(meta, dict) else {}
+
+    legacy_fallback = _normalize_trigger_rules_v1({}, fallback=_trigger_rules_default(_legacy_trigger_seed(group_cfg)))
+
+    lounge_raw = {}
+    for candidate in [
+        group_cfg.get("lounge_trigger_rules_v1"),
+        route_meta.get("lounge_trigger_rules_v1"),
+    ]:
+        if isinstance(candidate, dict):
+            lounge_raw = dict(candidate)
+            break
+    lounge_norm = _normalize_trigger_rules_v1(lounge_raw, fallback=legacy_fallback)
+
+    group_v1 = group_cfg.get("trigger_rules_v1") if isinstance(group_cfg.get("trigger_rules_v1"), dict) else {}
+    group_v1_norm = _normalize_trigger_rules_v1(group_v1, fallback=legacy_fallback)
+    explicit_group = _safe_bool(group_cfg.get("trigger_rules_v1_explicit"), False)
+
+    resolved = _normalize_trigger_rules_v1({}, fallback=legacy_fallback)
+    fields = [
+        ["mode"],
+        ["explicit", "at_reply"],
+        ["explicit", "name_reply"],
+        ["explicit", "nickname_reply"],
+        ["explicit", "quote_reply"],
+        ["explicit", "admin_force_wakeup"],
+        ["keyword", "enabled"],
+        ["keyword", "terms"],
+        ["proactive", "enabled"],
+        ["guard", "cooldown_seconds"],
+        ["guard", "anti_conflict_enabled"],
+        ["followup", "enabled"],
+        ["followup", "window_seconds"],
+    ]
+
+    source_map: Dict[str, str] = {}
+    for path in fields:
+        chosen_src = legacy_fallback
+        src_label = "legacy"
+        if explicit_group and _has_nested_key(group_v1, path):
+            chosen_src = group_v1_norm
+            src_label = "group_v1"
+        elif _has_nested_key(lounge_raw, path):
+            chosen_src = lounge_norm
+            src_label = "lounge"
+
+        source_map[".".join(path)] = src_label
+
+        dst = resolved
+        for token in path[:-1]:
+            dst = dst.setdefault(token, {})
+        leaf = path[-1]
+        val = _get_nested_value(chosen_src, path)
+        if path == ["keyword", "terms"]:
+            dst[leaf] = _norm_list(val, max_items=60)
+        elif path == ["mode"]:
+            dst[leaf] = _norm_mode(val)
+        elif path in (["guard", "cooldown_seconds"], ["followup", "window_seconds"]):
+            if path == ["guard", "cooldown_seconds"]:
+                dst[leaf] = _safe_int(val, 8, min_v=0, max_v=7200)
+            else:
+                dst[leaf] = _safe_int(val, 20, min_v=3, max_v=240)
+        else:
+            dst[leaf] = _safe_bool(val, bool(_get_nested_value(legacy_fallback, path)))
+
+    out = _normalize_trigger_rules_v1(resolved, fallback=legacy_fallback)
+    out["_source"] = {
+        "field_sources": source_map,
+        "explicit_group": bool(explicit_group),
+        "has_lounge": bool(lounge_raw),
+    }
+    return out
+
+
 def _extract_mentions(text: str) -> List[str]:
     cleaned = str(text or "")
     out = []
@@ -283,6 +538,30 @@ def _agent_alias_tokens(agent_row: Dict[str, Any]) -> List[str]:
             key = text.casefold()
             if key in generic_stop:
                 continue
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+    return out
+
+
+def _agent_nickname_tokens(agent_row: Dict[str, Any]) -> List[str]:
+    row = agent_row if isinstance(agent_row, dict) else {}
+    raw_parts = [
+        _safe_str(row.get("agent_nickname")),
+        _safe_str(row.get("nickname")),
+    ]
+    out: List[str] = []
+    seen = set()
+    for part in raw_parts:
+        if not part:
+            continue
+        pieces = re.split(r"[\s,，;；/\\|:_\-]+", part)
+        for token in [part] + pieces:
+            text = _safe_str(token)
+            if len(text) < 2 and (not re.search(r"[\u4e00-\u9fff]", text)):
+                continue
+            key = text.casefold()
             if key in seen:
                 continue
             seen.add(key)
@@ -624,42 +903,62 @@ def decide_group_route(
     runtime = _runtime_group_state(group_id)
 
     mode = _norm_mode(cfg.get("group_mode"))
-    trigger_settings = cfg.get("trigger_settings") if isinstance(cfg.get("trigger_settings"), dict) else {}
-    cooldown_seconds = _safe_int(cfg.get("cooldown_seconds"), 8, min_v=0, max_v=7200)
-    anti_conflict_enabled = _safe_bool(cfg.get("anti_conflict_enabled"), True)
+    trigger_rules_v1 = _resolved_trigger_rules_v1(cfg, m)
+    explicit_rules = trigger_rules_v1.get("explicit") if isinstance(trigger_rules_v1.get("explicit"), dict) else {}
+    keyword_rules = trigger_rules_v1.get("keyword") if isinstance(trigger_rules_v1.get("keyword"), dict) else {}
+    proactive_rules = trigger_rules_v1.get("proactive") if isinstance(trigger_rules_v1.get("proactive"), dict) else {}
+    guard_rules = trigger_rules_v1.get("guard") if isinstance(trigger_rules_v1.get("guard"), dict) else {}
+    followup_rules = trigger_rules_v1.get("followup") if isinstance(trigger_rules_v1.get("followup"), dict) else {}
+    mode = _norm_mode(trigger_rules_v1.get("mode"))
+    cooldown_seconds = _safe_int(guard_rules.get("cooldown_seconds"), _safe_int(cfg.get("cooldown_seconds"), 8), min_v=0, max_v=7200)
+    anti_conflict_enabled = _safe_bool(guard_rules.get("anti_conflict_enabled"), _safe_bool(cfg.get("anti_conflict_enabled"), True))
     max_reply_length = _safe_int(cfg.get("max_reply_length"), 260, min_v=60, max_v=1600)
     context_turn_n = _safe_int(cfg.get("context_turn_n"), 10, min_v=1, max_v=20)
     default_agent_id = _safe_str(cfg.get("default_agent_id"))
-    group_keywords = _norm_list(cfg.get("trigger_keywords"), max_items=60)
+    group_keywords = _norm_list(keyword_rules.get("terms"), max_items=60)
     force_reply = _safe_bool(m.get("group_force_reply"), False)
     admin_force_wakeup = _safe_bool(m.get("admin_force_wakeup"), False)
     relay_chain_call = _safe_bool(m.get("relay_chain_call"), False)
+    relay_chain = _relay_chain_from_meta(m, max_items=16)
     relay_round = _safe_int(m.get("relay_round"), 0, min_v=0, max_v=32)
     max_relay_round = _safe_int(cfg.get("max_relay_round"), 4, min_v=1, max_v=12)
-    relay_chain = _relay_chain_from_meta(m, max_items=16)
+    followup_window_seconds = _safe_int(
+        followup_rules.get("window_seconds"),
+        _safe_int(cfg.get("followup_window_seconds"), 20),
+        min_v=3,
+        max_v=240,
+    )
     sender_user_id = _safe_str(m.get("sender_user_id") or m.get("user_id") or m.get("sender_id"))
     sender_member_type = _safe_str(m.get("sender_member_type")).lower()
     sender_agent_id = _safe_str(m.get("sender_agent_id"))
 
     at_me = _safe_bool(m.get("at_me"), False)
     called_name = _safe_bool(m.get("call_name"), False)
+    called_nickname = _safe_bool(m.get("call_nickname"), _safe_bool(m.get("called_nickname"), False))
     quoted = _safe_bool(m.get("quoted"), False)
     explicit_trigger = bool(
-        (_safe_bool(trigger_settings.get("at_reply"), True) and at_me)
-        or (_safe_bool(trigger_settings.get("name_reply"), True) and called_name)
-        or (_safe_bool(trigger_settings.get("quote_reply"), True) and quoted)
+        (_safe_bool(explicit_rules.get("at_reply"), True) and at_me)
+        or (_safe_bool(explicit_rules.get("name_reply"), True) and called_name)
+        or (
+            _safe_bool(
+                explicit_rules.get("nickname_reply"),
+                _safe_bool(explicit_rules.get("name_reply"), True),
+            )
+            and called_nickname
+        )
+        or (_safe_bool(explicit_rules.get("quote_reply"), True) and quoted)
     )
-    keyword_trigger = bool(_safe_bool(trigger_settings.get("keyword_trigger"), True) and _contains_keyword(text, group_keywords))
+    keyword_trigger = bool(_safe_bool(keyword_rules.get("enabled"), True) and _contains_keyword(text, group_keywords))
     triggered = False
     trigger_reason = "none"
 
-    if mode == "silent":
-        triggered = False
-        trigger_reason = "mode_silent"
-    elif force_reply:
+    if force_reply:
         triggered = True
         trigger_reason = "force_reply"
-    elif admin_force_wakeup and _safe_bool(trigger_settings.get("admin_force_wakeup"), True):
+    elif mode == "silent":
+        triggered = False
+        trigger_reason = "mode_silent"
+    elif admin_force_wakeup and _safe_bool(explicit_rules.get("admin_force_wakeup"), True):
         triggered = True
         trigger_reason = "admin_force_wakeup"
     elif mode == "strict":
@@ -680,7 +979,7 @@ def decide_group_route(
         elif keyword_trigger:
             triggered = True
             trigger_reason = "keyword_trigger"
-        elif _safe_bool(cfg.get("allow_proactive_reply"), False):
+        elif _safe_bool(proactive_rules.get("enabled"), False):
             triggered = True
             trigger_reason = "active_proactive"
         else:
@@ -796,7 +1095,7 @@ def decide_group_route(
 
     # Agent priority: explicit @mention > explicit name mention > keyword trigger > followup window > default
     rank_rows: List[Tuple[int, int, int, str, str]] = []
-    followup_open = now_ts <= float(runtime.get("followup_window_until") or 0.0)
+    followup_open = bool(_safe_bool(followup_rules.get("enabled"), False)) and (now_ts <= float(runtime.get("followup_window_until") or 0.0))
     agent_row_map: Dict[str, Dict[str, Any]] = {
         _safe_str((row or {}).get("agent_id")).casefold(): dict(row or {})
         for row in list(agent_rows or [])
@@ -811,12 +1110,14 @@ def decide_group_route(
         if mid:
             member_map[mid.casefold()] = row
     alias_cache: Dict[str, List[str]] = {}
+    nickname_alias_cache: Dict[str, List[str]] = {}
     for aid in list(allowed_agents or []):
         aid_key = _safe_str(aid).casefold()
         if not aid_key:
             continue
         row = dict(agent_row_map.get(aid_key) or {"agent_id": aid})
         aliases = _agent_alias_tokens(row)
+        nickname_aliases = _agent_nickname_tokens(row)
         member_row = dict(member_map.get(aid_key) or {})
         member_name = _safe_str(member_row.get("member_name") or member_row.get("name"))
         if member_name:
@@ -830,10 +1131,23 @@ def decide_group_route(
                     }
                 )
             )
+        member_nickname = _safe_str(member_row.get("member_nickname") or member_row.get("nickname"))
+        if member_nickname:
+            nickname_aliases.extend(
+                _agent_nickname_tokens(
+                    {
+                        "agent_nickname": member_nickname,
+                        "nickname": member_nickname,
+                    }
+                )
+            )
         alias_cache[aid_key] = _norm_list(aliases, max_items=32)
+        nickname_alias_cache[aid_key] = _norm_list(nickname_aliases, max_items=24)
 
     at_mentioned_agents: List[str] = []
+    at_mentioned_nickname_agents: List[str] = []
     at_mentioned_seen = set()
+    at_mentioned_nickname_seen = set()
     for name in list(mention_names or []):
         nk = _safe_str(name).casefold()
         if not nk:
@@ -845,12 +1159,21 @@ def decide_group_route(
             if sender_agent_key and aid_key == sender_agent_key:
                 continue
             aliases = alias_cache.get(aid_key) or []
-            if any(nk == _safe_str(alias).casefold() for alias in aliases):
+            nickname_aliases = nickname_alias_cache.get(aid_key) or []
+            matched_alias = any(nk == _safe_str(alias).casefold() for alias in aliases)
+            matched_nickname = any(nk == _safe_str(alias).casefold() for alias in nickname_aliases)
+            if matched_alias:
                 if aid_key not in at_mentioned_seen:
                     at_mentioned_seen.add(aid_key)
                     at_mentioned_agents.append(_safe_str(aid))
+            if matched_nickname:
+                if aid_key not in at_mentioned_nickname_seen:
+                    at_mentioned_nickname_seen.add(aid_key)
+                    at_mentioned_nickname_agents.append(_safe_str(aid))
+            if matched_alias or matched_nickname:
                 break
     at_mentioned_set = {x.casefold() for x in at_mentioned_agents if _safe_str(x)}
+    at_mentioned_nickname_set = {x.casefold() for x in at_mentioned_nickname_agents if _safe_str(x)}
     for idx, aid in enumerate(allowed_agents):
         rank_level = 1
         mention_score = 0
@@ -865,6 +1188,10 @@ def decide_group_route(
             rank_level = max(rank_level, 5)
             mention_score += 8
             rank_reason = "explicit_at_mentioned_agent"
+        if aid.casefold() in at_mentioned_nickname_set:
+            rank_level = max(rank_level, 5)
+            mention_score += 8
+            rank_reason = "explicit_at_mentioned_agent_nickname"
 
         aliases = alias_cache.get(aid.casefold()) or []
         for alias in aliases:
@@ -883,6 +1210,23 @@ def decide_group_route(
                 rank_level = max(rank_level, 4)
                 mention_score += 2
                 rank_reason = "explicit_mentioned_agent_name"
+        nickname_aliases = nickname_alias_cache.get(aid.casefold()) or []
+        for alias in nickname_aliases:
+            alias_key = alias.casefold()
+            if not alias_key:
+                continue
+            if _contains_alias_in_text(text, alias_key):
+                rank_level = max(rank_level, 4)
+                mention_score += 2
+                rank_reason = "explicit_mentioned_agent_nickname"
+        for name in mention_names:
+            name_key = name.casefold()
+            if not name_key:
+                continue
+            if any(name_key == alias.casefold() for alias in nickname_aliases):
+                rank_level = max(rank_level, 4)
+                mention_score += 3
+                rank_reason = "explicit_mentioned_agent_nickname"
 
         if rank_level < 4 and keyword_trigger:
             rank_level = max(rank_level, 3)
@@ -925,9 +1269,37 @@ def decide_group_route(
     mention_agent_order = [_safe_str(item.get("agent_id")) for item in ordered_mentions if _safe_str(item.get("agent_id"))]
     if sender_agent_key:
         mention_agent_order = [x for x in mention_agent_order if _safe_str(x).casefold() != sender_agent_key]
+    nickname_mentions: List[Tuple[int, int, str]] = []
+    for aid in list(allowed_agents or []):
+        aid_key = _safe_str(aid).casefold()
+        if not aid_key:
+            continue
+        if sender_agent_key and aid_key == sender_agent_key:
+            continue
+        aliases = nickname_alias_cache.get(aid_key) or []
+        best_pos = -1
+        best_len = 0
+        for alias in aliases:
+            pos = _find_alias_first_pos(text, alias)
+            if pos < 0:
+                continue
+            alias_len = len(_safe_str(alias))
+            if best_pos < 0 or pos < best_pos or (pos == best_pos and alias_len > best_len):
+                best_pos = pos
+                best_len = alias_len
+        if best_pos >= 0:
+            nickname_mentions.append((best_pos, -best_len, _safe_str(aid)))
+    nickname_mentions.sort(key=lambda row: (row[0], row[1]))
+    mention_agent_order_nickname = [_safe_str(row[2]) for row in nickname_mentions if _safe_str(row[2])]
     explicit_named_candidates: List[str] = []
     explicit_named_seen = set()
-    for source_list in (mentioned_agent_ids, at_mentioned_agents, mention_agent_order):
+    for source_list in (
+        mentioned_agent_ids,
+        at_mentioned_agents,
+        at_mentioned_nickname_agents,
+        mention_agent_order,
+        mention_agent_order_nickname,
+    ):
         for aid in list(source_list or []):
             token = _safe_str(aid)
             if not token:
@@ -942,6 +1314,26 @@ def decide_group_route(
         explicit_named_other_target = any(_safe_str(aid).casefold() != sender_agent_key for aid in explicit_named_candidates)
     else:
         explicit_named_other_target = bool(explicit_named_target)
+    has_explicit_at_token = bool(at_me or mention_names or mentioned_agent_ids)
+    at_named_match = bool(
+        at_me
+        or at_mentioned_agents
+        or at_mentioned_nickname_agents
+        or (has_explicit_at_token and mentioned_agent_ids)
+    )
+    name_named_match = bool(called_name or ((not has_explicit_at_token) and mention_agent_order))
+    nickname_named_match = bool(called_nickname or ((not has_explicit_at_token) and mention_agent_order_nickname))
+    named_wakeup_enabled = bool(
+        (_safe_bool(explicit_rules.get("at_reply"), True) and at_named_match)
+        or (_safe_bool(explicit_rules.get("name_reply"), True) and name_named_match)
+        or (
+            _safe_bool(
+                explicit_rules.get("nickname_reply"),
+                _safe_bool(explicit_rules.get("name_reply"), True),
+            )
+            and nickname_named_match
+        )
+    )
     if mention_agent_order and (selected_priority < 4 or (not selected_agent_id)):
         top_mentioned = _safe_str(mention_agent_order[0])
         if top_mentioned:
@@ -962,13 +1354,14 @@ def decide_group_route(
         and explicit_named_target
         and (not explicit_named_other_target)
     )
-    if (not triggered) and mode != "silent" and explicit_named_target and (not agent_self_named_only):
+    if (not triggered) and mode != "silent" and explicit_named_target and named_wakeup_enabled and (not agent_self_named_only):
         triggered = True
         trigger_reason = "explicit_named_target"
     priority_named_trigger = bool(
         mode != "silent"
         and bool(selected_agent_id)
         and selected_priority >= 4
+        and named_wakeup_enabled
         and (
             (not sender_is_agent)
             or (not sender_agent_key)
@@ -1213,6 +1606,8 @@ def decide_group_route(
         "triggered": bool(triggered),
         "trigger_reason": trigger_reason,
         "group_mode": mode,
+        "trigger_rules_v1": {k: v for k, v in trigger_rules_v1.items() if k != "_source"},
+        "trigger_rules_v1_source": dict(trigger_rules_v1.get("_source") or {}),
         "cooldown_left_seconds": int(cooldown_left),
         "selected_agent_id": selected_agent_id,
         "selected_by": selected_reason,

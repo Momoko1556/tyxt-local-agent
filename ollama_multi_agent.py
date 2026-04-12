@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
 # ============================================================
-# 00. 文件说明 / 版本记录（不要删）/脚本版本号：260328
+# 00. 文件说明 / 版本记录（不要删）/脚本版本号：260408
 # ============================================================
 # Ollama Multi-Agent Backend (full, merged, type-safe)
 # 保留原有全部功能：健康检查、/chat 流式/非流式、向量记忆、共享区 I/O、上网搜索等
@@ -15,6 +15,7 @@ import re
 import json
 import math
 import time
+import random
 import sys
 import shlex
 import shutil
@@ -31,7 +32,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Deque, List, Dict, Any, Optional, Tuple
 from collections import deque
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
 
 import datetime  # ✅ 用模块方式，后续可用 datetime.datetime / datetime.timedelta，避免 AttributeError
 
@@ -104,7 +105,16 @@ from import_chatgpt_export import import_chatgpt_export_records
 from import_kb_files import import_kb_records
 from group_chat_store import GroupChatStore
 from group_chat_router import decide_group_route, register_group_message, register_group_reply
+from group_chat_store import _normalize_trigger_rules_v1_payload as _store_norm_trigger_rules_v1
+from group_chat_store import _resolve_trigger_rules_v1 as _store_resolve_trigger_rules_v1
 from group_prompt_builder import build_group_prompt_blocks
+from prompt_builder import (
+    build_light_chain_prompt_prefix,
+    build_light_chain_prompt_suffix,
+)
+from query_context_builder import build_light_chain_query_context
+from light_extra_context_builder import build_light_extra_context
+from cc_bridge import call_local_cc_once
 
 # ============================================================
 # 02. 工具函数（安全类型转换）
@@ -252,9 +262,11 @@ NEWAPI_MODEL    = os.getenv("NEWAPI_MODEL", "").strip()
 
 # ========== 文件 / 目录 ==========
 # 允许访问的共享目录（图片 / 表情包 / OCR 输入等）
+SHARED_DIR = os.path.abspath(os.path.join(PROJECT_ROOT, "Ollama_agent_shared"))
+os.makedirs(SHARED_DIR, exist_ok=True)
 ALLOWED_DIR = os.getenv(
     "ALLOWED_DIR",
-    os.path.join(PROJECT_ROOT, "Ollama_agent_shared"),
+    SHARED_DIR,
 )
 ALLOWED_DIR = os.path.abspath(str(ALLOWED_DIR))
 IMPORT_DROP_DIR = os.path.join(ALLOWED_DIR, "import")
@@ -604,6 +616,118 @@ def _default_agent_group_policy() -> Dict[str, Any]:
     }
 
 
+def _default_agent_workspace_override() -> Dict[str, Any]:
+    return {
+        "position": "",
+        "work_scope": "",
+        "engineering_prompt": "",
+        "responsibilities": "",
+        "capabilities": "",
+        "collaboration_enabled": True,
+        "workspace_params": "",
+    }
+
+
+def _default_agent_lounge_override() -> Dict[str, Any]:
+    return {
+        "persona": "",
+        "memory_rules": "",
+        "profile_rules": "",
+        "relationship_rules": "",
+    }
+
+
+def _normalize_agent_workspace_override(raw: Any) -> Dict[str, Any]:
+    base = _default_agent_workspace_override()
+    obj = raw if isinstance(raw, dict) else {}
+    base["position"] = str(
+        obj.get("position")
+        or obj.get("role")
+        or obj.get("job_title")
+        or obj.get("workspace_role")
+        or ""
+    ).strip()
+    base["work_scope"] = str(
+        obj.get("work_scope")
+        or obj.get("workScope")
+        or obj.get("duty")
+        or obj.get("work_content")
+        or ""
+    ).strip()
+    base["engineering_prompt"] = str(
+        obj.get("engineering_prompt")
+        or obj.get("engineeringPrompt")
+        or obj.get("prompt")
+        or obj.get("workspace_prompt")
+        or ""
+    ).strip()
+    base["responsibilities"] = str(
+        obj.get("responsibilities")
+        or obj.get("responsibility")
+        or obj.get("workspace_responsibilities")
+        or ""
+    ).strip()
+    base["capabilities"] = str(
+        obj.get("capabilities")
+        or obj.get("capability")
+        or obj.get("workspace_capability")
+        or ""
+    ).strip()
+    base["collaboration_enabled"] = bool(
+        safe_bool(
+            obj.get(
+                "collaboration_enabled",
+                obj.get("collab_enabled", obj.get("can_collaborate", base["collaboration_enabled"])),
+            ),
+            base["collaboration_enabled"],
+        )
+    )
+    base["workspace_params"] = str(
+        obj.get("workspace_params")
+        or obj.get("workspaceParams")
+        or obj.get("params")
+        or ""
+    ).strip()
+    if (not base["responsibilities"]) and base["work_scope"]:
+        base["responsibilities"] = base["work_scope"]
+    return base
+
+
+def _normalize_agent_lounge_override(raw: Any) -> Dict[str, Any]:
+    base = _default_agent_lounge_override()
+    obj = raw if isinstance(raw, dict) else {}
+    base["persona"] = str(obj.get("persona") or "").strip()
+    base["memory_rules"] = str(
+        obj.get("memory_rules")
+        or obj.get("memoryRules")
+        or obj.get("memory")
+        or ""
+    ).strip()
+    base["profile_rules"] = str(
+        obj.get("profile_rules")
+        or obj.get("profileRules")
+        or obj.get("profile")
+        or ""
+    ).strip()
+    base["relationship_rules"] = str(
+        obj.get("relationship_rules")
+        or obj.get("relationshipRules")
+        or obj.get("relationship")
+        or ""
+    ).strip()
+    return base
+
+
+def _normalize_agent_scene_overrides(raw: Any) -> Dict[str, Dict[str, Any]]:
+    src = raw if isinstance(raw, dict) else {}
+    workspace_raw = src.get("workspace") if isinstance(src.get("workspace"), dict) else {}
+    lounge_raw = src.get("lounge") if isinstance(src.get("lounge"), dict) else {}
+    return {
+        "workspace": _normalize_agent_workspace_override(workspace_raw),
+        "lounge": _normalize_agent_lounge_override(lounge_raw),
+    }
+
+
 def _default_assistant_system_prompt() -> str:
     return (
         "你是 TYXT 的全局秘书模型，只做辅助判断，不直接替主人格回复。\n"
@@ -867,6 +991,7 @@ def _default_agent_config(agent_id: str = DEFAULT_AGENT_ID, inherit_legacy_perso
         "display_name": str(persona_cfg.get("agent_title") or persona_cfg.get("agent_name") or aid),
         "agent_title": str(persona_cfg.get("agent_title") or ""),
         "agent_name": str(persona_cfg.get("agent_name") or ""),
+        "agent_nickname": str(persona_cfg.get("agent_nickname") or ""),
         "enabled": True,
         "agent_system_prompt": "",
         "system_prompt": str(persona_cfg.get("content") or ""),
@@ -879,6 +1004,10 @@ def _default_agent_config(agent_id: str = DEFAULT_AGENT_ID, inherit_legacy_perso
         "memory_root": _agent_scoped_memory_root(aid),
         "reply_policy": _default_agent_reply_policy(),
         "group_policy": _default_agent_group_policy(),
+        "scene_overrides": {
+            "workspace": _default_agent_workspace_override(),
+            "lounge": _default_agent_lounge_override(),
+        },
     }
 
 
@@ -889,13 +1018,30 @@ def _normalize_agent_entry(raw: Any, fallback_id: str = DEFAULT_AGENT_ID) -> Dic
     base["agent_id"] = aid
     agent_title = str(obj.get("agent_title") or base.get("agent_title") or "").strip()
     agent_name = str(obj.get("agent_name") or base.get("agent_name") or "").strip()
+    agent_nickname = str(
+        obj.get("agent_nickname")
+        or obj.get("agentNickname")
+        or obj.get("nickname")
+        or base.get("agent_nickname")
+        or ""
+    ).strip()
     if len(agent_title) > 24:
         agent_title = agent_title[:24].strip()
     if len(agent_name) > 24:
         agent_name = agent_name[:24].strip()
+    if len(agent_nickname) > 24:
+        agent_nickname = agent_nickname[:24].strip()
     base["agent_title"] = agent_title
     base["agent_name"] = agent_name
-    display_name = str(obj.get("display_name") or agent_title or agent_name or base.get("display_name") or aid).strip()
+    base["agent_nickname"] = agent_nickname
+    display_name = str(
+        obj.get("display_name")
+        or agent_title
+        or agent_name
+        or agent_nickname
+        or base.get("display_name")
+        or aid
+    ).strip()
     base["display_name"] = display_name or aid
     base["enabled"] = safe_bool(obj.get("enabled"), True)
     base["agent_system_prompt"] = str(
@@ -928,6 +1074,16 @@ def _normalize_agent_entry(raw: Any, fallback_id: str = DEFAULT_AGENT_ID) -> Dic
         merged_gp.update(gp)
     base["reply_policy"] = merged_rp
     base["group_policy"] = merged_gp
+    scene_overrides_raw = obj.get("scene_overrides") if isinstance(obj.get("scene_overrides"), dict) else {}
+    if not scene_overrides_raw and isinstance(obj.get("sceneOverrides"), dict):
+        scene_overrides_raw = dict(obj.get("sceneOverrides") or {})
+    if isinstance(obj.get("workspace"), dict):
+        scene_overrides_raw = dict(scene_overrides_raw or {})
+        scene_overrides_raw["workspace"] = dict(obj.get("workspace") or {})
+    if isinstance(obj.get("lounge"), dict):
+        scene_overrides_raw = dict(scene_overrides_raw or {})
+        scene_overrides_raw["lounge"] = dict(obj.get("lounge") or {})
+    base["scene_overrides"] = _normalize_agent_scene_overrides(scene_overrides_raw)
     return base
 
 
@@ -1300,6 +1456,7 @@ def _agent_summary_payload(agent_cfg: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": str(agent.get("display_name") or ""),
         "agent_title": str(agent.get("agent_title") or ""),
         "agent_name": str(agent.get("agent_name") or ""),
+        "agent_nickname": str(agent.get("agent_nickname") or ""),
         "enabled": bool(agent.get("enabled", True)),
         "agent_system_prompt": str(agent.get("agent_system_prompt") or ""),
         "system_prompt_file": str(agent.get("system_prompt_file") or ""),
@@ -1311,6 +1468,7 @@ def _agent_summary_payload(agent_cfg: Dict[str, Any]) -> Dict[str, Any]:
         "memory_root": str(agent.get("memory_root") or ""),
         "reply_policy": dict(agent.get("reply_policy") or {}),
         "group_policy": dict(agent.get("group_policy") or {}),
+        "scene_overrides": _normalize_agent_scene_overrides(agent.get("scene_overrides")),
         "system_prompt": str(agent.get("system_prompt") or ""),
     }
 
@@ -1322,6 +1480,7 @@ def _agent_public_summary_payload(agent_cfg: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": str(agent.get("display_name") or ""),
         "agent_title": str(agent.get("agent_title") or ""),
         "agent_name": str(agent.get("agent_name") or ""),
+        "agent_nickname": str(agent.get("agent_nickname") or ""),
         "enabled": bool(agent.get("enabled", True)),
         "main_model": str(agent.get("main_model") or ""),
     }
@@ -1384,11 +1543,13 @@ def _resolve_request_agent_id(data: Optional[Dict[str, Any]] = None, meta: Optio
                 bound_agent = _normalize_agent_id(bound_row.get("agent_id"), "")
                 if bound_agent:
                     return bound_agent
+    scene_default_agent = ""
     candidate = (
         payload.get("agent_id")
         or payload.get("agentId")
         or payload_meta.get("agent_id")
         or payload_meta.get("agentId")
+        or scene_default_agent
         or MODEL_CONFIG.get("default_agent_id")
         or DEFAULT_AGENT_ID
     )
@@ -3201,13 +3362,28 @@ def _pause_idle_session_on_chat_wake(reason: str = "chat_wake") -> bool:
 
 
 def _idle_module_runtime_config(module_name: str, module_cfg: Optional[Dict[str, Any]], agent_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    del module_name
+    module_key = str(module_name or "").strip().lower()
     cfg = module_cfg if isinstance(module_cfg, dict) else {}
-    fallback = _agent_model_runtime(agent_cfg)
-    provider = str(cfg.get("provider") or fallback.get("provider") or "newapi").strip().lower() or "newapi"
-    base_url = str(cfg.get("base_url") or fallback.get("base_url") or "").strip()
-    api_key = str(cfg.get("api_key") or fallback.get("api_key") or "").strip()
-    model_name = str(cfg.get("model_name") or fallback.get("model") or "").strip()
+    runtime: Dict[str, Any] = {}
+    if module_key == "rumination":
+        # 反刍层优先使用助手模型；若助手未启用或配置不完整，再回退当前作业 Agent 模型。
+        assistant_cfg = _assistant_config_from_model_config(MODEL_CONFIG)
+        agent_cfg_norm = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
+        for cand in _secretary_runtime_candidates(assistant_cfg, agent_cfg_norm):
+            if str(cand.get("runner") or "").strip().lower() == "assistant":
+                runtime = {
+                    "provider": str(cand.get("provider") or "").strip().lower(),
+                    "base_url": str(cand.get("base_url") or "").strip(),
+                    "api_key": str(cand.get("api_key") or "").strip(),
+                    "model": str(cand.get("model") or "").strip(),
+                }
+                break
+    if not runtime:
+        runtime = _agent_model_runtime(agent_cfg)
+    provider = str(runtime.get("provider") or "newapi").strip().lower() or "newapi"
+    base_url = str(runtime.get("base_url") or "").strip()
+    api_key = str(runtime.get("api_key") or "").strip()
+    model_name = str(runtime.get("model") or "").strip()
     if provider == "ollama":
         api_key = ""
     return {
@@ -3374,14 +3550,16 @@ def _idle_related_people_block(
     return "\n\n".join(blocks).strip()
 
 
-def _idle_agent_role_block(agent_cfg: Optional[Dict[str, Any]]) -> str:
+def _idle_agent_role_block(agent_cfg: Optional[Dict[str, Any]], scene: str = "private") -> str:
     cfg = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
     aid = _normalize_agent_id(cfg.get("agent_id"), DEFAULT_AGENT_ID)
     title = str(cfg.get("agent_title") or "").strip()
     name = str(cfg.get("agent_name") or "").strip()
     display_name = _agent_display_name(cfg)
-    global_system_prompt = _agent_global_system_prompt_text(cfg)
-    persona = _agent_system_prompt_text(cfg)
+    scene_key = "group" if str(scene or "").strip().lower() == "group" else "private"
+    lounge_runtime = _resolve_lounge_runtime_config(cfg, scene_key)
+    global_system_prompt = _agent_global_system_prompt_text(cfg, scene=scene_key)
+    persona = _first_non_empty_text(lounge_runtime.get("effective_prompt"), _agent_system_prompt_text(cfg))
     lines = [
         f"Agent ID: {aid}",
         f"Agent 称谓: {title or '-'}",
@@ -3441,9 +3619,85 @@ _IDLE_DEEPTHINK_DATA_SOURCE_KEYS = {
     "memory_strips",
     "user_profile",
     "relationship_params",
+    "related_people",
     "agent_deepthink_notebook",
     "web_search",
 }
+
+_IDLE_DEEPTHINK_PROMPT_PORT_KEYS = [
+    "runtime_chat",
+    "chromadb_private_memory",
+    "vault_docs",
+    "memory_strips",
+    "user_profile",
+    "relationship_params",
+    "related_people",
+    "agent_deepthink_notebook",
+    "web_search",
+]
+
+_IDLE_DEEPTHINK_GOAL_PORT_PRIORITY: Dict[str, List[str]] = {
+    "investigate_questions": ["runtime_chat", "chromadb_private_memory", "vault_docs", "web_search"],
+    "learn_unknown_knowledge": ["runtime_chat", "vault_docs", "web_search", "chromadb_private_memory"],
+    "analyze_connections": ["runtime_chat", "related_people", "relationship_params", "user_profile"],
+    "next_topic_interest": ["runtime_chat", "user_profile", "memory_strips", "relationship_params"],
+    "optimize_self_system": ["runtime_chat", "chromadb_private_memory", "agent_deepthink_notebook", "vault_docs"],
+    "reflect_on_behavior": ["runtime_chat", "agent_deepthink_notebook", "memory_strips", "relationship_params"],
+}
+
+_IDLE_DEEPTHINK_PORT_CLIP_LIMITS: Dict[str, int] = {
+    "runtime_chat": 2200,
+    "chromadb_private_memory": 1800,
+    "vault_docs": 1800,
+    "memory_strips": 1600,
+    "user_profile": 1600,
+    "relationship_params": 1200,
+    "related_people": 1600,
+    "agent_deepthink_notebook": 1800,
+    "web_search": 1800,
+}
+
+
+def _idle_clip_prompt_block(text: Any, limit: int) -> Tuple[str, bool]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "", False
+    clipped = _truncate_text_for_judge(raw, max(200, safe_int(limit, 1200)))
+    return clipped, clipped != raw
+
+
+def _idle_select_deepthink_ports_for_goal(
+    goal_key: Any,
+    data_sources_map: Optional[Dict[str, Any]],
+    max_ports: int = 4,
+) -> List[str]:
+    src_map = data_sources_map if isinstance(data_sources_map, dict) else {}
+    available = {
+        key
+        for key in _IDLE_DEEPTHINK_PROMPT_PORT_KEYS
+        if str(src_map.get(key) or "").strip()
+    }
+    if not available:
+        return []
+    goal = str(goal_key or "").strip()
+    priority = list(_IDLE_DEEPTHINK_GOAL_PORT_PRIORITY.get(goal) or [])
+    fallback_priority = ["runtime_chat", "user_profile", "memory_strips", "relationship_params"]
+    ordered = priority + [key for key in fallback_priority if key not in priority] + _IDLE_DEEPTHINK_PROMPT_PORT_KEYS
+    out: List[str] = []
+    for key in ordered:
+        if key not in available or key in out:
+            continue
+        out.append(key)
+        if len(out) >= max(1, min(6, safe_int(max_ports, 4))):
+            break
+    if len(out) < 3:
+        for key in _IDLE_DEEPTHINK_PROMPT_PORT_KEYS:
+            if key not in available or key in out:
+                continue
+            out.append(key)
+            if len(out) >= min(len(available), max(3, max(1, min(6, safe_int(max_ports, 4))))):
+                break
+    return out
 
 
 def _idle_pick_deepthink_goal(
@@ -4260,6 +4514,33 @@ def _idle_read_previous_report(path_like: Any) -> str:
         return ""
 
 
+def _idle_is_path_within_root(path: Any, root: Any) -> bool:
+    target = os.path.abspath(str(path or "").strip() or ".")
+    base = os.path.abspath(str(root or "").strip() or ".")
+    try:
+        return os.path.commonpath([target, base]) == base
+    except Exception:
+        return False
+
+
+def _idle_read_previous_report_for_agent(agent_id: str, path_like: Any, output_dir: str = "") -> str:
+    aid = _normalize_agent_id(agent_id, DEFAULT_AGENT_ID)
+    path = str(path_like or "").strip()
+    if not path:
+        return ""
+    abs_path = path
+    if not os.path.isabs(abs_path):
+        abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path.replace("/", os.sep))
+    abs_path = os.path.abspath(abs_path)
+    reports_root = _normalize_optional_path(output_dir, _deepthink_reports_root())
+    if not _idle_is_path_within_root(abs_path, reports_root):
+        return ""
+    file_name = os.path.basename(abs_path).lower()
+    if f"_{aid}_" not in file_name:
+        return ""
+    return _idle_read_previous_report(abs_path)
+
+
 def _idle_agent_deepthink_notebook_path(agent_id: str, output_dir: str = "") -> str:
     aid = _normalize_agent_id(agent_id, DEFAULT_AGENT_ID)
     root = _normalize_optional_path(output_dir, _deepthink_reports_root())
@@ -4698,7 +4979,11 @@ def _idle_collect_deepthink_payload(
     progress: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     cfg = module_cfg if isinstance(module_cfg, dict) else {}
-    aid = _normalize_agent_id((agent_cfg or {}).get("agent_id") or target_row.get("agent_id"), DEFAULT_AGENT_ID)
+    base_target = target_row if isinstance(target_row, dict) else {}
+    aid = _normalize_agent_id((agent_cfg or {}).get("agent_id") or base_target.get("agent_id"), DEFAULT_AGENT_ID)
+    agent_cfg_scoped = _get_agent_config(aid)
+    target_row_scoped = dict(base_target)
+    target_row_scoped["agent_id"] = aid
     work_permissions = _get_agent_scene_permissions(aid, "work")
     allow_runtime_logs_read = _permission_allows_read(work_permissions.get("runtime_logs"))
     allow_vault_docs_read = _permission_allows_read(work_permissions.get("vault_docs"))
@@ -4707,9 +4992,9 @@ def _idle_collect_deepthink_payload(
     allow_relationships_read = _permission_allows_read(work_permissions.get("relationships"))
     allow_relationship_params_read = _permission_allows_read(work_permissions.get("relationship_params"))
     allow_reports_read = _permission_allows_read(work_permissions.get("deepthink_reports"))
-    uid = normalize_profile_user_id(target_row.get("user_id"))
-    user_name = str(target_row.get("user_name") or "").strip() or _idle_user_display_name(aid, uid) or uid
-    turns = _idle_load_target_turn_records(agent_cfg or _get_agent_config(aid), target_row, max_turns=max(18, IDLE_WORKER_RECENT_TURN_LIMIT * 3))
+    uid = normalize_profile_user_id(target_row_scoped.get("user_id"))
+    user_name = str(target_row_scoped.get("user_name") or "").strip() or _idle_user_display_name(aid, uid) or uid
+    turns = _idle_load_target_turn_records(agent_cfg_scoped, target_row_scoped, max_turns=max(18, IDLE_WORKER_RECENT_TURN_LIMIT * 3))
     recent_turns = turns[-max(4, IDLE_WORKER_RECENT_TURN_LIMIT):] if turns else []
     turn_block, _s, _e = _idle_build_turn_block(recent_turns, 0, count=len(recent_turns)) if recent_turns else ("", 0, 0)
     recent_user_texts: List[str] = []
@@ -4723,8 +5008,8 @@ def _idle_collect_deepthink_payload(
         if len(recent_user_texts) >= 3:
             break
     recent_user_texts = list(reversed(recent_user_texts))
-    profile_root = _agent_profile_root(agent_cfg)
-    agent_role_block = _idle_agent_role_block(agent_cfg)
+    profile_root = _agent_profile_root(agent_cfg_scoped)
+    agent_role_block = _idle_agent_role_block(agent_cfg_scoped, scene="private")
     person_block = _build_person_context_block(
         aid,
         uid,
@@ -4752,17 +5037,17 @@ def _idle_collect_deepthink_payload(
         allow_relationship_params=allow_relationship_params_read,
     )
     memory_ctx = _search_user_memory_context(
-        agent_cfg,
+        agent_cfg_scoped,
         uid,
         "\n".join(recent_user_texts),
         allow_vault=allow_vault_docs_read,
         allow_strips=allow_memory_strips_read,
     )
     chroma_records = _idle_collect_chroma_records(
-        agent_cfg,
+        agent_cfg_scoped,
         uid,
-        recent_user_texts or [str(target_row.get("chat_title") or "").strip() or user_name],
-        persist_dir=str(target_row.get("persist_dir") or "").strip(),
+        recent_user_texts or [str(target_row_scoped.get("chat_title") or "").strip() or user_name],
+        persist_dir=str(target_row_scoped.get("persist_dir") or "").strip(),
         top_k=3,
     ) if allow_runtime_logs_read else []
     chroma_block = _idle_format_memory_records_for_prompt(chroma_records, limit=3)
@@ -4831,8 +5116,8 @@ def _idle_collect_deepthink_payload(
         "agent_id": aid,
         "user_id": uid,
         "user_name": user_name,
-        "chat_title": str(target_row.get("chat_title") or "").strip(),
-        "target_row": dict(target_row or {}),
+        "chat_title": str(target_row_scoped.get("chat_title") or "").strip(),
+        "target_row": dict(target_row_scoped or {}),
         "recent_turns": recent_turns,
         "turn_block": turn_block,
         "recent_user_texts": recent_user_texts,
@@ -4845,7 +5130,12 @@ def _idle_collect_deepthink_payload(
         "data_sources_map": data_sources_map,
         "data_sources_used": data_sources_used,
         "web_queries": web_queries,
-        "previous_report": _idle_read_previous_report((progress or {}).get("last_report_path")) if (safe_bool(cfg.get("read_previous_report"), True) and allow_reports_read) else "",
+        "previous_report": _idle_read_previous_report_for_agent(
+            aid,
+            (progress or {}).get("last_report_path"),
+            output_dir=str(cfg.get("output_dir") or "").strip(),
+        )
+        if (safe_bool(cfg.get("read_previous_report"), True) and allow_reports_read) else "",
     }
 
 
@@ -5251,95 +5541,10 @@ def _idle_run_rumination_round(agent_id: str, session_row: Dict[str, Any], modul
     return {"ran": True, "note": log_summary, "result_path": progress.get("last_result_path")}
 
 
-def _idle_run_deepthink_round(agent_id: str, session_row: Dict[str, Any], module_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    aid = _normalize_agent_id(agent_id, DEFAULT_AGENT_ID)
-    cfg = module_cfg if isinstance(module_cfg, dict) else {}
-    agent_cfg = _get_agent_config(aid)
-    progress = _load_idle_module_progress(aid, "deepthink")
-    rum_progress = _load_idle_module_progress(aid, "rumination")
-    now_ts = int(time.time())
-    cooldown_sec = max(60, safe_int(cfg.get("rerun_cooldown_minutes"), 60) * 60)
-    next_run_after = max(
-        safe_int(progress.get("last_finished_at"), 0) + cooldown_sec,
-        safe_int(((session_row.get("module_runtime") or {}).get("deepthink") or {}).get("next_run_after"), 0),
-    )
-    if safe_bool(cfg.get("require_rumination_first"), False) and not safe_bool(rum_progress.get("completed"), False):
-        return {"ran": False, "note": "等待反刍层先完成"}
-    if next_run_after > now_ts:
-        return {"ran": False, "note": f"深度思考冷却中，{max(1, next_run_after - now_ts)} 秒后可再次运行"}
-
-    targets = _idle_recent_targets(aid)
-    if not targets:
-        progress["last_log_summary"] = "暂无可分析的近期私聊存档"
-        progress["updated_at"] = now_ts
-        progress = _save_idle_module_progress(aid, "deepthink", progress)
-        if safe_bool(cfg.get("record_processing_log"), True):
-            _idle_append_timeline_log("deepthink", f"Agent={_agent_display_name(agent_cfg)}({aid}) | 状态=暂无可分析的近期私聊存档")
-        with _IDLE_WORKER_LOCK:
-            live_session = _load_idle_session_state()
-            live_session = _idle_touch_module_runtime(
-                live_session,
-                "deepthink",
-                status="completed",
-                current_agent_id=aid,
-                current_agent_name=_agent_display_name(agent_cfg),
-                current_target="-",
-                current_topic="-",
-                last_log_summary="暂无可分析的近期私聊存档",
-            )
-            _save_idle_session_state(live_session)
-        return {"ran": False, "note": "暂无可分析的近期私聊存档"}
-
-    runtime_cfg = _idle_module_runtime_config("deepthink", cfg, agent_cfg)
-    goal_labels = _idle_goal_labels(cfg.get("goals"))
-    target_row = dict(targets[0] or {})
-    deepthink_payload = _idle_collect_deepthink_payload(agent_cfg, target_row, cfg, progress=progress)
-    if not deepthink_payload.get("recent_turns"):
-        if safe_bool(cfg.get("record_processing_log"), True):
-            _idle_append_timeline_log("deepthink", f"Agent={_agent_display_name(agent_cfg)}({aid}) | 目标={str(target_row.get('user_id') or '-').strip()} | 状态=近期目标为空")
-        return {"ran": False, "note": "近期目标为空"}
-    recent_goal_keys = [str(x or "").strip() for x in list(progress.get("recent_goal_keys") or []) if str(x or "").strip()]
-    goal_choice = _idle_pick_deepthink_goal(cfg.get("goals"), deepthink_payload, avoid_keys=recent_goal_keys[:1])
-    target_uid = str(deepthink_payload.get("user_id") or "").strip()
-    target_user_name = str(deepthink_payload.get("user_name") or target_uid).strip() or target_uid
-    chat_title = str(deepthink_payload.get("chat_title") or "").strip() or "历史聊天导入"
-    current_target = f"{target_uid} / {chat_title}"
-    current_goal_key = str(goal_choice.get("key") or "").strip()
-    current_goal_label = str(goal_choice.get("label") or "").strip() or "近期关系、记忆与话题综述"
-    current_topic = current_goal_label
-    previous_topic = str(progress.get("last_topic") or "").strip()
-    recent_topics = [str(x or "").strip() for x in list(progress.get("recent_topics") or []) if str(x or "").strip()]
-    if previous_topic and previous_topic not in recent_topics:
-        recent_topics.insert(0, previous_topic)
-    with _IDLE_WORKER_LOCK:
-        live_session = _load_idle_session_state()
-        abort_reason = _idle_current_abort_reason(live_session)
-        if abort_reason:
-            return {"ran": False, "note": abort_reason}
-        live_session = _idle_mark_session_status(live_session, "idle_running")
-        live_session = _idle_touch_module_runtime(
-            live_session,
-            "deepthink",
-            status="running",
-            current_agent_id=aid,
-            current_agent_name=_agent_display_name(agent_cfg),
-            current_target=current_target,
-            current_topic=current_topic,
-            last_started_at=now_ts,
-            started_at=now_ts,
-            last_error="",
-        )
-        _save_idle_session_state(live_session)
-    if safe_bool(cfg.get("record_processing_log"), True):
-        _idle_append_timeline_log(
-            "deepthink",
-            f"Agent={_agent_display_name(agent_cfg)}({aid}) | 目标={current_target} | 状态=开始深度思考 | 候选主题={current_goal_label}",
-        )
-
-    work_permissions = _get_agent_scene_permissions(aid, "work")
-    deepthink_system_prompt = str(cfg.get("system_prompt") or "").strip()
-    agent_global_prompt = _agent_global_system_prompt_text(agent_cfg)
-    system_prompt_core = (
+def _build_idle_deepthink_system_prompt_core() -> str:
+    # Shared deepthink prompt core for idle deepthink v2.
+    # Keep wording stable to avoid behavior drift.
+    return (
         "你是 TYXT 的待机深度思考层，只负责分析、整理、生成报告与有限的数据修订建议，不直接扮演聊天人格。\n"
         "请严格输出一个 JSON 对象，不要输出 JSON 以外的文字。\n"
         "JSON schema:\n"
@@ -5365,237 +5570,6 @@ def _idle_run_deepthink_round(agent_id: str, session_row: Dict[str, Any], module
         "6. 真正的修改执行由系统读取 tool_actions 后完成。\n"
         "7. 如果当前资料还不足，请把 is_complete 设为 false，并在 follow_up_queries 里给出最多 3 个新的追查问题。"
     )
-    system_prefix = "\n\n".join([x for x in [deepthink_system_prompt, agent_global_prompt] if str(x or "").strip()]).strip()
-    system_prompt = f"{system_prefix}\n\n{system_prompt_core}" if system_prefix else system_prompt_core
-    max_runtime_seconds = max(60, safe_int(cfg.get("max_runtime_minutes"), 30) * 60)
-    deadline_ts = now_ts + max_runtime_seconds
-    max_iterations = 3
-    iteration_count = 0
-    raw_text = ""
-    error_text = ""
-    topic = current_topic
-    summary = ""
-    conclusions: List[str] = []
-    analysis_sections: List[Dict[str, Any]] = []
-    data_sources_used = [str(x or "").strip() for x in list(deepthink_payload.get("data_sources_used") or []) if str(x or "").strip()]
-    follow_up_queries: List[str] = []
-    all_tool_actions: List[Dict[str, Any]] = []
-    processed_queries: List[str] = []
-    supplemental_block = ""
-    for iteration in range(1, max_iterations + 1):
-        if iteration > 1 and int(time.time()) >= deadline_ts:
-            break
-        iteration_count = iteration
-        remaining_seconds = max(1, deadline_ts - int(time.time()))
-        data_sources_map = dict(deepthink_payload.get("data_sources_map") or {})
-        data_port_lines = [f"- {key}" for key, value in data_sources_map.items() if str(value or "").strip()]
-        prior_analysis = _idle_render_deepthink_analysis_markdown(analysis_sections) if analysis_sections else ""
-        _idle_update_worker_note(
-            f"深度思考第 {iteration} 轮：{topic if iteration > 1 else current_goal_label}",
-            "idle_running",
-        )
-        user_prompt = (
-            f"agent_id: {aid}\n"
-            f"agent_name: {_agent_display_name(agent_cfg)}\n"
-            f"agent_system_prompt: {_truncate_text_for_judge(_agent_system_prompt_text(agent_cfg), 1400)}\n"
-            f"{_build_agent_permission_block(aid, 'work')}\n"
-            f"target_user_id: {target_uid}\n"
-            f"target_user_name: {target_user_name}\n"
-            f"target_chat_title: {chat_title}\n"
-            f"enabled_goals: {json.dumps(goal_labels, ensure_ascii=False)}\n"
-            f"selected_goal_key: {current_goal_key}\n"
-            f"selected_goal_label: {current_goal_label}\n"
-            f"allow_prompt_injection: {safe_bool(cfg.get('allow_prompt_injection'), False)}\n"
-            f"read_previous_report: {safe_bool(cfg.get('read_previous_report'), True)}\n"
-            f"禁止重复的上一轮题目: {previous_topic or '-'}\n"
-            f"近几轮已用题目: {json.dumps(recent_topics[:3], ensure_ascii=False)}\n"
-            f"当前是第 {iteration} 轮推理，剩余时长约 {remaining_seconds} 秒。\n\n"
-            f"可访问资料入口:\n{chr(10).join(data_port_lines) if data_port_lines else '-'}\n\n"
-            f"上一份同 Agent 深度思考报告:\n{_truncate_text_for_judge(str(deepthink_payload.get('previous_report') or ''), 1600)}\n\n"
-            f"PORT.runtime_chat:\n{_truncate_text_for_judge(str(data_sources_map.get('runtime_chat') or ''), 2200)}\n\n"
-            f"PORT.chromadb_private_memory:\n{_truncate_text_for_judge(str(data_sources_map.get('chromadb_private_memory') or ''), 1800)}\n\n"
-            f"PORT.vault_docs:\n{_truncate_text_for_judge(str(data_sources_map.get('vault_docs') or ''), 1800)}\n\n"
-            f"PORT.memory_strips:\n{_truncate_text_for_judge(str(data_sources_map.get('memory_strips') or ''), 1600)}\n\n"
-            f"PORT.user_profile:\n{_truncate_text_for_judge(str(data_sources_map.get('user_profile') or ''), 1600)}\n\n"
-            f"PORT.relationship_params:\n{_truncate_text_for_judge(str(data_sources_map.get('relationship_params') or ''), 1200)}\n\n"
-            f"PORT.agent_deepthink_notebook:\n{_truncate_text_for_judge(str(data_sources_map.get('agent_deepthink_notebook') or ''), 1800)}\n\n"
-            f"PORT.web_search:\n{_truncate_text_for_judge(str(data_sources_map.get('web_search') or ''), 1800)}\n\n"
-            f"已完成的追查问题: {json.dumps(processed_queries, ensure_ascii=False) if processed_queries else '[]'}\n\n"
-            f"上一轮已整合的摘要:\n{_truncate_text_for_judge(summary, 800) if summary else '-'}\n\n"
-            f"上一轮已整合的分析:\n{_truncate_text_for_judge(prior_analysis, 1800) if prior_analysis else '-'}\n\n"
-            f"新增补充资料:\n{_truncate_text_for_judge(supplemental_block, 2000) if supplemental_block else '-'}\n\n"
-            "任务要求：\n"
-            f"1. 本轮唯一分析目标是：{current_goal_label}。\n"
-            "2. 根据这个目标选择最相关的资料来源，不要平均展开。\n"
-            "3. topic 必须写成一个具体问题或具体判断，不要把多个目标拼在一起，且不能与上一轮题目重复。\n"
-            "4. summary 只写 1~2 句高浓度总结。\n"
-            "5. analysis_sections 写成 2~4 个分析点，每个分析点要包含 heading、body、priority、data_sources。\n"
-            "6. conclusions 只写可执行结论。\n"
-            "7. 如果需要继续追查，请把 is_complete 设为 false，并给出最多 3 个新的 follow_up_queries。\n"
-            "8. 如果已经足够形成完整报告，就把 is_complete 设为 true。\n"
-            "9. 如果需要修改数据，只能通过 tool_actions 输出结构化动作。\n"
-            "10. 当 selected_goal_key=reflect_on_behavior 时，请基于 PORT.agent_deepthink_notebook 输出整理后的 agent_notebook_markdown（Markdown 文本）。\n"
-            "11. 对小本本的整理要求：删除已解决/不再重要条目，合并雷同条目，补充近期新增关键条目。\n"
-            "12. PORT.agent_deepthink_notebook 属于可参考资料，需与 runtime_chat / memory_strips 等交叉验证后再下结论。"
-        )
-        try:
-            runtime_cfg_with_budget = dict(runtime_cfg or {})
-            runtime_cfg_with_budget["_request_timeout_s"] = max(1, remaining_seconds)
-            raw_text = _idle_call_model_text(system_prompt, user_prompt, runtime_cfg_with_budget)
-            parsed = _idle_parse_deepthink_model_output(raw_text, topic or current_topic, data_sources_used)
-        except Exception as e:
-            error_text = f"{error_text} | iter{iteration}:{e}".strip(" |")
-            parsed = {
-                "topic": topic or current_topic,
-                "summary": f"模型调用失败：{e}",
-                "analysis_sections": [],
-                "follow_up_queries": [],
-                "data_sources_used": list(data_sources_used or []),
-                "tool_actions": [],
-                "conclusions": [],
-                "is_complete": False,
-            }
-        topic = str(parsed.get("topic") or topic or current_goal_label).strip() or current_goal_label
-        if previous_topic and topic == previous_topic:
-            topic = _idle_build_deepthink_fallback_topic(current_goal_label, deepthink_payload, previous_topic=previous_topic)
-        parsed_summary = _idle_clean_deepthink_text(parsed.get("summary") or "")
-        if parsed_summary:
-            summary = parsed_summary
-        conclusions = _idle_merge_unique_strings(conclusions, parsed.get("conclusions") or [], limit=10)
-        analysis_sections = _idle_dedup_analysis_sections(analysis_sections + list(parsed.get("analysis_sections") or []))
-        data_sources_used = _idle_merge_unique_strings(data_sources_used, parsed.get("data_sources_used") or [], limit=12)
-        all_tool_actions.extend([row for row in list(parsed.get("tool_actions") or []) if isinstance(row, dict)])
-        next_queries = _idle_merge_unique_strings([], parsed.get("follow_up_queries") or [], limit=3)
-        follow_up_queries = next_queries
-        if safe_bool(cfg.get("record_processing_log"), True):
-            _idle_append_timeline_log(
-                "deepthink",
-                f"Agent={_agent_display_name(agent_cfg)}({aid}) | 目标={current_target} | 状态=第{iteration}轮分析完成 | 题目={topic} | 补充查询={'; '.join(next_queries) if next_queries else '-'}",
-            )
-        if bool(parsed.get("is_complete")) and not next_queries:
-            break
-        if iteration >= max_iterations or int(time.time()) >= (deadline_ts - 10):
-            break
-        fresh_queries = [row for row in next_queries if row not in processed_queries]
-        if not fresh_queries:
-            break
-        supplemental = _idle_collect_deepthink_follow_up_materials(agent_cfg, target_row, deepthink_payload, cfg, fresh_queries)
-        processed_queries = _idle_merge_unique_strings(processed_queries, supplemental.get("queries") or fresh_queries, limit=12)
-        supplemental_block = str(supplemental.get("text") or "").strip()
-        data_sources_used = _idle_merge_unique_strings(data_sources_used, supplemental.get("sources_used") or [], limit=12)
-        if not supplemental_block:
-            break
-
-    analysis_markdown = _idle_render_deepthink_analysis_markdown(analysis_sections)
-    if not summary:
-        summary = "本轮未生成有效结果" if (not analysis_sections and (not error_text)) else (topic or "本轮已完成深度思考")
-    profile_updates, relationship_updates = _idle_normalize_deepthink_tool_actions({"tool_actions": all_tool_actions})
-    if not _permission_allows_write(work_permissions.get("user_profile")):
-        profile_updates = []
-    if not _permission_allows_write(work_permissions.get("relationship_params")):
-        relationship_updates = []
-    _idle_update_worker_note(f"正在生成深度思考报告：{topic}", "idle_running")
-    profile_root = _agent_profile_root(agent_cfg)
-    modified_data: List[str] = []
-    for row in profile_updates[:4]:
-        try:
-            profiles_apply_profile_note(
-                user_id=target_uid,
-                note=row["note"],
-                confidence=safe_float(row.get("confidence"), 0.8),
-                source="idle_deepthink",
-                profile_base_dir=profile_root,
-            )
-            modified_data.append(f"用户画像：{row['note']}")
-        except Exception as e:
-            error_text = f"{error_text} | profile:{e}".strip(" |")
-    try:
-        changed_relationships = _idle_apply_relationship_updates(aid, target_uid, target_user_name, relationship_updates)
-        modified_data.extend([f"关系参数：{row}" for row in changed_relationships])
-    except Exception as e:
-        error_text = f"{error_text} | relationship:{e}".strip(" |")
-
-    if safe_bool(cfg.get("record_processing_log"), True):
-        try:
-            deep_log_text = (
-                f"Agent={_agent_display_name(agent_cfg)}({aid}) | "
-                f"目标={current_target} | 题目={topic} | "
-                f"状态=已完成 | 迭代={max(1, iteration_count)}轮 | "
-                f"摘要={_truncate_text_for_judge(summary, 180)}"
-            )
-            if follow_up_queries:
-                deep_log_text += f" | 待追查={'; '.join(follow_up_queries[:3])}"
-            if error_text:
-                deep_log_text += f" | 错误={_truncate_text_for_judge(error_text, 120)}"
-            _idle_append_timeline_log("deepthink", deep_log_text)
-        except Exception as e:
-            error_text = f"{error_text} | log:{e}".strip(" |")
-
-    result_path = ""
-    try:
-        result_path = _idle_write_deepthink_report(
-            aid,
-            _agent_report_name(agent_cfg),
-            target_uid,
-            target_user_name,
-            current_goal_label,
-            topic,
-            data_sources_used,
-            summary,
-            analysis_markdown,
-            conclusions,
-            follow_up_queries,
-            modified_data,
-            output_dir=str(cfg.get("output_dir") or "").strip(),
-        )
-    except Exception as e:
-        error_text = f"{error_text} | report:{e}".strip(" |")
-
-    progress["completed_rounds"] = max(0, safe_int(progress.get("completed_rounds"), 0)) + 1
-    progress["last_started_at"] = now_ts
-    progress["last_finished_at"] = int(time.time())
-    progress["last_report_time"] = progress["last_finished_at"]
-    progress["last_report_path"] = _idle_relpath(result_path)
-    progress["last_topic"] = topic
-    progress["last_goal_key"] = current_goal_key
-    progress["last_user_id"] = target_uid
-    progress["last_user_name"] = target_user_name
-    progress["last_data_sources"] = data_sources_used
-    progress["recent_topics"] = _idle_push_recent_values(progress.get("recent_topics"), topic, limit=6)
-    progress["recent_goal_keys"] = _idle_push_recent_values(progress.get("recent_goal_keys"), current_goal_key, limit=6)
-    progress["last_iteration_count"] = max(1, iteration_count)
-    progress["last_log_summary"] = summary or topic
-    progress["last_error"] = error_text
-    progress["updated_at"] = int(time.time())
-    progress = _save_idle_module_progress(aid, "deepthink", progress)
-
-    with _IDLE_WORKER_LOCK:
-        live_session = _load_idle_session_state()
-        live_session = _idle_touch_module_runtime(
-            live_session,
-            "deepthink",
-            status="completed",
-            current_agent_id=aid,
-            current_agent_name=_agent_display_name(agent_cfg),
-            current_target=current_target,
-            current_topic=topic,
-            completed_rounds=progress.get("completed_rounds"),
-            last_log_summary=summary or topic,
-            last_result_path=progress.get("last_report_path"),
-            last_error=error_text,
-            last_report_time=progress.get("last_report_time"),
-            last_finished_at=progress.get("last_finished_at"),
-            next_run_after=progress.get("last_finished_at", 0) + cooldown_sec,
-            started_at=0,
-        )
-        live_session["deepthink_rounds_completed"] = max(
-            safe_int(live_session.get("deepthink_rounds_completed"), 0),
-            safe_int(progress.get("completed_rounds"), 0),
-        )
-        live_session["worker_note"] = f"深度思考已完成：{topic}"
-        live_session["last_updated"] = int(time.time())
-        _save_idle_session_state(live_session)
-    return {"ran": True, "note": summary or topic, "result_path": progress.get("last_report_path")}
 
 
 def _idle_clear_deepthink_pending(progress: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -5660,6 +5634,7 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
                 _save_idle_session_state(live_session)
             return {"ran": False, "note": "暂无可分析的近期私聊存档"}
         target_row = dict(targets[0] or {})
+    target_row["agent_id"] = aid
 
     deepthink_payload = _idle_collect_deepthink_payload(agent_cfg, target_row, cfg, progress=progress)
     if (not deepthink_payload.get("recent_turns")) and (not resume_pending):
@@ -5717,36 +5692,16 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
     runtime_cfg = _idle_module_runtime_config("deepthink", cfg, agent_cfg)
     goal_labels = _idle_goal_labels(cfg.get("goals"))
     work_permissions = _get_agent_scene_permissions(aid, "work")
+    allow_prompt_injection = safe_bool(cfg.get("allow_prompt_injection"), False)
+    read_previous_report = safe_bool(cfg.get("read_previous_report"), True)
     deepthink_system_prompt = str(cfg.get("system_prompt") or "").strip()
-    agent_global_prompt = _agent_global_system_prompt_text(agent_cfg)
-    system_prompt_core = (
-        "你是 TYXT 的待机深度思考层，只负责分析、整理、生成报告与有限的数据修订建议，不直接扮演聊天人格。\n"
-        "请严格输出一个 JSON 对象，不要输出 JSON 以外的文字。\n"
-        "JSON schema:\n"
-        "{\"topic\":\"string\",\"summary\":\"string\","
-        "\"analysis_sections\":[{\"heading\":\"string\",\"body\":\"string\",\"priority\":\"high|medium|low\",\"data_sources\":[\"runtime_chat\"]}],"
-        "\"data_sources_used\":[\"runtime_chat\"],"
-        "\"conclusions\":[\"string\"],"
-        "\"is_complete\":true,"
-        "\"follow_up_queries\":[\"string\"],"
-        "\"tool_actions\":["
-        "{\"type\":\"profile_note\",\"note\":\"string\",\"confidence\":0.8},"
-        "{\"type\":\"relationship_param\",\"field\":\"trust\",\"value\":60,\"reason\":\"string\"}"
-        "],"
-        "\"agent_notebook_markdown\":\"string\"}\n"
-        "约束：\n"
-        "1. 本轮只围绕一个主题目标展开，不要并列多个目标类型。\n"
-        "2. 只允许输出一个 JSON 对象，不要输出 Markdown、代码块或解释。\n"
-        "3. 关系参数仅允许修改这些字段："
-        + ", ".join(_RELATION_PARAM_LABELS.keys())
-        + "；value 必须是 1~100。\n"
-        "4. 如果没有足够依据，不要编造修改动作；tool_actions 可以为空数组。\n"
-        "5. analysis_sections 只写分析内容，不要写“已经修改成功”。\n"
-        "6. 真正的修改执行由系统读取 tool_actions 后完成。\n"
-        "7. 如果当前资料还不足，请把 is_complete 设为 false，并在 follow_up_queries 里给出最多 3 个新的追查问题。"
-    )
-    system_prefix = "\n\n".join([x for x in [deepthink_system_prompt, agent_global_prompt] if str(x or "").strip()]).strip()
-    system_prompt = f"{system_prefix}\n\n{system_prompt_core}" if system_prefix else system_prompt_core
+    system_prompt_core = _build_idle_deepthink_system_prompt_core()
+    system_prompt = "\n\n".join([x for x in [deepthink_system_prompt, system_prompt_core] if str(x or "").strip()]).strip()
+    base_data_sources_map = dict(deepthink_payload.get("data_sources_map") or {})
+    selected_port_keys = _idle_select_deepthink_ports_for_goal(current_goal_key, base_data_sources_map, max_ports=4)
+    if not selected_port_keys:
+        selected_port_keys = [key for key in _IDLE_DEEPTHINK_PROMPT_PORT_KEYS if str(base_data_sources_map.get(key) or "").strip()][:4]
+    previous_report_text = str(deepthink_payload.get("previous_report") or "").strip() if read_previous_report else ""
 
     deadline_ts = now_ts + max(60, safe_int(cfg.get("max_runtime_minutes"), 30) * 60)
     iteration_count = 0
@@ -5757,7 +5712,7 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
     conclusions: List[str] = list(progress.get("pending_conclusions") or []) if resume_pending else []
     analysis_sections: List[Dict[str, Any]] = _idle_dedup_analysis_sections(list(progress.get("pending_analysis_sections") or [])) if resume_pending else []
     data_sources_used = _idle_merge_unique_strings(
-        list(deepthink_payload.get("data_sources_used") or []),
+        list(selected_port_keys or []),
         list(progress.get("pending_data_sources_used") or []) if resume_pending else [],
         limit=16,
     )
@@ -5777,49 +5732,77 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
             break
         iteration_count += 1
         remaining_seconds = max(1, deadline_ts - int(time.time()))
-        data_sources_map = dict(deepthink_payload.get("data_sources_map") or {})
-        data_port_lines = [f"- {key}" for key, value in data_sources_map.items() if str(value or "").strip()]
+        data_sources_map = dict(base_data_sources_map or {})
+        selected_ports_for_prompt = [key for key in selected_port_keys if str(data_sources_map.get(key) or "").strip()]
+        if not selected_ports_for_prompt:
+            selected_ports_for_prompt = [key for key in _IDLE_DEEPTHINK_PROMPT_PORT_KEYS if str(data_sources_map.get(key) or "").strip()][:4]
+        data_port_lines = [f"- {key}" for key in selected_ports_for_prompt]
         prior_analysis = _idle_render_deepthink_analysis_markdown(analysis_sections) if analysis_sections else ""
         _idle_update_worker_note(f"深度思考第 {iteration_count} 轮：{topic}", "idle_running")
+        role_block, role_truncated = _idle_clip_prompt_block(deepthink_payload.get("agent_role_block") or "", 2200)
+        user_profile_block, user_profile_truncated = _idle_clip_prompt_block(
+            data_sources_map.get("user_profile") or "",
+            _IDLE_DEEPTHINK_PORT_CLIP_LIMITS.get("user_profile", 1600),
+        )
+        relationship_params_block, relationship_params_truncated = _idle_clip_prompt_block(
+            data_sources_map.get("relationship_params") or "",
+            _IDLE_DEEPTHINK_PORT_CLIP_LIMITS.get("relationship_params", 1200),
+        )
+        related_people_block, related_people_truncated = _idle_clip_prompt_block(
+            data_sources_map.get("related_people") or "",
+            _IDLE_DEEPTHINK_PORT_CLIP_LIMITS.get("related_people", 1600),
+        )
+        tool_manifest_block, tool_manifest_truncated = _idle_clip_prompt_block(
+            deepthink_payload.get("tool_manifest_block") or "",
+            1200,
+        )
+        previous_report_block, previous_report_truncated = _idle_clip_prompt_block(previous_report_text, 1600)
+        summary_block, summary_truncated = _idle_clip_prompt_block(summary, 800)
+        prior_analysis_block, prior_analysis_truncated = _idle_clip_prompt_block(prior_analysis, 1800)
+        supplemental_for_prompt = supplemental_block if allow_prompt_injection else ""
+        supplemental_prompt_block, supplemental_truncated = _idle_clip_prompt_block(supplemental_for_prompt, 2000)
+        selected_port_blocks: List[str] = []
+        selected_port_truncated = False
+        for key in selected_ports_for_prompt:
+            port_block, port_truncated = _idle_clip_prompt_block(
+                data_sources_map.get(key) or "",
+                _IDLE_DEEPTHINK_PORT_CLIP_LIMITS.get(key, 1600),
+            )
+            selected_port_blocks.append(f"PORT.{key}:\n{port_block or '-'}")
+            selected_port_truncated = selected_port_truncated or port_truncated
         user_prompt = (
+            "<本轮身份>\n"
             f"agent_id: {aid}\n"
             f"agent_name: {_agent_report_name(agent_cfg)}\n"
-            f"agent_system_prompt: {_truncate_text_for_judge(_agent_system_prompt_text(agent_cfg), 1400)}\n"
-            f"{_build_agent_permission_block(aid, 'work')}\n"
             f"target_user_id: {target_uid}\n"
             f"target_user_name: {target_user_name}\n"
             f"target_chat_title: {chat_title}\n"
-            f"enabled_goals: {json.dumps(goal_labels, ensure_ascii=False)}\n"
             f"selected_goal_key: {current_goal_key}\n"
             f"selected_goal_label: {current_goal_label}\n"
-            f"禁止重复的上一轮题目: {previous_topic or '-'}\n"
-            f"近几轮已用题目: {json.dumps(recent_topics[:3], ensure_ascii=False)}\n"
-            f"当前是第 {iteration_count} 轮推理，剩余时长约 {remaining_seconds} 秒。\n\n"
-            f"<Agent角色人格设置>\n{_truncate_text_for_judge(str(deepthink_payload.get('agent_role_block') or ''), 2400)}\n\n"
-            f"<用户ID、用户画像、用户关系>\n{_truncate_text_for_judge(str((data_sources_map.get('user_profile') or '') + chr(10) + (data_sources_map.get('relationship_params') or '')), 2200)}\n\n"
-            f"<相关人员ID、用户画像、用户关系>\n{_truncate_text_for_judge(str(deepthink_payload.get('related_people_block') or '-'), 1800)}\n\n"
-            "<本轮场域>\n深度思考作业\n\n"
-            f"<本轮可选题目>\n{json.dumps(goal_labels, ensure_ascii=False)}\n\n"
-            f"<本轮限时>\n本轮最多运行 {max(1, safe_int(cfg.get('max_runtime_minutes'), 30))} 分钟；当前剩余约 {remaining_seconds} 秒。\n\n"
-            f"<可调用工具>\n{_truncate_text_for_judge(str(deepthink_payload.get('tool_manifest_block') or ''), 1200)}\n\n"
-            "<深度思考任务指示>\n你需要带着当前 Agent 的记忆、用户画像、关系网络和历史思考持续挖掘；允许先形成阶段性结论，再继续补查资料并修订总结。\n\n"
+            f"enabled_goals: {json.dumps(goal_labels, ensure_ascii=False)}\n"
+            f"forbidden_previous_topic: {previous_topic or '-'}\n"
+            f"recent_topics: {json.dumps(recent_topics[:3], ensure_ascii=False)}\n"
+            f"iteration: {iteration_count}\n"
+            f"remaining_seconds: {remaining_seconds}\n\n"
+            "<Agent自我理解>\n"
+            f"{role_block or '-'}\n\n"
+            "<用户与关系>\n"
+            f"user_profile:\n{user_profile_block or '-'}\n\n"
+            f"relationship_params:\n{relationship_params_block or '-'}\n\n"
+            f"related_people:\n{related_people_block or '-'}\n\n"
+            "<本轮可访问资料与工具>\n"
+            f"allow_prompt_injection: {allow_prompt_injection}\n"
+            f"read_previous_report: {read_previous_report}\n"
             f"可访问资料入口:\n{chr(10).join(data_port_lines) if data_port_lines else '-'}\n\n"
-            f"上一份同 Agent 深度思考报告:\n{_truncate_text_for_judge(str(deepthink_payload.get('previous_report') or ''), 1600)}\n\n"
-            f"PORT.runtime_chat:\n{_truncate_text_for_judge(str(data_sources_map.get('runtime_chat') or ''), 2200)}\n\n"
-            f"PORT.chromadb_private_memory:\n{_truncate_text_for_judge(str(data_sources_map.get('chromadb_private_memory') or ''), 1800)}\n\n"
-            f"PORT.vault_docs:\n{_truncate_text_for_judge(str(data_sources_map.get('vault_docs') or ''), 1800)}\n\n"
-            f"PORT.memory_strips:\n{_truncate_text_for_judge(str(data_sources_map.get('memory_strips') or ''), 1600)}\n\n"
-            f"PORT.user_profile:\n{_truncate_text_for_judge(str(data_sources_map.get('user_profile') or ''), 1600)}\n\n"
-            f"PORT.relationship_params:\n{_truncate_text_for_judge(str(data_sources_map.get('relationship_params') or ''), 1200)}\n\n"
-            f"PORT.related_people:\n{_truncate_text_for_judge(str(data_sources_map.get('related_people') or ''), 1600)}\n\n"
-            f"PORT.agent_deepthink_notebook:\n{_truncate_text_for_judge(str(data_sources_map.get('agent_deepthink_notebook') or ''), 1800)}\n\n"
-            f"PORT.web_search:\n{_truncate_text_for_judge(str(data_sources_map.get('web_search') or ''), 1800)}\n\n"
-            f"已追查的问题: {json.dumps(processed_queries, ensure_ascii=False) if processed_queries else '[]'}\n\n"
+            f"tools:\n{tool_manifest_block or '-'}\n\n"
+            f"已追查的问题: {json.dumps(processed_queries, ensure_ascii=False) if processed_queries else '[]'}\n"
             f"当前待解决问题: {json.dumps(follow_up_queries, ensure_ascii=False) if follow_up_queries else '[]'}\n\n"
-            f"已整合摘要:\n{_truncate_text_for_judge(summary, 800) if summary else '-'}\n\n"
-            f"已整合分析:\n{_truncate_text_for_judge(prior_analysis, 1800) if prior_analysis else '-'}\n\n"
-            f"最新补充资料:\n{_truncate_text_for_judge(supplemental_block, 2000) if supplemental_block else '-'}\n\n"
-            "任务要求：\n"
+            f"上一份同Agent深度思考报告:\n{previous_report_block or '-'}\n\n"
+            f"已整合摘要:\n{summary_block or '-'}\n\n"
+            f"已整合分析:\n{prior_analysis_block or '-'}\n\n"
+            f"最新补充资料:\n{supplemental_prompt_block or '-'}\n\n"
+            f"{chr(10).join(selected_port_blocks) if selected_port_blocks else 'PORT: -'}\n\n"
+            "<输出要求>\n"
             f"1. 本轮唯一分析目标是：{current_goal_label}。\n"
             "2. 根据这个目标选择最相关的资料来源，不要平均展开。\n"
             "3. topic 必须写成一个具体问题或具体判断，不要把多个目标拼在一起，且不能与上一轮已完成题目重复。\n"
@@ -5833,6 +5816,32 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
             "11. 对小本本的整理要求：删除已解决/不再重要条目，合并雷同条目，补充近期新增关键条目。\n"
             "12. PORT.agent_deepthink_notebook 属于可参考资料，需与 runtime_chat / memory_strips 等交叉验证后再下结论。"
         )
+        prompt_truncated = any(
+            [
+                role_truncated,
+                user_profile_truncated,
+                relationship_params_truncated,
+                related_people_truncated,
+                tool_manifest_truncated,
+                previous_report_truncated,
+                summary_truncated,
+                prior_analysis_truncated,
+                supplemental_truncated,
+                selected_port_truncated,
+            ]
+        )
+        if safe_bool(cfg.get("record_processing_log"), True):
+            _idle_append_timeline_log(
+                "deepthink",
+                (
+                    f"Agent={_agent_display_name(agent_cfg)}({aid}) | 目标={target_uid} | 状态=prompt摘要 | "
+                    f"goal={current_goal_key or '-'} | ports={','.join(selected_ports_for_prompt) if selected_ports_for_prompt else '-'} | "
+                    f"previous_report={'yes' if bool(previous_report_block) else 'no'} | "
+                    f"supplemental={'yes' if bool(supplemental_prompt_block) else 'no'} | "
+                    f"prompt_chars={len(system_prompt)}/{len(user_prompt)}/{len(system_prompt) + len(user_prompt)} | "
+                    f"truncated={'yes' if prompt_truncated else 'no'}"
+                ),
+            )
         try:
             runtime_cfg_with_budget = dict(runtime_cfg or {})
             runtime_cfg_with_budget["_request_timeout_s"] = max(1, remaining_seconds)
@@ -5898,6 +5907,11 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
         fresh_queries = [row for row in follow_up_queries if row not in processed_queries]
         if not fresh_queries:
             stop_reason = "暂无新的可追查问题"
+            break
+        if not allow_prompt_injection:
+            processed_queries = _idle_merge_unique_strings(processed_queries, fresh_queries, limit=24)
+            supplemental_block = ""
+            stop_reason = "已记录追查问题（allow_prompt_injection=false，不执行补料注入）"
             break
         supplemental = _idle_collect_deepthink_follow_up_materials(agent_cfg, target_row, deepthink_payload, cfg, fresh_queries)
         processed_queries = _idle_merge_unique_strings(processed_queries, supplemental.get("queries") or fresh_queries, limit=24)
@@ -5977,7 +5991,7 @@ def _idle_run_deepthink_round_v2(agent_id: str, session_row: Dict[str, Any], mod
     if not _permission_allows_write(work_permissions.get("relationship_params")):
         relationship_updates = []
     _idle_update_worker_note(f"正在生成深度思考报告：{topic}", "idle_running")
-    profile_root = _agent_profile_root(agent_cfg)
+    profile_root = _agent_profile_root(_get_agent_config(aid))
     modified_data: List[str] = []
     for row in profile_updates[:4]:
         try:
@@ -6821,6 +6835,9 @@ def _relationship_params_joined(agent_id: str) -> List[Dict[str, Any]]:
 def _apply_agent_context(meta: Optional[Dict[str, Any]], agent_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     m = dict(meta or {})
     cfg = _normalize_agent_entry(agent_cfg or {}, _resolve_request_agent_id(meta=m))
+    scene_key = str(m.get("scene") or "").strip().lower()
+    lounge_scene = "group" if scene_key == "group" else "private"
+    lounge_runtime = _resolve_lounge_runtime_config(cfg, lounge_scene if scene_key in {"private", "group"} else "private")
     m["agent_id"] = cfg["agent_id"]
     m["agent_display_name"] = _agent_display_name(cfg)
     m["assistant_name"] = str(m.get("assistant_name") or m["agent_display_name"] or cfg.get("display_name") or "").strip()
@@ -6828,6 +6845,9 @@ def _apply_agent_context(meta: Optional[Dict[str, Any]], agent_cfg: Optional[Dic
     m["memory_root"] = _agent_memory_root(cfg)
     m["reply_policy"] = dict(cfg.get("reply_policy") or {})
     m["group_policy"] = dict(cfg.get("group_policy") or {})
+    m["scene_overrides"] = _normalize_agent_scene_overrides(cfg.get("scene_overrides"))
+    if scene_key in {"private", "group"}:
+        m["lounge_runtime"] = lounge_runtime
     return m
 
 
@@ -6947,6 +6967,127 @@ def _secretary_runtime_candidates(
         seen.add(sig)
         deduped.append(item)
     return deduped
+
+
+ASSISTANT_JUDGE_SCHEMA: Dict[str, Dict[str, Any]] = {
+    "summary": {"type": "str", "default": ""},
+    "need_memory": {"type": "bool", "default": False},
+    "need_rag": {"type": "bool", "default": False},
+    "need_relation": {"type": "bool", "default": False},
+    "need_local_memory_search": {"type": "bool", "default": False},
+    "local_memory_queries": {"type": "list_str", "default": []},
+    "need_web_search": {"type": "bool", "default": False},
+    "web_search_queries": {"type": "list_str", "default": []},
+    "reply_mode": {"type": "str", "default": ""},
+    "search_queries": {"type": "list_str", "default": []},
+    "notes": {"type": "str", "default": ""},
+}
+
+
+ASSISTANT_JUDGE_SCHEMA_ALIASES: Dict[str, List[str]] = {
+    "local_memory_queries": ["memory_queries"],
+    "web_search_queries": ["web_queries"],
+}
+
+
+MEMORY_JUDGE_SCHEMA: Dict[str, Dict[str, Any]] = {
+    "should_write_strip": {"type": "bool", "default": False},
+    "strip_text": {"type": "str", "default": ""},
+    "strip_importance": {"type": "float", "default": 5.0},
+    "should_update_profile": {"type": "bool", "default": False},
+    "profile_note": {"type": "str", "default": ""},
+    "profile_confidence": {"type": "float", "default": 0.8},
+}
+
+
+GROUP_ROUTE_SCHEMA: Dict[str, Dict[str, Any]] = {
+    "target_type": {"type": "str", "default": ""},
+    "need_agent_reply": {"type": "bool", "default": False},
+    "target_agent_ids": {"type": "list_str", "default": []},
+    "confidence": {"type": "float", "default": 0.0},
+    "reason": {"type": "str", "default": ""},
+}
+
+
+GROUP_ROUTE_SCHEMA_ALIASES: Dict[str, List[str]] = {
+    "target_agent_ids": ["target_agents", "target_agent_id", "target_agent"],
+    "need_agent_reply": ["should_reply"],
+}
+
+
+def _copy_schema_default(value: Any) -> Any:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, dict):
+        return dict(value)
+    return value
+
+
+def _coerce_json_schema_value(value: Any, type_name: str, default_value: Any) -> Any:
+    kind = str(type_name or "").strip().lower()
+    if kind == "bool":
+        return safe_bool(value, bool(default_value))
+    if kind == "str":
+        return str(value or "").strip()
+    if kind == "float":
+        return safe_float(value, safe_float(default_value, 0.0))
+    if kind == "int":
+        return safe_int(value, safe_int(default_value, 0))
+    if kind == "list_str":
+        raw_list: List[Any] = []
+        if isinstance(value, str):
+            raw_list = [value]
+        elif isinstance(value, (list, tuple, set)):
+            raw_list = list(value)
+        elif value in (None, ""):
+            raw_list = []
+        else:
+            raw_list = [value]
+        out: List[str] = []
+        for item in raw_list:
+            text = str(item or "").strip()
+            if text:
+                out.append(text)
+        return out
+    return value if value is not None else _copy_schema_default(default_value)
+
+
+def _parse_json_payload_with_schema(
+    *,
+    raw_text: Any = "",
+    schema: Optional[Dict[str, Dict[str, Any]]] = None,
+    fallback: Optional[Dict[str, Any]] = None,
+    aliases: Optional[Dict[str, List[str]]] = None,
+    parsed_obj: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    schema_map = dict(schema or {})
+    alias_map = dict(aliases or {})
+    parsed = parsed_obj if isinstance(parsed_obj, dict) else _extract_first_json_obj(str(raw_text or ""))
+    parsed_ok = isinstance(parsed, dict)
+    payload = dict(parsed or {})
+
+    merged: Dict[str, Any] = dict(fallback or {})
+    for field, rule in schema_map.items():
+        r = rule if isinstance(rule, dict) else {}
+        default_value = _copy_schema_default(r.get("default"))
+        value = None
+        has_value = False
+        candidates = [field] + [str(x or "").strip() for x in list(alias_map.get(field) or []) if str(x or "").strip()]
+        for key in candidates:
+            if key in payload:
+                value = payload.get(key)
+                has_value = True
+                if value not in (None, ""):
+                    break
+        if not has_value:
+            value = default_value
+        merged[field] = _coerce_json_schema_value(value, str(r.get("type") or "str"), default_value)
+
+    return {
+        "ok": parsed_ok,
+        "data": merged,
+        "raw_obj": payload if parsed_ok else {},
+    }
 
 
 def _call_secretary_json_task(
@@ -7104,14 +7245,21 @@ def _run_assistant_helper(
         system_prompt=helper_system,
         user_prompt=helper_user,
     )
-    obj = task.get("json")
-    if not isinstance(obj, dict):
+    parsed = _parse_json_payload_with_schema(
+        raw_text=task.get("raw"),
+        schema=ASSISTANT_JUDGE_SCHEMA,
+        fallback={},
+        aliases=ASSISTANT_JUDGE_SCHEMA_ALIASES,
+        parsed_obj=task.get("json") if isinstance(task.get("json"), dict) else None,
+    )
+    if not safe_bool(parsed.get("ok"), False):
         return {
             "used": False,
             "reasons": reasons,
             "raw": str(task.get("raw") or "").strip(),
             "errors": list(task.get("errors") or []),
         }
+    obj = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
     raw_web_queries = obj.get("web_search_queries")
     if raw_web_queries in (None, ""):
         raw_web_queries = obj.get("web_queries")
@@ -8496,12 +8644,17 @@ def run_memory_judge(
         system_prompt=sys_prompt,
         user_prompt=user_prompt,
     )
-    if not safe_bool(task.get("ok"), False):
-        print(f"[memory_judge call error] {'; '.join([str(x) for x in list(task.get('errors') or []) if str(x)])}")
+    parsed = _parse_json_payload_with_schema(
+        raw_text=task.get("raw"),
+        schema=MEMORY_JUDGE_SCHEMA,
+        fallback={},
+        parsed_obj=task.get("json") if isinstance(task.get("json"), dict) else None,
+    )
+    if not safe_bool(parsed.get("ok"), False):
+        if not safe_bool(task.get("ok"), False):
+            print(f"[memory_judge call error] {'; '.join([str(x) for x in list(task.get('errors') or []) if str(x)])}")
         return decision
-    obj = task.get("json")
-    if not isinstance(obj, dict):
-        return decision
+    obj = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
 
     decision.should_write_strip = safe_bool(obj.get("should_write_strip"), False)
     strip_text = str(obj.get("strip_text") or "").strip()
@@ -8920,6 +9073,782 @@ def _get_context_turn_limit() -> int:
         v = CONTEXT_TURN_LIMIT_DEFAULT
     return max(1, min(500, int(v)))
 
+
+_WORKSPACE_ROLE_TEMPLATE_DEFAULT = ["frontend_worker", "backend_worker", "reviewer"]
+
+
+def _workspace_norm_login_mode(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"openai", "openai_api", "openai-api"}:
+        return "openai_api"
+    if s == "ollama":
+        return "ollama"
+    return "codex_login"
+
+
+def _workspace_norm_exec_mode(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s == "single_cc":
+        return "single_cc"
+    return "auto_collab"
+
+
+def _workspace_norm_agent_list(v: Any) -> List[str]:
+    rows: List[str] = []
+    if isinstance(v, list):
+        rows = [str(x or "").strip() for x in v]
+    else:
+        txt = str(v or "").strip()
+        if txt:
+            rows = [str(x or "").strip() for x in re.split(r"[,\n，;；\s]+", txt)]
+    out: List[str] = []
+    seen = set()
+    for item in rows:
+        aid = _normalize_agent_id(item, "")
+        if not aid or aid in seen:
+            continue
+        out.append(aid)
+        seen.add(aid)
+    return out
+
+
+def _workspace_norm_role_template(v: Any) -> List[str]:
+    rows = _workspace_norm_agent_list(v)
+    out: List[str] = []
+    for role in rows:
+        rr = str(role or "").strip().lower()
+        if rr in {"frontend_worker", "backend_worker", "reviewer"} and rr not in out:
+            out.append(rr)
+    return out or list(_WORKSPACE_ROLE_TEMPLATE_DEFAULT)
+
+
+def _workspace_default_settings() -> Dict[str, Any]:
+    default_agent_id = _normalize_agent_id(MODEL_CONFIG.get("default_agent_id"), DEFAULT_AGENT_ID)
+    return {
+        "cc_root": os.path.abspath(str(os.getenv("TYXT_CC_ROOT") or r"E:\ClaudeCode_CN")),
+        "cc_allowed_workspace_dir": str(os.getenv("TYXT_CC_ALLOWED_WORKSPACE_DIR") or "").strip(),
+        "cc_auto_start": bool(safe_bool(os.getenv("TYXT_CC_AUTO_START"), True)),
+        "cc_start_cmd": str(os.getenv("TYXT_CC_START_CMD") or "").strip(),
+        "cc_health_check_cmd": str(os.getenv("TYXT_CC_HEALTH_CHECK_CMD") or "").strip(),
+        "login_mode": "codex_login",
+        "openai_base_url": str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip(),
+        "openai_api_key": str(os.getenv("OPENAI_API_KEY") or "").strip(),
+        "ollama_base_url": str(os.getenv("OLLAMA_BASE_URL") or "http://127.0.0.1:11434").strip(),
+        "ollama_model": str(MODEL_CONFIG.get("ollama_model") or MODEL_NAME or "").strip(),
+        "codex_login_status": "",
+        "main_agent_id": default_agent_id,
+        "main_prompt": "",
+        "default_execution_mode": "auto_collab",
+        "default_params": {
+            "temperature": 0.4,
+            "top_p": 0.9,
+            "max_tokens": 1200,
+        },
+        "sub_agents_enabled": [],
+        "sub_agent_role_template": list(_WORKSPACE_ROLE_TEMPLATE_DEFAULT),
+        "memory": {
+            "enabled": True,
+            "save_logs": True,
+            "save_board": True,
+            "save_collab_summary": True,
+        },
+    }
+
+
+def _workspace_settings_from_raw(raw: Any, fallback: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    base = dict(_workspace_default_settings())
+    if isinstance(fallback, dict):
+        try:
+            base.update(fallback)
+        except Exception:
+            pass
+    data = dict(raw or {}) if isinstance(raw, dict) else {}
+    raw_params = data.get("default_params") if isinstance(data.get("default_params"), dict) else {}
+    raw_memory = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+
+    params = {
+        "temperature": max(0.0, min(2.0, safe_float(raw_params.get("temperature", data.get("temperature", base["default_params"]["temperature"])), base["default_params"]["temperature"]))),
+        "top_p": max(0.0, min(1.0, safe_float(raw_params.get("top_p", raw_params.get("topP", data.get("top_p", base["default_params"]["top_p"]))), base["default_params"]["top_p"]))),
+        "max_tokens": max(64, min(64000, safe_int(raw_params.get("max_tokens", raw_params.get("maxTokens", data.get("max_tokens", base["default_params"]["max_tokens"]))), base["default_params"]["max_tokens"]))),
+    }
+
+    memory = {
+        "enabled": bool(safe_bool(raw_memory.get("enabled", data.get("memory_enabled", base["memory"]["enabled"])), base["memory"]["enabled"])),
+        "save_logs": bool(safe_bool(raw_memory.get("save_logs", raw_memory.get("saveLogs", data.get("save_logs", base["memory"]["save_logs"]))), base["memory"]["save_logs"])),
+        "save_board": bool(safe_bool(raw_memory.get("save_board", raw_memory.get("saveBoard", data.get("save_board", base["memory"]["save_board"]))), base["memory"]["save_board"])),
+        "save_collab_summary": bool(safe_bool(raw_memory.get("save_collab_summary", raw_memory.get("saveCollabSummary", data.get("save_collab_summary", base["memory"]["save_collab_summary"]))), base["memory"]["save_collab_summary"])),
+    }
+
+    merged = {
+        "cc_root": os.path.abspath(str(data.get("cc_root", data.get("ccRoot", base.get("cc_root", ""))) or base.get("cc_root") or "").strip() or base["cc_root"]),
+        "cc_allowed_workspace_dir": str(
+            data.get(
+                "cc_allowed_workspace_dir",
+                data.get(
+                    "ccAllowedWorkspaceDir",
+                    data.get(
+                        "cc_allowed_project_dir",
+                        data.get("ccAllowedProjectDir", base.get("cc_allowed_workspace_dir", "")),
+                    ),
+                ),
+            )
+            or ""
+        ).strip(),
+        "cc_auto_start": bool(
+            safe_bool(
+                data.get("cc_auto_start", data.get("ccAutoStart", base.get("cc_auto_start", True))),
+                base.get("cc_auto_start", True),
+            )
+        ),
+        "cc_start_cmd": str(
+            data.get("cc_start_cmd", data.get("ccStartCmd", base.get("cc_start_cmd", ""))) or ""
+        ).strip(),
+        "cc_health_check_cmd": str(
+            data.get("cc_health_check_cmd", data.get("ccHealthCheckCmd", base.get("cc_health_check_cmd", ""))) or ""
+        ).strip(),
+        "login_mode": _workspace_norm_login_mode(data.get("login_mode", data.get("loginMode", base.get("login_mode")))),
+        "openai_base_url": str(data.get("openai_base_url", data.get("openaiBaseUrl", base.get("openai_base_url", ""))) or "").strip(),
+        "openai_api_key": str(data.get("openai_api_key", data.get("openaiApiKey", base.get("openai_api_key", ""))) or "").strip(),
+        "ollama_base_url": str(data.get("ollama_base_url", data.get("ollamaBaseUrl", base.get("ollama_base_url", ""))) or "").strip(),
+        "ollama_model": str(data.get("ollama_model", data.get("ollamaModel", base.get("ollama_model", ""))) or "").strip(),
+        "codex_login_status": str(data.get("codex_login_status", data.get("codexLoginStatus", base.get("codex_login_status", ""))) or "").strip(),
+        "main_agent_id": _normalize_agent_id(data.get("main_agent_id", data.get("mainAgentId", base.get("main_agent_id", DEFAULT_AGENT_ID))), DEFAULT_AGENT_ID),
+        "main_prompt": str(data.get("main_prompt", data.get("mainPrompt", base.get("main_prompt", ""))) or "").strip(),
+        "default_execution_mode": _workspace_norm_exec_mode(data.get("default_execution_mode", data.get("defaultExecutionMode", base.get("default_execution_mode")))),
+        "default_params": params,
+        # 子Agent配置已从工作区设置面板移除：统一回退为空，由本地 CC 按任务在内部协作。
+        "sub_agents_enabled": [],
+        "sub_agent_role_template": list(_WORKSPACE_ROLE_TEMPLATE_DEFAULT),
+        "memory": memory,
+    }
+    return merged
+
+
+def get_workspace_settings(refresh: bool = False) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {}
+    if refresh:
+        try:
+            cfg = _load_config_file()
+        except Exception:
+            cfg = dict(MODEL_CONFIG or {})
+    else:
+        cfg = dict(MODEL_CONFIG or {})
+    ws_raw = cfg.get("workspace_settings") if isinstance(cfg.get("workspace_settings"), dict) else {}
+    normalized = _workspace_settings_from_raw(ws_raw, _workspace_default_settings())
+    MODEL_CONFIG["workspace_settings"] = dict(normalized)
+    return normalized
+
+
+def save_workspace_settings(raw: Any) -> Dict[str, Any]:
+    current = get_workspace_settings(refresh=False)
+    merged = _workspace_settings_from_raw(raw, current)
+    MODEL_CONFIG["workspace_settings"] = dict(merged)
+    _save_config_file(MODEL_CONFIG)
+    return merged
+
+
+def _legacy_lounge_prompt_defaults() -> Dict[str, str]:
+    legacy_prompt = _normalize_prompt_multiline(
+        MODEL_CONFIG.get("agent_global_system_prompt")
+        or MODEL_CONFIG.get("global_agent_system_prompt")
+        or MODEL_CONFIG.get("agent_system_prompt")
+        or _default_agent_global_system_prompt()
+    )
+    private_prompt = _normalize_prompt_multiline(
+        MODEL_CONFIG.get("agent_global_private_system_prompt")
+        or MODEL_CONFIG.get("agent_private_system_prompt")
+        or legacy_prompt
+        or _default_agent_private_system_prompt()
+    )
+    group_prompt = _normalize_prompt_multiline(
+        MODEL_CONFIG.get("agent_global_group_system_prompt")
+        or MODEL_CONFIG.get("agent_group_system_prompt")
+        or private_prompt
+        or _default_agent_group_system_prompt()
+    )
+    return {
+        "private": private_prompt,
+        "group": group_prompt,
+    }
+
+
+def _looks_like_garbled_prompt_value(value: Any) -> bool:
+    txt = str(value or "").strip()
+    if not txt:
+        return False
+    probe = txt.replace("?", "").replace("？", "").strip()
+    return not probe
+
+
+def _resolve_lounge_scene_prompt_value(
+    src_scene_cfg: Optional[Dict[str, Any]],
+    base_prompt: Any,
+    legacy_prompt: Any,
+) -> str:
+    src = src_scene_cfg if isinstance(src_scene_cfg, dict) else {}
+    has_prompt_key = "prompt" in src
+    raw_prompt = str(src.get("prompt") or "").strip() if has_prompt_key else ""
+    if has_prompt_key:
+        if raw_prompt and (not _looks_like_garbled_prompt_value(raw_prompt)):
+            return raw_prompt
+        if _looks_like_garbled_prompt_value(raw_prompt):
+            return _first_non_empty_text(legacy_prompt, base_prompt)
+        return ""
+    return _first_non_empty_text(legacy_prompt, base_prompt)
+
+
+def _lounge_default_settings() -> Dict[str, Any]:
+    default_agent_id = _normalize_agent_id(MODEL_CONFIG.get("default_agent_id"), DEFAULT_AGENT_ID)
+    legacy_prompts = _legacy_lounge_prompt_defaults()
+    return {
+        "private": {
+            "default_agent_id": default_agent_id,
+            "prompt": str(legacy_prompts.get("private") or "").strip(),
+            "reply_style": "",
+            "initiative": "",
+            "relationship_memory_enabled": True,
+            "user_profile_enabled": True,
+        },
+        "group": {
+            "default_agent_id": default_agent_id,
+            "prompt": str(legacy_prompts.get("group") or "").strip(),
+            "trigger_rule": "",
+            "trigger_rules_v1": {
+                "version": 1,
+                "mode": "semi_active",
+                "explicit": {
+                    "at_reply": True,
+                    "name_reply": True,
+                    "nickname_reply": True,
+                    "quote_reply": True,
+                    "admin_force_wakeup": True,
+                },
+                "keyword": {
+                    "enabled": True,
+                    "terms": [],
+                },
+                "proactive": {
+                    "enabled": False,
+                },
+                "guard": {
+                    "cooldown_seconds": 8,
+                    "anti_conflict_enabled": True,
+                },
+                "followup": {
+                    "enabled": False,
+                    "window_seconds": 20,
+                },
+            },
+            "reply_style": "",
+            "memory_enabled": True,
+            "summary_enabled": True,
+        },
+        "memory": {
+            "memory_strip_rule": "",
+            "user_profile_rule": "",
+            "relationship_rule": "",
+            "relationship_param_rule": "",
+            "rumination_enabled": True,
+            "deepthink_enabled": True,
+        },
+    }
+
+
+def _lounge_settings_from_raw(raw: Any, fallback: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    base = _lounge_default_settings()
+    if isinstance(fallback, dict):
+        try:
+            base.update(fallback)
+        except Exception:
+            pass
+    data = dict(raw or {}) if isinstance(raw, dict) else {}
+    private_src = data.get("private") if isinstance(data.get("private"), dict) else {}
+    group_src = data.get("group") if isinstance(data.get("group"), dict) else {}
+    memory_src = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+    private_base = base.get("private") if isinstance(base.get("private"), dict) else {}
+    group_base = base.get("group") if isinstance(base.get("group"), dict) else {}
+    memory_base = base.get("memory") if isinstance(base.get("memory"), dict) else {}
+    private_default_agent = str(
+        private_src.get("default_agent_id")
+        or private_src.get("defaultAgentId")
+        or private_base.get("default_agent_id")
+        or ""
+    ).strip()
+    group_default_agent = str(
+        group_src.get("default_agent_id")
+        or group_src.get("defaultAgentId")
+        or group_base.get("default_agent_id")
+        or ""
+    ).strip()
+    def _text_field(src: Dict[str, Any], aliases: List[str], default_val: Any = "") -> str:
+        for key in aliases:
+            if key in src:
+                return str(src.get(key) or "").strip()
+        return str(default_val or "").strip()
+
+    legacy_prompts = _legacy_lounge_prompt_defaults()
+    private_prompt = _resolve_lounge_scene_prompt_value(
+        private_src,
+        private_base.get("prompt"),
+        legacy_prompts.get("private"),
+    )
+    group_prompt = _resolve_lounge_scene_prompt_value(
+        group_src,
+        group_base.get("prompt"),
+        legacy_prompts.get("group"),
+    )
+
+    return {
+        "private": {
+            "default_agent_id": _normalize_agent_id(private_default_agent, "") if private_default_agent else "",
+            "prompt": private_prompt,
+            "reply_style": _text_field(private_src, ["reply_style", "replyStyle"], private_base.get("reply_style")),
+            "initiative": _text_field(private_src, ["initiative"], private_base.get("initiative")),
+            "relationship_memory_enabled": bool(
+                safe_bool(
+                    private_src.get(
+                        "relationship_memory_enabled",
+                        private_src.get("relationshipMemoryEnabled", private_base.get("relationship_memory_enabled", True)),
+                    ),
+                    private_base.get("relationship_memory_enabled", True),
+                )
+            ),
+            "user_profile_enabled": bool(
+                safe_bool(
+                    private_src.get(
+                        "user_profile_enabled",
+                        private_src.get("userProfileEnabled", private_base.get("user_profile_enabled", True)),
+                    ),
+                    private_base.get("user_profile_enabled", True),
+                )
+            ),
+        },
+        "group": {
+            "default_agent_id": _normalize_agent_id(group_default_agent, "") if group_default_agent else "",
+            "prompt": group_prompt,
+            "trigger_rule": _text_field(group_src, ["trigger_rule", "triggerRule"], group_base.get("trigger_rule")),
+            "trigger_rules_v1": _store_norm_trigger_rules_v1(
+                group_src.get("trigger_rules_v1") if isinstance(group_src.get("trigger_rules_v1"), dict) else {},
+                fallback=group_base.get("trigger_rules_v1") if isinstance(group_base.get("trigger_rules_v1"), dict) else None,
+            ),
+            "reply_style": _text_field(group_src, ["reply_style", "replyStyle"], group_base.get("reply_style")),
+            "memory_enabled": bool(
+                safe_bool(
+                    group_src.get("memory_enabled", group_src.get("memoryEnabled", group_base.get("memory_enabled", True))),
+                    group_base.get("memory_enabled", True),
+                )
+            ),
+            "summary_enabled": bool(
+                safe_bool(
+                    group_src.get("summary_enabled", group_src.get("summaryEnabled", group_base.get("summary_enabled", True))),
+                    group_base.get("summary_enabled", True),
+                )
+            ),
+        },
+        "memory": {
+            "memory_strip_rule": _text_field(memory_src, ["memory_strip_rule", "memoryStripRule"], memory_base.get("memory_strip_rule")),
+            "user_profile_rule": _text_field(memory_src, ["user_profile_rule", "userProfileRule"], memory_base.get("user_profile_rule")),
+            "relationship_rule": _text_field(memory_src, ["relationship_rule", "relationshipRule"], memory_base.get("relationship_rule")),
+            "relationship_param_rule": _text_field(memory_src, ["relationship_param_rule", "relationshipParamRule"], memory_base.get("relationship_param_rule")),
+            "rumination_enabled": bool(
+                safe_bool(
+                    memory_src.get("rumination_enabled", memory_src.get("ruminationEnabled", memory_base.get("rumination_enabled", True))),
+                    memory_base.get("rumination_enabled", True),
+                )
+            ),
+            "deepthink_enabled": bool(
+                safe_bool(
+                    memory_src.get("deepthink_enabled", memory_src.get("deepthinkEnabled", memory_base.get("deepthink_enabled", True))),
+                    memory_base.get("deepthink_enabled", True),
+                )
+            ),
+        },
+    }
+
+
+def _should_persist_lounge_prompt_migration(raw: Any, normalized: Optional[Dict[str, Any]] = None) -> bool:
+    raw_map = raw if isinstance(raw, dict) else {}
+    norm = normalized if isinstance(normalized, dict) else {}
+    raw_private = raw_map.get("private") if isinstance(raw_map.get("private"), dict) else {}
+    raw_group = raw_map.get("group") if isinstance(raw_map.get("group"), dict) else {}
+    private_missing = "prompt" not in raw_private
+    group_missing = "prompt" not in raw_group
+    private_raw_prompt = str(raw_private.get("prompt") or "").strip() if "prompt" in raw_private else ""
+    group_raw_prompt = str(raw_group.get("prompt") or "").strip() if "prompt" in raw_group else ""
+    private_garbled = _looks_like_garbled_prompt_value(private_raw_prompt)
+    group_garbled = _looks_like_garbled_prompt_value(group_raw_prompt)
+    private_prompt = str(((norm.get("private") or {}).get("prompt") if isinstance(norm.get("private"), dict) else "") or "").strip()
+    group_prompt = str(((norm.get("group") or {}).get("prompt") if isinstance(norm.get("group"), dict) else "") or "").strip()
+    return bool(
+        ((private_missing or private_garbled) and private_prompt)
+        or ((group_missing or group_garbled) and group_prompt)
+    )
+
+
+def get_lounge_settings(refresh: bool = False) -> Dict[str, Any]:
+    cfg: Dict[str, Any] = {}
+    if refresh:
+        try:
+            cfg = _load_config_file()
+        except Exception:
+            cfg = dict(MODEL_CONFIG or {})
+    else:
+        cfg = dict(MODEL_CONFIG or {})
+    raw = cfg.get("lounge_settings") if isinstance(cfg.get("lounge_settings"), dict) else {}
+    normalized = _lounge_settings_from_raw(raw, _lounge_default_settings())
+    MODEL_CONFIG["lounge_settings"] = dict(normalized)
+    if _should_persist_lounge_prompt_migration(raw, normalized):
+        _save_config_file(MODEL_CONFIG)
+    return normalized
+
+
+def save_lounge_settings(raw: Any) -> Dict[str, Any]:
+    current = get_lounge_settings(refresh=False)
+    merged = _lounge_settings_from_raw(raw, current)
+    MODEL_CONFIG["lounge_settings"] = dict(merged)
+    _save_config_file(MODEL_CONFIG)
+    return merged
+
+
+def _obs_preview_value(value: Any, max_len: int = 120) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and (not isinstance(value, bool)):
+        try:
+            if isinstance(value, float) and (not math.isfinite(value)):
+                return ""
+            if float(value).is_integer():
+                return str(int(float(value)))
+            return str(round(float(value), 6)).rstrip("0").rstrip(".")
+        except Exception:
+            return str(value)
+    txt = re.sub(r"\s+", " ", str(value or "")).strip()
+    if (not txt) or max_len <= 0:
+        return ""
+    if len(txt) <= max_len:
+        return txt
+    return txt[: max_len - 1].rstrip() + "…"
+
+
+def _obs_resolve_text(
+    scene_value: Any,
+    override_value: Any,
+    base_value: Any,
+    scene_source: str,
+    override_source: str,
+    base_source: str,
+) -> Dict[str, Any]:
+    scene_txt = str(scene_value or "").strip()
+    override_txt = str(override_value or "").strip()
+    base_txt = str(base_value or "").strip()
+    if scene_txt:
+        final = scene_txt
+        source = scene_source
+    elif override_txt:
+        final = override_txt
+        source = override_source
+    else:
+        final = base_txt
+        source = base_source
+    return {
+        "scene_value": scene_txt,
+        "override_value": override_txt,
+        "base_value": base_txt,
+        "final_value": final,
+        "final_preview": _obs_preview_value(final),
+        "source": source,
+        "has_value": bool(str(final or "").strip()),
+    }
+
+
+def _obs_resolve_number(
+    scene_value: Any,
+    override_value: Any,
+    base_value: Any,
+    scene_source: str,
+    override_source: str,
+    base_source: str,
+) -> Dict[str, Any]:
+    def _num_or_none(v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            n = float(v)
+            if not math.isfinite(n):
+                return None
+            return n
+        except Exception:
+            return None
+
+    s = _num_or_none(scene_value)
+    o = _num_or_none(override_value)
+    b = _num_or_none(base_value)
+    if s is not None:
+        final = s
+        source = scene_source
+    elif o is not None:
+        final = o
+        source = override_source
+    else:
+        final = b if b is not None else 0.0
+        source = base_source
+    if float(final).is_integer():
+        final_out: Any = int(float(final))
+    else:
+        final_out = round(float(final), 6)
+    return {
+        "scene_value": (int(s) if (s is not None and float(s).is_integer()) else (round(float(s), 6) if s is not None else None)),
+        "override_value": (int(o) if (o is not None and float(o).is_integer()) else (round(float(o), 6) if o is not None else None)),
+        "base_value": (int(b) if (b is not None and float(b).is_integer()) else (round(float(b), 6) if b is not None else None)),
+        "final_value": final_out,
+        "final_preview": _obs_preview_value(final_out),
+        "source": source,
+        "has_value": True,
+    }
+
+
+def _obs_resolve_bool(
+    scene_value: Any,
+    scene_present: bool,
+    override_value: Any,
+    override_present: bool,
+    base_value: Any,
+    scene_source: str,
+    override_source: str,
+    base_source: str,
+) -> Dict[str, Any]:
+    scene_bool = bool(safe_bool(scene_value, False))
+    override_bool = bool(safe_bool(override_value, False))
+    base_bool = bool(safe_bool(base_value, False))
+    if scene_present:
+        final = scene_bool
+        source = scene_source
+    elif override_present:
+        final = override_bool
+        source = override_source
+    else:
+        final = base_bool
+        source = base_source
+    return {
+        "scene_value": scene_bool if scene_present else None,
+        "override_value": override_bool if override_present else None,
+        "base_value": base_bool,
+        "final_value": final,
+        "final_preview": _obs_preview_value(final),
+        "source": source,
+        "has_value": True,
+    }
+
+
+def _workspace_settings_observability(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(settings, get_workspace_settings(refresh=False))
+    ws_defaults = _workspace_default_settings()
+    main_agent_id = _normalize_agent_id(ws.get("main_agent_id"), _default_agent_id_from_config())
+    main_cfg = _normalize_agent_entry(_get_agent_config(main_agent_id), main_agent_id)
+    ws_override = _agent_workspace_override(main_cfg)
+    basic_prompt = _agent_system_prompt_text(main_cfg)
+
+    position_base = _first_non_empty_text(
+        main_cfg.get("agent_title"),
+        main_cfg.get("display_name"),
+        main_cfg.get("agent_name"),
+        main_cfg.get("agent_id"),
+    )
+    override_has_profile = any(
+        [
+            str(ws_override.get("position") or "").strip(),
+            str(ws_override.get("work_scope") or "").strip(),
+            str(ws_override.get("responsibilities") or "").strip(),
+            str(ws_override.get("engineering_prompt") or "").strip(),
+            str(ws_override.get("capabilities") or "").strip(),
+            str(ws_override.get("workspace_params") or "").strip(),
+            (not bool(safe_bool(ws_override.get("collaboration_enabled"), True))),
+        ]
+    )
+
+    return {
+        "agent_context": {
+            "agent_id": str(main_cfg.get("agent_id") or main_agent_id).strip(),
+            "display_name": _agent_display_name(main_cfg),
+        },
+        "main_agent_id": _obs_resolve_text(
+            ws.get("main_agent_id"),
+            "",
+            _default_agent_id_from_config(),
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "engineering_prompt": _obs_resolve_text(
+            ws.get("main_prompt"),
+            ws_override.get("engineering_prompt"),
+            basic_prompt,
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "position": _obs_resolve_text(
+            "",
+            ws_override.get("position"),
+            position_base,
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "work_scope": _obs_resolve_text(
+            "",
+            ws_override.get("work_scope"),
+            "",
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "responsibilities": _obs_resolve_text(
+            "",
+            _first_non_empty_text(ws_override.get("responsibilities"), ws_override.get("work_scope")),
+            "",
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "capabilities": _obs_resolve_text(
+            "",
+            ws_override.get("capabilities"),
+            "",
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "collaboration_enabled": _obs_resolve_bool(
+            None,
+            False,
+            ws_override.get("collaboration_enabled"),
+            bool(override_has_profile),
+            True,
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "default_execution_mode": _obs_resolve_text(
+            ws.get("default_execution_mode"),
+            "",
+            ws_defaults.get("default_execution_mode"),
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "temperature": _obs_resolve_number(
+            (ws.get("default_params") or {}).get("temperature"),
+            None,
+            (ws_defaults.get("default_params") or {}).get("temperature"),
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "top_p": _obs_resolve_number(
+            (ws.get("default_params") or {}).get("top_p"),
+            None,
+            (ws_defaults.get("default_params") or {}).get("top_p"),
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+        "max_tokens": _obs_resolve_number(
+            (ws.get("default_params") or {}).get("max_tokens"),
+            None,
+            (ws_defaults.get("default_params") or {}).get("max_tokens"),
+            "workspace_settings",
+            "agent_management_workspace_override",
+            "agent_basic_settings",
+        ),
+    }
+
+
+def _lounge_settings_observability(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    ls = _lounge_settings_from_raw(settings, get_lounge_settings(refresh=False))
+    default_agent_id = _default_agent_id_from_config()
+    private_agent_id = default_agent_id
+    group_agent_id = default_agent_id
+    private_cfg = _normalize_agent_entry(_get_agent_config(private_agent_id), private_agent_id)
+    group_cfg = _normalize_agent_entry(_get_agent_config(group_agent_id), group_agent_id)
+    private_basic_prompt = _agent_system_prompt_text(private_cfg)
+    group_basic_prompt = _agent_system_prompt_text(group_cfg)
+
+    return {
+        "agent_context": {
+            "private_agent_id": str(private_cfg.get("agent_id") or private_agent_id).strip(),
+            "private_display_name": _agent_display_name(private_cfg),
+            "group_agent_id": str(group_cfg.get("agent_id") or group_agent_id).strip(),
+            "group_display_name": _agent_display_name(group_cfg),
+        },
+        "private_default_agent_id": _obs_resolve_text(
+            (ls.get("private") or {}).get("default_agent_id"),
+            "",
+            default_agent_id,
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "group_default_agent_id": _obs_resolve_text(
+            (ls.get("group") or {}).get("default_agent_id"),
+            "",
+            default_agent_id,
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "private_prompt": _obs_resolve_text(
+            (ls.get("private") or {}).get("prompt"),
+            "",
+            private_basic_prompt,
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "group_prompt": _obs_resolve_text(
+            (ls.get("group") or {}).get("prompt"),
+            "",
+            group_basic_prompt,
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "agent_persona": _obs_resolve_text(
+            "",
+            "",
+            private_basic_prompt,
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "memory_strip_rule": _obs_resolve_text(
+            (ls.get("memory") or {}).get("memory_strip_rule"),
+            "",
+            "",
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "user_profile_rule": _obs_resolve_text(
+            (ls.get("memory") or {}).get("user_profile_rule"),
+            "",
+            "",
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+        "relationship_rule": _obs_resolve_text(
+            (ls.get("memory") or {}).get("relationship_rule"),
+            "",
+            "",
+            "lounge_settings",
+            "agent_management_lounge_override",
+            "agent_basic_settings",
+        ),
+    }
+
 # ============================================================
 # 08. Flask App 初始化 / CORS / 全局锁
 # ============================================================
@@ -9294,21 +10223,31 @@ def extract_reasoning_if_any(model_name: str, full_text: str) -> tuple[Optional[
 # 09. System Prompt 人格加载（已切换为仅 UI 人格）
 # ============================================================
 def get_profile(meta: dict) -> str:
+    # Deprecated compatibility shell:
+    # 历史 profile 路由入口，当前主链路不再依赖此函数。
+    # 保留仅为兼容旧调用，避免外部导入断裂。
     # 当前策略：统一人格，不再按群区分 Profile。
+    _ = dict(meta or {})
     return "A"
 
 
 def get_system_prompt_base(meta: dict) -> str:
+    # Deprecated compatibility shell:
+    # light_chain 主入口已迁移到 _build_light_chain_system_prompt()
+    # （query_context_builder + prompt_builder）。
+    # 本函数保留仅为兼容旧调用。
+    _ = dict(meta or {})
     # prompts.txt / group prompts 注入逻辑已废弃。
     # 当前人格来源统一为 configs/persona_config.json（前端“Agent 人格设置”）。
     return ""
 
 
 def build_system_prompt_lines(meta: dict) -> List[str]:
-    
-    #生成 system prompt 的基础行列表（只负责人格文本，不做上下文注入）
+    # Deprecated compatibility shell:
+    # 旧的“基础 system prompt 行列表”入口，不再作为 /chat 或 /v1 的主入口。
+    # 新代码请使用 light_chain 主链路与 prompt_builder/query_context。
+    # 生成 system prompt 的基础行列表（只负责人格文本，不做上下文注入）
     # 在 /chat 或 /v1/chat/completions 里调用，把返回的 lines 作为 sys_lines 起点。
-    
     lines: List[str] = []
     base = get_system_prompt_base(meta)
     if base.strip():
@@ -10591,6 +11530,7 @@ def persona_get():
             "content": _agent_system_prompt_text(cfg),
             "agent_title": str(cfg.get("agent_title") or cfg.get("display_name") or ""),
             "agent_name": str(cfg.get("agent_name") or cfg.get("display_name") or ""),
+            "agent_nickname": str(cfg.get("agent_nickname") or ""),
             "updated_at": cfg.get("updated_at"),
         }), 200
     except Exception as e:
@@ -12957,15 +13897,14 @@ def index():
     方便局域网其它设备通过 http://IP:5000/ 访问 UI
     """
     try:
-        if os.path.exists(TYXT_UI_HTML):
-            return send_file(TYXT_UI_HTML, mimetype="text/html; charset=utf-8")
-
-        # 兼容当前项目结构：前端文件位于 frontend/TYXT_UI.html
-        fallback_html = os.path.join(TYXT_FRONTEND_DIR, "TYXT_UI.html")
-        if os.path.exists(fallback_html):
-            return send_file(fallback_html, mimetype="text/html; charset=utf-8")
-
-        raise FileNotFoundError(TYXT_UI_HTML)
+        html_path = TYXT_UI_HTML if os.path.exists(TYXT_UI_HTML) else os.path.join(TYXT_FRONTEND_DIR, "TYXT_UI.html")
+        if not os.path.exists(html_path):
+            raise FileNotFoundError(html_path)
+        resp = make_response(send_file(html_path, mimetype="text/html; charset=utf-8"))
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+        return resp
     except Exception as e:
         return f"TYXT_UI.html not found. Check TYXT_UI_HTML path. Error: {e}", 500
 
@@ -13152,6 +14091,82 @@ def api_health():
     if request.method == "OPTIONS": return ("",204)
     return jsonify({"ok": True, "msg": "backend alive"}), 200
 
+_HEALTH_LAST_ERROR: str = ""
+
+def _set_health_last_error(text: Any) -> None:
+    global _HEALTH_LAST_ERROR
+    _HEALTH_LAST_ERROR = str(text or "").strip()
+
+def _health_check_ocr() -> bool:
+    try:
+        status = multimodal_tools.ocr_status()
+        return bool((status or {}).get("available"))
+    except Exception as e:
+        _set_health_last_error(f"ocr_check_failed: {e}")
+        return False
+
+def _health_check_tts() -> bool:
+    url = str(SOVITS_TTS_URL or "").strip()
+    if not url:
+        return False
+    try:
+        resp = requests.get(url, timeout=1.2)
+        return bool(int(resp.status_code) < 500)
+    except Exception:
+        return False
+
+def _health_check_mcp() -> bool:
+    try:
+        if not bool(MCP_BRIDGE_ENABLED):
+            return False
+        if MCP_BRIDGE is None:
+            return False
+        return bool(MCP_SERVER_CONFIGS) or bool(getattr(MCP_BRIDGE, "_servers", {}))
+    except Exception as e:
+        _set_health_last_error(f"mcp_check_failed: {e}")
+        return False
+
+def _health_check_skills() -> bool:
+    try:
+        rows = skills_registry.load_all_skills(force=False)
+        return isinstance(rows, dict)
+    except Exception as e:
+        _set_health_last_error(f"skills_check_failed: {e}")
+        return False
+
+@app.route("/health/detail", methods=["GET", "OPTIONS"])
+@app.route("/tools/health/detail", methods=["GET", "OPTIONS"])
+def api_health_detail():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        current_model = str(MODEL_CONFIG.get("model") or MODEL_NAME).strip() or MODEL_NAME
+        payload = {
+            "backend": True,
+            "model": current_model,
+            "provider": str(LLM_PROVIDER or "ollama").strip() or "ollama",
+            "ocr": bool(_health_check_ocr()),
+            "tts": bool(_health_check_tts()),
+            "mcp": bool(_health_check_mcp()),
+            "skills": bool(_health_check_skills()),
+            "last_error": str(_HEALTH_LAST_ERROR or "").strip(),
+        }
+        return jsonify(payload), 200
+    except Exception as e:
+        _set_health_last_error(str(e))
+        return jsonify(
+            {
+                "backend": False,
+                "model": str(MODEL_CONFIG.get("model") or MODEL_NAME).strip() or MODEL_NAME,
+                "provider": str(LLM_PROVIDER or "ollama").strip() or "ollama",
+                "ocr": False,
+                "tts": False,
+                "mcp": False,
+                "skills": False,
+                "last_error": str(_HEALTH_LAST_ERROR or "").strip() or str(e),
+            }
+        ), 200
+
 @app.route("/chat", methods=["OPTIONS"])
 def chat_options():
     resp=make_response("",204)
@@ -13161,6 +14176,2838 @@ def chat_options():
     resp.headers["Access-Control-Allow-Methods"]="POST, OPTIONS"
     resp.headers["Access-Control-Allow-Headers"] = CORS_ALLOW_HEADERS_VALUE
     return resp
+
+
+# ===== 工作区项目（office）最小缓存：按 user_id + project_id 存一份前端透传项目信息 =====
+OFFICE_PROJECT_CACHE_LOCK = threading.RLock()
+OFFICE_PROJECT_CACHE: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+
+def _office_now_iso() -> str:
+    try:
+        return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    except Exception:
+        return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def _office_user_key(user_id: Any) -> str:
+    return str(user_id or "anonymous").strip() or "anonymous"
+
+
+def _office_parse_member_agents(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        out = [str(x or "").strip() for x in raw]
+        return [x for x in out if x]
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    parts = re.split(r"[,\n，;；\s]+", text)
+    out = [str(x or "").strip() for x in parts]
+    return [x for x in out if x]
+
+
+def _normalize_office_project_payload(raw: Any, project_id_hint: str = "") -> Dict[str, Any]:
+    data = dict(raw or {}) if isinstance(raw, dict) else {}
+    pid = str(data.get("id") or data.get("project_id") or project_id_hint or "").strip()
+    return {
+        "id": pid,
+        "name": str(data.get("name") or "").strip(),
+        "type": str(data.get("type") or "hybrid").strip() or "hybrid",
+        "mainAgent": str(data.get("mainAgent") or data.get("main_agent") or "").strip(),
+        "memberAgents": _office_parse_member_agents(data.get("memberAgents") or data.get("member_agents")),
+        "kbPath": str(data.get("kbPath") or data.get("kb_path") or "").strip(),
+        "workspacePath": str(data.get("workspacePath") or data.get("workspace_path") or "").strip(),
+        "updatedAt": str(data.get("updatedAt") or data.get("updated_at") or _office_now_iso()).strip() or _office_now_iso(),
+    }
+
+
+def _office_workspace_dir_from_settings(workspace_settings: Optional[Dict[str, Any]] = None) -> str:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    raw = str(
+        ws.get("cc_allowed_workspace_dir")
+        or ws.get("cc_allowed_project_dir")
+        or ws.get("workspace_default_dir")
+        or ""
+    ).strip()
+    if not raw:
+        return ""
+    try:
+        return os.path.abspath(raw)
+    except Exception:
+        return raw
+
+
+def _office_apply_workspace_path_fallback(
+    raw_project: Any,
+    workspace_settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    payload = dict(raw_project or {}) if isinstance(raw_project, dict) else {}
+    current_path = str(payload.get("workspacePath") or payload.get("workspace_path") or "").strip()
+    if current_path:
+        return payload
+    fallback = _office_workspace_dir_from_settings(workspace_settings)
+    if fallback:
+        payload["workspacePath"] = fallback
+        payload["workspace_path"] = fallback
+    return payload
+
+
+def _office_resolve_project_workspace_path(
+    project: Dict[str, Any],
+    workspace_settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    row = dict(project or {}) if isinstance(project, dict) else {}
+    current = str(row.get("workspacePath") or row.get("workspace_path") or "").strip()
+    if current:
+        try:
+            current = os.path.abspath(current)
+        except Exception:
+            current = str(current).strip()
+        if current:
+            row["workspacePath"] = current
+            row["workspace_path"] = current
+            project.update(row)
+            return current
+    fallback = _office_workspace_dir_from_settings(workspace_settings)
+    if fallback:
+        row["workspacePath"] = fallback
+        row["workspace_path"] = fallback
+        project.update(row)
+        return fallback
+    return ""
+
+
+def _cache_office_project(user_id: str, project: Dict[str, Any]) -> None:
+    uid = _office_user_key(user_id)
+    pid = str(project.get("id") or "").strip()
+    if not pid:
+        return
+    with OFFICE_PROJECT_CACHE_LOCK:
+        bucket = OFFICE_PROJECT_CACHE.setdefault(uid, {})
+        bucket[pid] = dict(project)
+
+
+def _get_cached_office_project(user_id: str, project_id: str) -> Optional[Dict[str, Any]]:
+    uid = _office_user_key(user_id)
+    pid = str(project_id or "").strip()
+    if not pid:
+        return None
+    with OFFICE_PROJECT_CACHE_LOCK:
+        row = (OFFICE_PROJECT_CACHE.get(uid) or {}).get(pid)
+        return dict(row) if isinstance(row, dict) else None
+
+
+def _uncache_office_project(user_id: str, project_id: str) -> None:
+    uid = _office_user_key(user_id)
+    pid = str(project_id or "").strip()
+    if not pid:
+        return
+    with OFFICE_PROJECT_CACHE_LOCK:
+        bucket = OFFICE_PROJECT_CACHE.get(uid)
+        if not isinstance(bucket, dict):
+            return
+        if pid in bucket:
+            del bucket[pid]
+        if not bucket and uid in OFFICE_PROJECT_CACHE:
+            del OFFICE_PROJECT_CACHE[uid]
+
+
+OFFICE_PROJECT_STORE_ROOT = os.path.join(PROJECT_ROOT, "state", "office_projects")
+OFFICE_PROJECT_STORE_LOCK = threading.RLock()
+OFFICE_PROJECTS_MAX_COUNT = 1000
+
+
+def _office_norm_project_type(v: Any) -> str:
+    t = str(v or "").strip().lower()
+    if t in {"code_dev", "doc_sorting", "research_analysis", "hybrid"}:
+        return t
+    if t in {"doc_task", "doc"}:
+        return "doc_sorting"
+    if t in {"research_task", "research"}:
+        return "research_analysis"
+    if t in {"mixed_task", "mixed"}:
+        return "hybrid"
+    return "hybrid"
+
+
+def _office_norm_project_id(v: Any) -> str:
+    s = str(v or "").strip()
+    s = re.sub(r"[^0-9a-zA-Z._-]+", "_", s).strip("._-")
+    return s
+
+
+def _office_make_project_id() -> str:
+    return f"project_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+
+
+def _office_project_store_path(user_id: str) -> str:
+    uid = _office_memory_safe_key(_office_user_key(user_id))
+    return os.path.join(OFFICE_PROJECT_STORE_ROOT, f"{uid}.json")
+
+
+def _office_default_project_store_doc(user_id: str) -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "user_id": _office_user_key(user_id),
+        "projects": [],
+        "updated_at": _office_now_iso(),
+    }
+
+
+def _office_normalize_project_entity(
+    raw: Any,
+    *,
+    project_id_hint: str = "",
+    created_at_hint: str = "",
+    now_at: str = "",
+) -> Dict[str, Any]:
+    src = _normalize_office_project_payload(raw, project_id_hint=project_id_hint)
+    now_text = str(now_at or _office_now_iso()).strip() or _office_now_iso()
+    pid = _office_norm_project_id(src.get("id") or project_id_hint or "") or _office_make_project_id()
+    created_at = str(
+        (raw.get("createdAt") if isinstance(raw, dict) else "")
+        or (raw.get("created_at") if isinstance(raw, dict) else "")
+        or created_at_hint
+        or now_text
+    ).strip() or now_text
+    updated_at = str(
+        (raw.get("updatedAt") if isinstance(raw, dict) else "")
+        or (raw.get("updated_at") if isinstance(raw, dict) else "")
+        or src.get("updatedAt")
+        or now_text
+    ).strip() or now_text
+    return {
+        "id": pid,
+        "name": str(src.get("name") or "").strip(),
+        "type": _office_norm_project_type(src.get("type")),
+        "mainAgent": str(src.get("mainAgent") or "").strip(),
+        "memberAgents": _office_parse_member_agents(src.get("memberAgents")),
+        "kbPath": str(src.get("kbPath") or "").strip(),
+        "workspacePath": str(src.get("workspacePath") or "").strip(),
+        "createdAt": created_at,
+        "updatedAt": updated_at,
+    }
+
+
+def _office_sort_projects_inplace(rows: List[Dict[str, Any]]) -> None:
+    rows.sort(key=lambda x: str((x or {}).get("updatedAt") or ""), reverse=True)
+
+
+def _office_load_project_store_doc(user_id: str) -> Dict[str, Any]:
+    uid = _office_user_key(user_id)
+    path = _office_project_store_path(uid)
+    doc = _office_default_project_store_doc(uid)
+    with OFFICE_PROJECT_STORE_LOCK:
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, dict):
+                    doc.update(raw)
+        except Exception:
+            pass
+    projects_raw = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    now_at = _office_now_iso()
+    projects: List[Dict[str, Any]] = []
+    for idx, row in enumerate(projects_raw):
+        item = _office_normalize_project_entity(
+            row,
+            project_id_hint=str((row or {}).get("id") or f"project_{idx}"),
+            created_at_hint=str((row or {}).get("createdAt") or (row or {}).get("created_at") or now_at),
+            now_at=now_at,
+        )
+        if not str(item.get("id") or "").strip():
+            continue
+        if not str(item.get("name") or "").strip():
+            item["name"] = "Untitled Project"
+        projects.append(item)
+    uniq_map: Dict[str, Dict[str, Any]] = {}
+    for item in projects:
+        uniq_map[str(item.get("id") or "").strip()] = item
+    out = list(uniq_map.values())
+    _office_sort_projects_inplace(out)
+    if len(out) > OFFICE_PROJECTS_MAX_COUNT:
+        out = out[:OFFICE_PROJECTS_MAX_COUNT]
+    doc["projects"] = out
+    doc["user_id"] = uid
+    doc["updated_at"] = str(doc.get("updated_at") or now_at).strip() or now_at
+    return doc
+
+
+def _office_save_project_store_doc(user_id: str, doc: Dict[str, Any]) -> bool:
+    uid = _office_user_key(user_id)
+    path = _office_project_store_path(uid)
+    payload = dict(doc or {}) if isinstance(doc, dict) else _office_default_project_store_doc(uid)
+    projects = payload.get("projects") if isinstance(payload.get("projects"), list) else []
+    normalized: List[Dict[str, Any]] = []
+    now_at = _office_now_iso()
+    for idx, row in enumerate(projects):
+        item = _office_normalize_project_entity(
+            row,
+            project_id_hint=str((row or {}).get("id") or f"project_{idx}"),
+            created_at_hint=str((row or {}).get("createdAt") or (row or {}).get("created_at") or now_at),
+            now_at=now_at,
+        )
+        if not str(item.get("id") or "").strip():
+            continue
+        if not str(item.get("name") or "").strip():
+            item["name"] = "Untitled Project"
+        normalized.append(item)
+    uniq_map: Dict[str, Dict[str, Any]] = {}
+    for item in normalized:
+        uniq_map[str(item.get("id") or "").strip()] = item
+    out = list(uniq_map.values())
+    _office_sort_projects_inplace(out)
+    if len(out) > OFFICE_PROJECTS_MAX_COUNT:
+        out = out[:OFFICE_PROJECTS_MAX_COUNT]
+    payload["projects"] = out
+    payload["version"] = safe_int(payload.get("version"), 1) or 1
+    payload["user_id"] = uid
+    payload["updated_at"] = _office_now_iso()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with OFFICE_PROJECT_STORE_LOCK:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _office_list_projects(user_id: str) -> List[Dict[str, Any]]:
+    doc = _office_load_project_store_doc(user_id)
+    projects = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    out: List[Dict[str, Any]] = []
+    for row in projects:
+        item = _office_normalize_project_entity(row, project_id_hint=str((row or {}).get("id") or ""))
+        if not str(item.get("name") or "").strip():
+            item["name"] = "Untitled Project"
+        out.append(item)
+        _cache_office_project(user_id, item)
+    _office_sort_projects_inplace(out)
+    return out
+
+
+def _office_get_project_from_store(user_id: str, project_id: str) -> Optional[Dict[str, Any]]:
+    pid = _office_norm_project_id(project_id)
+    if not pid:
+        return None
+    doc = _office_load_project_store_doc(user_id)
+    rows = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    for row in rows:
+        item = _office_normalize_project_entity(row, project_id_hint=pid)
+        if str(item.get("id") or "") == pid:
+            _cache_office_project(user_id, item)
+            return item
+    return None
+
+
+def _office_create_or_merge_project(user_id: str, raw: Any, *, allow_merge_by_name: bool = True) -> Tuple[Optional[Dict[str, Any]], bool]:
+    data = dict(raw or {}) if isinstance(raw, dict) else {}
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return None, False
+    now_at = _office_now_iso()
+    pid_raw = _office_norm_project_id(data.get("id") or data.get("project_id") or "")
+    doc = _office_load_project_store_doc(user_id)
+    rows = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    existing_idx = -1
+    if pid_raw:
+        for idx, row in enumerate(rows):
+            if _office_norm_project_id((row or {}).get("id") or "") == pid_raw:
+                existing_idx = idx
+                break
+    if existing_idx < 0 and allow_merge_by_name:
+        low_name = name.lower()
+        for idx, row in enumerate(rows):
+            row_name = str((row or {}).get("name") or "").strip().lower()
+            if row_name and row_name == low_name:
+                existing_idx = idx
+                break
+
+    if existing_idx >= 0:
+        prev = dict(rows[existing_idx] or {}) if isinstance(rows[existing_idx], dict) else {}
+        merged = dict(prev)
+        merged.update(
+            {
+                "name": name,
+                "type": data.get("type"),
+                "mainAgent": data.get("mainAgent") or data.get("main_agent"),
+                "memberAgents": data.get("memberAgents") or data.get("member_agents"),
+                "kbPath": data.get("kbPath") or data.get("kb_path"),
+                "workspacePath": data.get("workspacePath") or data.get("workspace_path"),
+                "updatedAt": now_at,
+            }
+        )
+        entity = _office_normalize_project_entity(
+            merged,
+            project_id_hint=str(prev.get("id") or pid_raw or _office_make_project_id()),
+            created_at_hint=str(prev.get("createdAt") or prev.get("created_at") or now_at),
+            now_at=now_at,
+        )
+        rows[existing_idx] = entity
+        doc["projects"] = rows
+        _office_save_project_store_doc(user_id, doc)
+        _cache_office_project(user_id, entity)
+        return entity, False
+
+    entity = _office_normalize_project_entity(
+        {
+            "id": pid_raw or _office_make_project_id(),
+            "name": name,
+            "type": data.get("type"),
+            "mainAgent": data.get("mainAgent") or data.get("main_agent"),
+            "memberAgents": data.get("memberAgents") or data.get("member_agents"),
+            "kbPath": data.get("kbPath") or data.get("kb_path"),
+            "workspacePath": data.get("workspacePath") or data.get("workspace_path"),
+            "createdAt": now_at,
+            "updatedAt": now_at,
+        },
+        project_id_hint=pid_raw or _office_make_project_id(),
+        created_at_hint=now_at,
+        now_at=now_at,
+    )
+    rows.append(entity)
+    doc["projects"] = rows
+    _office_save_project_store_doc(user_id, doc)
+    _cache_office_project(user_id, entity)
+    return entity, True
+
+
+def _office_update_project(user_id: str, project_id: str, patch: Any) -> Optional[Dict[str, Any]]:
+    pid = _office_norm_project_id(project_id)
+    data = dict(patch or {}) if isinstance(patch, dict) else {}
+    if not pid:
+        return None
+    doc = _office_load_project_store_doc(user_id)
+    rows = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    now_at = _office_now_iso()
+    for idx, row in enumerate(rows):
+        rid = _office_norm_project_id((row or {}).get("id") or "")
+        if rid != pid:
+            continue
+        prev = dict(row or {}) if isinstance(row, dict) else {}
+        next_raw = dict(prev)
+        if "name" in data:
+            next_raw["name"] = str(data.get("name") or "").strip() or prev.get("name") or ""
+        if "type" in data:
+            next_raw["type"] = data.get("type")
+        if "mainAgent" in data or "main_agent" in data:
+            next_raw["mainAgent"] = data.get("mainAgent") or data.get("main_agent") or ""
+        if "memberAgents" in data or "member_agents" in data:
+            next_raw["memberAgents"] = data.get("memberAgents") or data.get("member_agents") or []
+        if "kbPath" in data or "kb_path" in data:
+            next_raw["kbPath"] = data.get("kbPath") or data.get("kb_path") or ""
+        if "workspacePath" in data or "workspace_path" in data:
+            next_raw["workspacePath"] = data.get("workspacePath") or data.get("workspace_path") or ""
+        next_raw["updatedAt"] = now_at
+        entity = _office_normalize_project_entity(
+            next_raw,
+            project_id_hint=pid,
+            created_at_hint=str(prev.get("createdAt") or prev.get("created_at") or now_at),
+            now_at=now_at,
+        )
+        if not str(entity.get("name") or "").strip():
+            entity["name"] = str(prev.get("name") or "").strip() or "Untitled Project"
+        rows[idx] = entity
+        doc["projects"] = rows
+        _office_save_project_store_doc(user_id, doc)
+        _cache_office_project(user_id, entity)
+        try:
+            field_labels: List[str] = []
+            if "name" in data:
+                field_labels.append("项目名称")
+            if "type" in data:
+                field_labels.append("项目类型")
+            if "mainAgent" in data or "main_agent" in data:
+                field_labels.append("主Agent")
+            if "memberAgents" in data or "member_agents" in data:
+                field_labels.append("参与Agent")
+            if "kbPath" in data or "kb_path" in data:
+                field_labels.append("知识库路径")
+            if "workspacePath" in data or "workspace_path" in data:
+                field_labels.append("工作目录")
+            if not field_labels:
+                field_labels.append("基础信息")
+            mem_doc = _office_load_project_memory(user_id, pid)
+            _office_history_append_bounded(
+                mem_doc,
+                "recent_events",
+                _office_history_event_entry(
+                    pid,
+                    "project_updated",
+                    f"项目信息已更新：{', '.join(field_labels)}",
+                    status="success",
+                    execution_mode="",
+                    created_at=now_at,
+                    extra={"fields": field_labels},
+                ),
+                OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS,
+            )
+            mem_doc["updated_at"] = now_at
+            _office_save_project_memory(user_id, pid, mem_doc)
+        except Exception:
+            pass
+        return entity
+    return None
+
+
+def _office_cleanup_project_runtime_files(user_id: str, project_id: str) -> None:
+    uid = _office_user_key(user_id)
+    pid = _office_norm_project_id(project_id)
+    if not pid:
+        return
+    targets: List[str] = [
+        _office_project_memory_path(uid, pid),
+        _office_task_project_dir(OFFICE_TASK_RUNS_ROOT, uid, pid),
+        _office_task_project_dir(OFFICE_TASK_ARCHIVES_ROOT, uid, pid),
+    ]
+    for target in targets:
+        t = str(target or "").strip()
+        if not t:
+            continue
+        try:
+            if os.path.isfile(t):
+                os.remove(t)
+                continue
+            if os.path.isdir(t):
+                shutil.rmtree(t, ignore_errors=True)
+        except Exception:
+            continue
+
+
+def _office_delete_project(user_id: str, project_id: str) -> Optional[Dict[str, Any]]:
+    pid = _office_norm_project_id(project_id)
+    if not pid:
+        return None
+    doc = _office_load_project_store_doc(user_id)
+    rows = doc.get("projects") if isinstance(doc.get("projects"), list) else []
+    deleted: Optional[Dict[str, Any]] = None
+    kept: List[Dict[str, Any]] = []
+    for row in rows:
+        entity = _office_normalize_project_entity(
+            row,
+            project_id_hint=str((row or {}).get("id") or pid),
+            created_at_hint=str((row or {}).get("createdAt") or (row or {}).get("created_at") or _office_now_iso()),
+            now_at=_office_now_iso(),
+        )
+        rid = _office_norm_project_id(entity.get("id") or "")
+        if rid == pid and deleted is None:
+            deleted = entity
+            continue
+        kept.append(entity)
+    if deleted is None:
+        return None
+    doc["projects"] = kept
+    _office_save_project_store_doc(user_id, doc)
+    _uncache_office_project(user_id, pid)
+    _office_cleanup_project_runtime_files(user_id, pid)
+    return deleted
+
+
+OFFICE_PROJECT_MEMORY_ROOT = os.path.join(PROJECT_ROOT, "state", "office_project_memory")
+OFFICE_PROJECT_MEMORY_LOCK = threading.RLock()
+OFFICE_PROJECT_MEMORY_MAX_LOGS = 120
+OFFICE_PROJECT_MEMORY_PROMPT_LOGS = 5
+OFFICE_PROJECT_MEMORY_MAX_APPROVAL_HISTORY = 80
+OFFICE_PROJECT_MEMORY_MAX_RESULT_HISTORY = 120
+OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS = 160
+OFFICE_PROJECT_MEMORY_MAX_TASK_ARCHIVES = 200
+
+OFFICE_TASK_RUNS_ROOT = os.path.join(PROJECT_ROOT, "state", "office_task_runs")
+OFFICE_TASK_ARCHIVES_ROOT = os.path.join(PROJECT_ROOT, "state", "office_task_archives")
+OFFICE_TASK_RUNS_LOCK = threading.RLock()
+OFFICE_TASK_STATUS_TERMINAL = {"completed", "failed", "cancelled"}
+
+
+def _office_memory_safe_key(v: Any) -> str:
+    s = str(v or "").strip()
+    s = re.sub(r"[^0-9a-zA-Z._-]+", "_", s)
+    s = s.strip("._-")
+    return s or "unknown"
+
+
+def _office_task_safe_name(v: Any, default: str = "task") -> str:
+    s = str(v or "").strip()
+    s = re.sub(r"[\\/:*?\"<>|]+", "_", s)
+    s = re.sub(r"\s+", "_", s).strip("._-")
+    if not s:
+        s = default
+    if len(s) > 80:
+        s = s[:80].rstrip("._-")
+    return s or default
+
+
+def _office_task_make_id() -> str:
+    return f"task_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+
+
+def _office_task_project_dir(root_dir: str, user_id: str, project_id: str) -> str:
+    uid = _office_memory_safe_key(_office_user_key(user_id))
+    pid = _office_memory_safe_key(project_id)
+    return os.path.join(root_dir, uid, pid)
+
+
+def _office_task_run_json_path(user_id: str, project_id: str, task_id: str) -> str:
+    token = _office_memory_safe_key(task_id)
+    return os.path.join(_office_task_project_dir(OFFICE_TASK_RUNS_ROOT, user_id, project_id), f"{token}.json")
+
+
+def _office_task_run_log_path(user_id: str, project_id: str, task_id: str) -> str:
+    token = _office_memory_safe_key(task_id)
+    return os.path.join(_office_task_project_dir(OFFICE_TASK_RUNS_ROOT, user_id, project_id), f"{token}.log")
+
+
+def _office_task_archive_md_path(user_id: str, project_id: str, task_id: str, task_name: str) -> str:
+    token = _office_memory_safe_key(task_id)
+    safe_name = _office_task_safe_name(task_name, default="task")
+    filename = f"{token}__{safe_name}.md"
+    return os.path.join(_office_task_project_dir(OFFICE_TASK_ARCHIVES_ROOT, user_id, project_id), filename)
+
+
+def _office_task_relpath(path: Any) -> str:
+    ap = os.path.abspath(str(path or "").strip())
+    try:
+        rel = os.path.relpath(ap, PROJECT_ROOT)
+    except Exception:
+        return str(path or "").strip()
+    return rel.replace("\\", "/")
+
+
+def _office_task_guess_name(message: Any) -> str:
+    txt = _office_compact_text(str(message or "").strip(), 42)
+    txt = re.sub(r"\s+", " ", txt).strip(" -_:")
+    if txt:
+        return txt
+    return f"任务_{datetime.datetime.now().strftime('%m%d_%H%M')}"
+
+
+def _office_task_progress(v: Any) -> int:
+    return max(0, min(100, safe_int(v, 0)))
+
+
+def _office_task_status(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"queued", "running", "completed", "failed", "cancelled"}:
+        return s
+    return "queued"
+
+
+def _office_task_default_row(
+    *,
+    user_id: str,
+    project_id: str,
+    task_id: str,
+    task_name: str,
+    task_goal: str,
+) -> Dict[str, Any]:
+    now_at = _office_now_iso()
+    return {
+        "version": 1,
+        "task_id": str(task_id or "").strip(),
+        "project_id": str(project_id or "").strip(),
+        "user_id": _office_user_key(user_id),
+        "task_name": str(task_name or "").strip() or _office_task_guess_name(task_goal),
+        "task_goal": str(task_goal or "").strip(),
+        "status": "queued",
+        "phase": "queued",
+        "progress_percent": 0,
+        "result_status": "",
+        "result_summary": "",
+        "result_mode": "",
+        "error": "",
+        "orchestrator": {},
+        "collaboration": {},
+        "last_agent_status": {},
+        "bridge": {},
+        "cc_result": {},
+        "cc_log_path": "",
+        "log_path": _office_task_relpath(_office_task_run_log_path(user_id, project_id, task_id)),
+        "archive_md_path": "",
+        "created_at": now_at,
+        "updated_at": now_at,
+        "completed_at": "",
+        "history": [],
+    }
+
+
+def _office_task_normalize_row(raw: Any) -> Dict[str, Any]:
+    row = dict(raw or {}) if isinstance(raw, dict) else {}
+    now_at = _office_now_iso()
+    out = {
+        "version": safe_int(row.get("version"), 1) or 1,
+        "task_id": str(row.get("task_id") or row.get("id") or "").strip(),
+        "project_id": str(row.get("project_id") or "").strip(),
+        "user_id": _office_user_key(row.get("user_id")),
+        "task_name": str(row.get("task_name") or "").strip(),
+        "task_goal": str(row.get("task_goal") or "").strip(),
+        "status": _office_task_status(row.get("status")),
+        "phase": str(row.get("phase") or "").strip().lower() or "queued",
+        "progress_percent": _office_task_progress(row.get("progress_percent")),
+        "result_status": _office_norm_result_status(row.get("result_status")),
+        "result_summary": _office_compact_text(row.get("result_summary") or "", 1200),
+        "result_mode": _office_norm_exec_mode(row.get("result_mode")),
+        "error": _office_compact_text(row.get("error") or "", 800),
+        "orchestrator": dict(row.get("orchestrator") or {}) if isinstance(row.get("orchestrator"), dict) else {},
+        "collaboration": dict(row.get("collaboration") or {}) if isinstance(row.get("collaboration"), dict) else {},
+        "last_agent_status": dict(row.get("last_agent_status") or {}) if isinstance(row.get("last_agent_status"), dict) else {},
+        "bridge": dict(row.get("bridge") or {}) if isinstance(row.get("bridge"), dict) else {},
+        "cc_result": dict(row.get("cc_result") or {}) if isinstance(row.get("cc_result"), dict) else {},
+        "cc_log_path": str(row.get("cc_log_path") or "").strip(),
+        "log_path": str(row.get("log_path") or "").strip(),
+        "archive_md_path": str(row.get("archive_md_path") or "").strip(),
+        "created_at": str(row.get("created_at") or now_at).strip() or now_at,
+        "updated_at": str(row.get("updated_at") or now_at).strip() or now_at,
+        "completed_at": str(row.get("completed_at") or "").strip(),
+        "history": [],
+    }
+    if (not out["task_name"]) and out["task_goal"]:
+        out["task_name"] = _office_task_guess_name(out["task_goal"])
+    hist = row.get("history") if isinstance(row.get("history"), list) else []
+    normalized_hist: List[Dict[str, Any]] = []
+    for item in hist[-40:]:
+        node = dict(item or {}) if isinstance(item, dict) else {}
+        normalized_hist.append(
+            {
+                "ts": str(node.get("ts") or now_at).strip() or now_at,
+                "phase": str(node.get("phase") or "").strip().lower(),
+                "status": _office_task_status(node.get("status")),
+                "progress_percent": _office_task_progress(node.get("progress_percent")),
+                "message": _office_compact_text(node.get("message") or "", 300),
+            }
+        )
+    out["history"] = normalized_hist
+    return out
+
+
+def _office_task_save_row(user_id: str, project_id: str, task_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    path = _office_task_run_json_path(user_id, project_id, task_id)
+    data = _office_task_normalize_row(row)
+    _write_json_atomic(path, data)
+    return data
+
+
+def _office_task_load_row(user_id: str, project_id: str, task_id: str) -> Optional[Dict[str, Any]]:
+    path = _office_task_run_json_path(user_id, project_id, task_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            return None
+        return _office_task_normalize_row(raw)
+    except Exception:
+        return None
+
+
+def _office_task_append_log(user_id: str, project_id: str, task_id: str, text: Any) -> str:
+    message = str(text or "").strip()
+    if not message:
+        return ""
+    path = _office_task_run_log_path(user_id, project_id, task_id)
+    ts = _office_now_iso()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {message}\n")
+    except Exception:
+        pass
+    return path
+
+
+def _office_task_update_row(
+    user_id: str,
+    project_id: str,
+    task_id: str,
+    patch: Optional[Dict[str, Any]] = None,
+    *,
+    log_line: str = "",
+) -> Optional[Dict[str, Any]]:
+    with OFFICE_TASK_RUNS_LOCK:
+        current = _office_task_load_row(user_id, project_id, task_id)
+        if not current:
+            return None
+        changes = dict(patch or {}) if isinstance(patch, dict) else {}
+        if "status" in changes:
+            current["status"] = _office_task_status(changes.get("status"))
+        if "phase" in changes:
+            current["phase"] = str(changes.get("phase") or current.get("phase") or "").strip().lower() or current.get("phase") or "queued"
+        if "progress_percent" in changes:
+            current["progress_percent"] = _office_task_progress(changes.get("progress_percent"))
+        for key in (
+            "task_name",
+            "task_goal",
+            "result_summary",
+            "error",
+            "result_mode",
+            "cc_log_path",
+            "log_path",
+            "archive_md_path",
+            "completed_at",
+        ):
+            if key in changes:
+                current[key] = str(changes.get(key) or "").strip()
+        if "result_status" in changes:
+            current["result_status"] = _office_norm_result_status(changes.get("result_status"))
+        for key in ("orchestrator", "collaboration", "last_agent_status", "bridge", "cc_result"):
+            if key in changes and isinstance(changes.get(key), dict):
+                current[key] = dict(changes.get(key) or {})
+        if "history_append" in changes and isinstance(changes.get("history_append"), dict):
+            node = dict(changes.get("history_append") or {})
+            current_hist = current.get("history") if isinstance(current.get("history"), list) else []
+            current_hist = list(current_hist)
+            current_hist.append(
+                {
+                    "ts": str(node.get("ts") or _office_now_iso()).strip() or _office_now_iso(),
+                    "phase": str(node.get("phase") or current.get("phase") or "").strip().lower(),
+                    "status": _office_task_status(node.get("status") or current.get("status")),
+                    "progress_percent": _office_task_progress(node.get("progress_percent")),
+                    "message": _office_compact_text(node.get("message") or "", 300),
+                }
+            )
+            current["history"] = current_hist[-40:]
+        current["updated_at"] = _office_now_iso()
+        if current.get("status") in OFFICE_TASK_STATUS_TERMINAL and (not str(current.get("completed_at") or "").strip()):
+            current["completed_at"] = current["updated_at"]
+        current = _office_task_save_row(user_id, project_id, task_id, current)
+    if log_line:
+        _office_task_append_log(user_id, project_id, task_id, log_line)
+    return current
+
+
+def _office_task_read_logs(user_id: str, project_id: str, task_id: str, tail: int = 160) -> Dict[str, Any]:
+    limit = max(1, min(800, safe_int(tail, 160)))
+    path = _office_task_run_log_path(user_id, project_id, task_id)
+    lines: List[str] = []
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = [str(x or "").rstrip("\r\n") for x in f.readlines()]
+        except Exception:
+            lines = []
+    return {
+        "path": _office_task_relpath(path),
+        "lines": lines[-limit:],
+        "count": len(lines),
+    }
+
+
+def _office_task_archive_normalize_row(raw: Any) -> Dict[str, Any]:
+    row = dict(raw or {}) if isinstance(raw, dict) else {}
+    now_at = _office_now_iso()
+    task_id = str(row.get("task_id") or row.get("id") or "").strip()
+    task_goal = str(row.get("task_goal") or row.get("goal") or "").strip()
+    task_name = str(row.get("task_name") or row.get("name") or "").strip()
+    if (not task_name) and task_goal:
+        task_name = _office_task_guess_name(task_goal)
+    updated_at = str(
+        row.get("updated_at")
+        or row.get("completed_at")
+        or row.get("created_at")
+        or now_at
+    ).strip() or now_at
+    created_at = str(row.get("created_at") or updated_at or now_at).strip() or now_at
+    completed_at = str(row.get("completed_at") or "").strip()
+    return {
+        "task_id": task_id,
+        "task_name": task_name,
+        "task_goal": _office_compact_text(task_goal, 320),
+        "status": _office_task_status(row.get("status")),
+        "result_status": _office_norm_result_status(
+            row.get("result_status")
+            or ("success" if str(row.get("status") or "").strip().lower() == "completed" else "")
+        ),
+        "result_summary": _office_compact_text(row.get("result_summary") or row.get("summary") or "", 420),
+        "execution_mode": _office_norm_exec_mode(row.get("execution_mode") or row.get("result_mode")),
+        "archive_md_path": str(row.get("archive_md_path") or row.get("archive_path") or "").strip(),
+        "log_path": str(row.get("log_path") or "").strip(),
+        "cc_log_path": str(row.get("cc_log_path") or "").strip(),
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "completed_at": completed_at,
+    }
+
+
+def _office_task_archive_query_terms(v: Any, max_terms: int = 24) -> List[str]:
+    txt = str(v or "").strip().lower()
+    if not txt:
+        return []
+    terms = re.findall(r"[\u4e00-\u9fff]{1,6}|[a-z0-9_]{2,}", txt)
+    out: List[str] = []
+    seen: set = set()
+    for t in terms:
+        token = str(t or "").strip()
+        if (not token) or token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+        if len(out) >= max_terms:
+            break
+    return out
+
+
+def _office_task_archive_match_score(row: Dict[str, Any], query_text: str, query_terms: List[str]) -> float:
+    blob = " ".join(
+        [
+            str(row.get("task_name") or ""),
+            str(row.get("task_goal") or ""),
+            str(row.get("result_summary") or ""),
+        ]
+    ).lower()
+    if not blob:
+        return 0.0
+    score = 0.0
+    for term in query_terms:
+        if term and (term in blob):
+            score += 1.0
+    q = str(query_text or "").strip().lower()
+    if q and (q in blob):
+        score += 2.0
+    if str(row.get("result_status") or "").strip().lower() == "success":
+        score += 0.2
+    return score
+
+
+def _office_select_task_archives_3p1(task_archives: Any, query_text: Any) -> List[Dict[str, Any]]:
+    rows_raw = task_archives if isinstance(task_archives, list) else []
+    rows: List[Dict[str, Any]] = []
+    for item in rows_raw:
+        if not isinstance(item, dict):
+            continue
+        node = _office_task_archive_normalize_row(item)
+        if str(node.get("task_id") or "").strip():
+            rows.append(node)
+    if not rows:
+        return []
+    rows.sort(
+        key=lambda x: str(x.get("completed_at") or x.get("updated_at") or x.get("created_at") or ""),
+        reverse=True,
+    )
+    latest = rows[0]
+    q_text = str(query_text or "").strip()
+    q_terms = _office_task_archive_query_terms(q_text)
+    selected: List[Dict[str, Any]] = []
+    selected_ids: set = set()
+
+    if q_terms:
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for node in rows[:40]:
+            score = _office_task_archive_match_score(node, q_text, q_terms)
+            if score > 0:
+                scored.append((score, node))
+        scored.sort(
+            key=lambda p: (
+                p[0],
+                str((p[1] or {}).get("completed_at") or (p[1] or {}).get("updated_at") or ""),
+            ),
+            reverse=True,
+        )
+        for _score, node in scored[:3]:
+            tid = str(node.get("task_id") or "").strip()
+            if not tid or tid in selected_ids:
+                continue
+            selected.append(node)
+            selected_ids.add(tid)
+
+    latest_tid = str(latest.get("task_id") or "").strip()
+    if latest_tid and latest_tid not in selected_ids:
+        selected.append(latest)
+        selected_ids.add(latest_tid)
+    if (not selected) and latest_tid:
+        selected = [latest]
+    return selected[:4]
+
+
+def _office_upsert_task_archive_memory(user_id: str, project_id: str, archive_entry: Dict[str, Any]) -> Dict[str, Any]:
+    pid = str(project_id or "").strip()
+    if not pid:
+        return {}
+    entry = _office_task_archive_normalize_row(archive_entry)
+    task_id = str(entry.get("task_id") or "").strip()
+    if not task_id:
+        return {}
+    doc = _office_load_project_memory(user_id, pid)
+    rows = doc.get("task_archives") if isinstance(doc.get("task_archives"), list) else []
+    merged: List[Dict[str, Any]] = []
+    replaced = False
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        normalized = _office_task_archive_normalize_row(item)
+        if str(normalized.get("task_id") or "").strip() == task_id:
+            merged.append(entry)
+            replaced = True
+        else:
+            merged.append(normalized)
+    if not replaced:
+        merged.append(entry)
+    merged.sort(
+        key=lambda x: str(x.get("completed_at") or x.get("updated_at") or x.get("created_at") or ""),
+        reverse=True,
+    )
+    doc["task_archives"] = merged[:OFFICE_PROJECT_MEMORY_MAX_TASK_ARCHIVES]
+    doc["updated_at"] = _office_now_iso()
+    _office_save_project_memory(user_id, pid, doc)
+    return _office_memory_payload_for_api(doc, log_limit=10)
+
+
+def _office_build_task_archive_markdown(
+    row: Dict[str, Any],
+    run_payload: Dict[str, Any],
+    *,
+    user_message: str,
+) -> str:
+    task_id = str(row.get("task_id") or "").strip() or "-"
+    task_name = str(row.get("task_name") or "").strip() or "-"
+    task_goal = str(row.get("task_goal") or "").strip() or "-"
+    status = str(row.get("status") or "").strip() or "-"
+    phase = str(row.get("phase") or "").strip() or "-"
+    progress = _office_task_progress(row.get("progress_percent"))
+    result_status = str(row.get("result_status") or "").strip() or "-"
+    result_mode = _office_norm_exec_mode(row.get("result_mode")) or "-"
+    result_summary = str(row.get("result_summary") or "").strip() or "-"
+    cc_log_path = str(row.get("cc_log_path") or "").strip() or "-"
+    run_log_path = str(row.get("log_path") or "").strip() or "-"
+    created_at = str(row.get("created_at") or "").strip() or _office_now_iso()
+    completed_at = str(row.get("completed_at") or "").strip() or "-"
+    orchestrator = run_payload.get("orchestrator") if isinstance(run_payload.get("orchestrator"), dict) else {}
+    collab = run_payload.get("collaboration") if isinstance(run_payload.get("collaboration"), dict) else {}
+    reply = str(run_payload.get("reply") or "").strip()
+    if not reply:
+        cc_result = run_payload.get("cc_result") if isinstance(run_payload.get("cc_result"), dict) else {}
+        reply = str(cc_result.get("text") or "").strip()
+    reply = reply or "-"
+    orchestrator_summary = str(orchestrator.get("summary") or "").strip() or "-"
+    suggested_steps = orchestrator.get("suggested_steps") if isinstance(orchestrator.get("suggested_steps"), list) else []
+    collab_rows = collab.get("task_results") if isinstance(collab.get("task_results"), list) else []
+
+    lines: List[str] = []
+    lines.append(f"# TYXT Task Archive · {task_id} · {task_name}")
+    lines.append("")
+    lines.append("## 任务概览")
+    lines.append(f"- 任务编号: {task_id}")
+    lines.append(f"- 任务名称: {task_name}")
+    lines.append(f"- 任务目标: {task_goal}")
+    lines.append(f"- 任务状态: {status}")
+    lines.append(f"- 任务阶段: {phase}")
+    lines.append(f"- 任务进度: {progress}%")
+    lines.append(f"- 任务结果状态: {result_status}")
+    lines.append(f"- 执行模式: {result_mode}")
+    lines.append(f"- 创建时间: {created_at}")
+    lines.append(f"- 完成时间: {completed_at}")
+    lines.append(f"- TYXT 任务日志: {run_log_path}")
+    lines.append(f"- CC 端日志路径: {cc_log_path}")
+    lines.append("")
+    lines.append("## 对话摘要（TYXT）")
+    lines.append(f"- 用户输入: {str(user_message or '').strip() or '-'}")
+    lines.append(f"- TYXT 总控判断: {orchestrator_summary}")
+    lines.append(f"- TYXT 回复总结: {reply}")
+    lines.append("")
+    lines.append("## 右栏任务信息")
+    lines.append(f"- 任务编号: {task_id}")
+    lines.append(f"- 任务名称: {task_name}")
+    lines.append(f"- 任务目标: {task_goal}")
+    lines.append(f"- 任务进程: {phase} ({progress}%)")
+    lines.append(f"- 任务结果: {result_summary}")
+    lines.append(f"- 日志保存地址: TYXT={run_log_path} | CC={cc_log_path}")
+    if suggested_steps:
+        lines.append("")
+        lines.append("## 计划步骤")
+        for idx, step in enumerate(suggested_steps[:8]):
+            txt = str(step or "").strip()
+            if txt:
+                lines.append(f"{idx + 1}. {txt}")
+    if collab_rows:
+        lines.append("")
+        lines.append("## 协作执行摘要")
+        for item in collab_rows[:12]:
+            node = dict(item or {}) if isinstance(item, dict) else {}
+            role = str(node.get("role") or "worker").strip() or "worker"
+            st = str(node.get("status") or "").strip().lower()
+            status_text = "success" if st == "success" else "failed"
+            detail = str(node.get("result") or node.get("error") or "").strip() or "-"
+            lines.append(f"- {role} [{status_text}] {detail}")
+    lines.append("")
+    lines.append("## 备注")
+    lines.append("- CC 详细执行过程仍以 CC 端自己的记忆/日志系统为准。")
+    lines.append("- TYXT 端此文件用于工作区内检索与后续 Prompt 注入。")
+    lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+def _office_write_task_archive_md(
+    user_id: str,
+    project_id: str,
+    row: Dict[str, Any],
+    run_payload: Dict[str, Any],
+    *,
+    user_message: str,
+) -> str:
+    task_id = str(row.get("task_id") or "").strip()
+    task_name = str(row.get("task_name") or "").strip() or "task"
+    if not task_id:
+        return ""
+    path = _office_task_archive_md_path(user_id, project_id, task_id, task_name)
+    content = _office_build_task_archive_markdown(row, run_payload, user_message=user_message)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception:
+        return ""
+    return _office_task_relpath(path)
+
+
+def _office_project_memory_path(user_id: str, project_id: str) -> str:
+    uid = _office_memory_safe_key(_office_user_key(user_id))
+    pid = _office_memory_safe_key(project_id)
+    return os.path.join(OFFICE_PROJECT_MEMORY_ROOT, uid, f"{pid}.json")
+
+
+def _office_default_project_memory(user_id: str, project_id: str) -> Dict[str, Any]:
+    return {
+        "version": 1,
+        "user_id": _office_user_key(user_id),
+        "project_id": str(project_id or "").strip(),
+        "project_logs": [],
+        "taskboard_state": {},
+        "collaboration_summary": {},
+        "result_state": {},
+        "approval_state": {},
+        "approval_history": [],
+        "result_history": [],
+        "recent_events": [],
+        "task_archives": [],
+        "updated_at": _office_now_iso(),
+    }
+
+
+def _office_compact_text(v: Any, max_len: int = 200) -> str:
+    txt = clean_reply_text(str(v or "").strip())
+    txt = re.sub(r"\s+", " ", txt).strip()
+    if len(txt) <= max_len:
+        return txt
+    return txt[: max(16, max_len - 1)].rstrip() + "…"
+
+
+def _office_compact_steps(v: Any, max_items: int = 8, each_len: int = 120) -> List[str]:
+    rows: List[str] = []
+    if isinstance(v, list):
+        rows = [str(x or "").strip() for x in v]
+    elif isinstance(v, str):
+        rows = [str(x or "").strip() for x in re.split(r"\r?\n|[；;]+", v)]
+    out: List[str] = []
+    for item in rows:
+        if not item:
+            continue
+        out.append(_office_compact_text(item, each_len))
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _office_history_make_id(prefix: str = "event") -> str:
+    return f"office_{str(prefix or 'event').strip().lower()}_{int(time.time() * 1000)}_{random.randint(100, 999)}"
+
+
+def _office_history_append_bounded(
+    doc: Dict[str, Any],
+    key: str,
+    row: Dict[str, Any],
+    max_items: int,
+) -> None:
+    if not isinstance(doc, dict):
+        return
+    rows = doc.get(key) if isinstance(doc.get(key), list) else []
+    rows = list(rows)
+    rows.append(dict(row or {}))
+    if max_items > 0 and len(rows) > max_items:
+        rows = rows[-max_items:]
+    doc[key] = rows
+
+
+def _office_history_event_entry(
+    project_id: str,
+    event_type: str,
+    summary: str,
+    *,
+    status: str = "",
+    execution_mode: str = "",
+    created_at: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ts = str(created_at or _office_now_iso()).strip() or _office_now_iso()
+    st = str(status or "").strip().lower()
+    if st not in {"success", "failed", "running"}:
+        st = ""
+    return {
+        "id": _office_history_make_id("event"),
+        "project_id": str(project_id or "").strip(),
+        "event_type": str(event_type or "").strip().lower() or "event",
+        "status": st,
+        "execution_mode": _office_norm_exec_mode(execution_mode),
+        "summary": _office_compact_text(summary or "", 280),
+        "created_at": ts,
+        "extra": dict(extra or {}) if isinstance(extra, dict) else {},
+    }
+
+
+def _office_load_project_memory(user_id: str, project_id: str) -> Dict[str, Any]:
+    uid = _office_user_key(user_id)
+    pid = str(project_id or "").strip()
+    doc = _office_default_project_memory(uid, pid)
+    if not pid:
+        return doc
+    path = _office_project_memory_path(uid, pid)
+    with OFFICE_PROJECT_MEMORY_LOCK:
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                if isinstance(raw, dict):
+                    doc.update(raw)
+        except Exception:
+            pass
+    logs = doc.get("project_logs") if isinstance(doc.get("project_logs"), list) else []
+    norm_logs: List[Dict[str, Any]] = []
+    for idx, row in enumerate(logs):
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        created_at = str(item.get("created_at") or item.get("timestamp") or _office_now_iso()).strip() or _office_now_iso()
+        status = "success" if str(item.get("status") or "").strip().lower() == "success" else "failed"
+        norm_logs.append(
+            {
+                "id": str(item.get("id") or f"office_memlog_{int(time.time() * 1000)}_{idx}").strip(),
+                "project_id": str(item.get("project_id") or pid).strip() or pid,
+                "created_at": created_at,
+                "user_message_summary": _office_compact_text(item.get("user_message_summary") or item.get("user_summary") or "", 180),
+                "orchestrator_summary": _office_compact_text(item.get("orchestrator_summary") or "", 220),
+                "execution_mode": _office_norm_exec_mode(item.get("execution_mode")),
+                "final_result_summary": _office_compact_text(item.get("final_result_summary") or item.get("result_summary") or "", 220),
+                "status": status,
+            }
+        )
+    doc["project_logs"] = norm_logs[-OFFICE_PROJECT_MEMORY_MAX_LOGS:]
+
+    taskboard_state = doc.get("taskboard_state") if isinstance(doc.get("taskboard_state"), dict) else {}
+    doc["taskboard_state"] = {
+        "summary": _office_compact_text(taskboard_state.get("summary") or taskboard_state.get("goal") or "", 260),
+        "current_stage": str(taskboard_state.get("current_stage") or taskboard_state.get("stage") or "").strip(),
+        "suggested_steps": _office_compact_steps(taskboard_state.get("suggested_steps") or taskboard_state.get("steps") or []),
+        "execution_mode": _office_norm_exec_mode(taskboard_state.get("execution_mode")),
+        "complexity": _office_norm_complexity(taskboard_state.get("complexity")),
+        "task_type": _office_norm_task_type(taskboard_state.get("task_type")),
+        "updated_at": str(taskboard_state.get("updated_at") or _office_now_iso()).strip() or _office_now_iso(),
+    }
+
+    collab = doc.get("collaboration_summary") if isinstance(doc.get("collaboration_summary"), dict) else {}
+    collab_enabled = bool(safe_bool(collab.get("enabled"), False))
+    collab_roles = collab.get("collaborators") if isinstance(collab.get("collaborators"), list) else []
+    collab_results = collab.get("task_results") if isinstance(collab.get("task_results"), list) else []
+    normalized_roles: List[Dict[str, Any]] = []
+    for row in collab_roles:
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"frontend_worker", "backend_worker", "reviewer"}:
+            continue
+        normalized_roles.append(
+            {
+                "role": role,
+                "name": str(item.get("name") or role).strip() or role,
+                "task": _office_compact_text(item.get("task") or "", 180),
+                "status": "success" if str(item.get("status") or "").strip().lower() == "success" else "failed",
+                "result_summary": _office_compact_text(item.get("result_summary") or item.get("result") or item.get("error") or "", 220),
+                "createdAt": str(item.get("createdAt") or item.get("created_at") or _office_now_iso()).strip() or _office_now_iso(),
+            }
+        )
+    normalized_results: List[Dict[str, Any]] = []
+    for row in collab_results:
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"frontend_worker", "backend_worker", "reviewer"}:
+            continue
+        normalized_results.append(
+            {
+                "role": role,
+                "name": str(item.get("name") or role).strip() or role,
+                "task": _office_compact_text(item.get("task") or "", 180),
+                "result": _office_compact_text(item.get("result") or "", 220),
+                "error": _office_compact_text(item.get("error") or "", 220),
+                "status": "success" if str(item.get("status") or "").strip().lower() == "success" else "failed",
+                "createdAt": str(item.get("createdAt") or item.get("created_at") or _office_now_iso()).strip() or _office_now_iso(),
+            }
+        )
+    doc["collaboration_summary"] = {
+        "enabled": collab_enabled,
+        "collaborators": normalized_roles[:8],
+        "task_results": normalized_results[:8],
+        "final_summary": _office_compact_text(collab.get("final_summary") or collab.get("summary") or "", 600),
+        "updated_at": str(collab.get("updated_at") or _office_now_iso()).strip() or _office_now_iso(),
+    }
+    result_state = doc.get("result_state") if isinstance(doc.get("result_state"), dict) else {}
+    result_summary = _office_compact_text(
+        result_state.get("summary")
+        or result_state.get("result_summary")
+        or doc["collaboration_summary"].get("final_summary")
+        or doc["taskboard_state"].get("summary")
+        or "",
+        700,
+    )
+    result_status_raw = str(result_state.get("status") or "").strip().lower()
+    if result_status_raw not in {"success", "failed", "running"}:
+        latest_log = doc["project_logs"][-1] if doc["project_logs"] else {}
+        latest_status = str((latest_log or {}).get("status") or "").strip().lower()
+        result_status_raw = "success" if latest_status == "success" else ("failed" if latest_status == "failed" else "")
+    doc["result_state"] = {
+        "summary": result_summary,
+        "execution_mode": _office_norm_exec_mode(
+            result_state.get("execution_mode")
+            or result_state.get("mode")
+            or doc["taskboard_state"].get("execution_mode")
+        ),
+        "status": _office_norm_result_status(result_status_raw),
+        "suggest_continue": bool(safe_bool(result_state.get("suggest_continue"), False)),
+        "approval_status": _office_norm_approval_status(result_state.get("approval_status")),
+        "updated_at": str(
+            result_state.get("updated_at")
+            or result_state.get("created_at")
+            or doc["collaboration_summary"].get("updated_at")
+            or doc["taskboard_state"].get("updated_at")
+            or _office_now_iso()
+        ).strip() or _office_now_iso(),
+    }
+
+    approval_state = doc.get("approval_state") if isinstance(doc.get("approval_state"), dict) else {}
+    target_summary = _office_compact_text(
+        approval_state.get("target_summary")
+        or approval_state.get("summary")
+        or doc["result_state"].get("summary")
+        or "",
+        700,
+    )
+    target_mode = _office_norm_exec_mode(
+        approval_state.get("target_mode")
+        or approval_state.get("execution_mode")
+        or doc["result_state"].get("execution_mode")
+    )
+    approval_status = _office_norm_approval_status(approval_state.get("status") or approval_state.get("approval_status"))
+    doc["approval_state"] = {
+        "status": approval_status,
+        "approved_at": str(approval_state.get("approved_at") or "").strip(),
+        "target_summary": target_summary,
+        "target_mode": target_mode,
+        "updated_at": str(
+            approval_state.get("updated_at")
+            or approval_state.get("approved_at")
+            or doc["result_state"].get("updated_at")
+            or _office_now_iso()
+        ).strip() or _office_now_iso(),
+    }
+
+    approval_hist_raw = doc.get("approval_history") if isinstance(doc.get("approval_history"), list) else []
+    approval_hist: List[Dict[str, Any]] = []
+    for idx, row in enumerate(approval_hist_raw):
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        st = _office_norm_approval_status(item.get("status") or item.get("approval_status"))
+        if st not in {"accepted", "deferred", "refine", "pending"}:
+            continue
+        ts = str(
+            item.get("approved_at")
+            or item.get("created_at")
+            or item.get("createdAt")
+            or _office_now_iso()
+        ).strip() or _office_now_iso()
+        approval_hist.append(
+            {
+                "id": str(item.get("id") or _office_history_make_id("approval")).strip() or _office_history_make_id("approval"),
+                "project_id": str(item.get("project_id") or pid).strip() or pid,
+                "status": st,
+                "summary": _office_compact_text(
+                    item.get("summary")
+                    or item.get("target_summary")
+                    or item.get("approved_summary")
+                    or "",
+                    280,
+                ),
+                "execution_mode": _office_norm_exec_mode(item.get("execution_mode") or item.get("target_mode")),
+                "result_status": _office_norm_result_status(item.get("result_status")),
+                "approved_at": ts,
+            }
+        )
+    doc["approval_history"] = approval_hist[-OFFICE_PROJECT_MEMORY_MAX_APPROVAL_HISTORY:]
+
+    result_hist_raw = doc.get("result_history") if isinstance(doc.get("result_history"), list) else []
+    result_hist: List[Dict[str, Any]] = []
+    for idx, row in enumerate(result_hist_raw):
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        status = _office_norm_result_status(item.get("status"))
+        if status not in {"success", "failed", "running"}:
+            continue
+        ts = str(
+            item.get("updated_at")
+            or item.get("created_at")
+            or item.get("updatedAt")
+            or _office_now_iso()
+        ).strip() or _office_now_iso()
+        result_hist.append(
+            {
+                "id": str(item.get("id") or _office_history_make_id("result")).strip() or _office_history_make_id("result"),
+                "project_id": str(item.get("project_id") or pid).strip() or pid,
+                "summary": _office_compact_text(
+                    item.get("summary")
+                    or item.get("result_summary")
+                    or "",
+                    320,
+                ),
+                "execution_mode": _office_norm_exec_mode(item.get("execution_mode") or item.get("mode")),
+                "status": status,
+                "collaboration_enabled": bool(
+                    safe_bool(
+                        item.get("collaboration_enabled"),
+                        _office_norm_exec_mode(item.get("execution_mode") or item.get("mode")) == "collaborative",
+                    )
+                ),
+                "collaborators_summary": _office_compact_text(item.get("collaborators_summary") or "", 220),
+                "updated_at": ts,
+            }
+        )
+    doc["result_history"] = result_hist[-OFFICE_PROJECT_MEMORY_MAX_RESULT_HISTORY:]
+
+    events_raw = doc.get("recent_events") if isinstance(doc.get("recent_events"), list) else []
+    events: List[Dict[str, Any]] = []
+    for idx, row in enumerate(events_raw):
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        ts = str(
+            item.get("created_at")
+            or item.get("createdAt")
+            or item.get("updated_at")
+            or _office_now_iso()
+        ).strip() or _office_now_iso()
+        status = _office_norm_result_status(item.get("status"))
+        events.append(
+            {
+                "id": str(item.get("id") or _office_history_make_id("event")).strip() or _office_history_make_id("event"),
+                "project_id": str(item.get("project_id") or pid).strip() or pid,
+                "event_type": str(item.get("event_type") or item.get("type") or "event").strip().lower() or "event",
+                "status": status,
+                "execution_mode": _office_norm_exec_mode(item.get("execution_mode") or item.get("mode")),
+                "summary": _office_compact_text(item.get("summary") or item.get("message") or "", 280),
+                "created_at": ts,
+                "extra": dict(item.get("extra") or {}) if isinstance(item.get("extra"), dict) else {},
+            }
+        )
+    doc["recent_events"] = events[-OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS:]
+    task_archives_raw = doc.get("task_archives") if isinstance(doc.get("task_archives"), list) else []
+    task_archives: List[Dict[str, Any]] = []
+    for row in task_archives_raw:
+        if not isinstance(row, dict):
+            continue
+        node = _office_task_archive_normalize_row(row)
+        if str(node.get("task_id") or "").strip():
+            task_archives.append(node)
+    task_archives.sort(
+        key=lambda x: str(x.get("completed_at") or x.get("updated_at") or x.get("created_at") or ""),
+        reverse=True,
+    )
+    doc["task_archives"] = task_archives[:OFFICE_PROJECT_MEMORY_MAX_TASK_ARCHIVES]
+    doc["user_id"] = uid
+    doc["project_id"] = pid
+    doc["updated_at"] = str(doc.get("updated_at") or _office_now_iso()).strip() or _office_now_iso()
+    return doc
+
+
+def _office_save_project_memory(user_id: str, project_id: str, doc: Dict[str, Any]) -> bool:
+    uid = _office_user_key(user_id)
+    pid = str(project_id or "").strip()
+    if not pid:
+        return False
+    path = _office_project_memory_path(uid, pid)
+    payload = dict(doc or {}) if isinstance(doc, dict) else _office_default_project_memory(uid, pid)
+    payload["user_id"] = uid
+    payload["project_id"] = pid
+    payload["updated_at"] = _office_now_iso()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with OFFICE_PROJECT_MEMORY_LOCK:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _office_memory_payload_for_api(doc: Dict[str, Any], log_limit: int = 10, history_limit: int = 20) -> Dict[str, Any]:
+    data = dict(doc or {}) if isinstance(doc, dict) else {}
+    logs = data.get("project_logs") if isinstance(data.get("project_logs"), list) else []
+    taskboard = data.get("taskboard_state") if isinstance(data.get("taskboard_state"), dict) else {}
+    collab = data.get("collaboration_summary") if isinstance(data.get("collaboration_summary"), dict) else {}
+    result_state = data.get("result_state") if isinstance(data.get("result_state"), dict) else {}
+    approval_state = data.get("approval_state") if isinstance(data.get("approval_state"), dict) else {}
+    approval_hist = data.get("approval_history") if isinstance(data.get("approval_history"), list) else []
+    result_hist = data.get("result_history") if isinstance(data.get("result_history"), list) else []
+    recent_events = data.get("recent_events") if isinstance(data.get("recent_events"), list) else []
+    task_archives = data.get("task_archives") if isinstance(data.get("task_archives"), list) else []
+    h_limit = max(1, safe_int(history_limit, 20))
+    archive_limit = max(h_limit, 20)
+    return {
+        "project_id": str(data.get("project_id") or "").strip(),
+        "updated_at": str(data.get("updated_at") or _office_now_iso()).strip() or _office_now_iso(),
+        "project_logs_recent": logs[-max(1, safe_int(log_limit, 10)):],
+        "taskboard_state": taskboard,
+        "collaboration_summary": collab,
+        "result_state": result_state,
+        "approval_state": approval_state,
+        "approval_history_recent": approval_hist[-h_limit:],
+        "result_history_recent": result_hist[-h_limit:],
+        "recent_events": recent_events[-max(h_limit, 30):],
+        "task_archives_recent": task_archives[:archive_limit],
+        "task_archives_total": len(task_archives),
+    }
+
+
+def _office_memory_prompt_snapshot(
+    user_id: str,
+    project_id: str,
+    workspace_settings: Dict[str, Any],
+    query_text: str = "",
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    mem_cfg = ws.get("memory") if isinstance(ws.get("memory"), dict) else {}
+    enabled = bool(safe_bool(mem_cfg.get("enabled"), True))
+    doc = _office_load_project_memory(user_id, project_id)
+    payload = _office_memory_payload_for_api(doc, log_limit=OFFICE_PROJECT_MEMORY_PROMPT_LOGS)
+    if not enabled:
+        return {"enabled": False, "summary_text": "", "memory": payload}
+
+    logs = payload.get("project_logs_recent") if isinstance(payload.get("project_logs_recent"), list) else []
+    taskboard = payload.get("taskboard_state") if isinstance(payload.get("taskboard_state"), dict) else {}
+    collab = payload.get("collaboration_summary") if isinstance(payload.get("collaboration_summary"), dict) else {}
+    result_state = payload.get("result_state") if isinstance(payload.get("result_state"), dict) else {}
+    approval_state = payload.get("approval_state") if isinstance(payload.get("approval_state"), dict) else {}
+    approval_hist = payload.get("approval_history_recent") if isinstance(payload.get("approval_history_recent"), list) else []
+    result_hist = payload.get("result_history_recent") if isinstance(payload.get("result_history_recent"), list) else []
+    recent_events = payload.get("recent_events") if isinstance(payload.get("recent_events"), list) else []
+    task_archives = doc.get("task_archives") if isinstance(doc.get("task_archives"), list) else []
+    selected_archives = _office_select_task_archives_3p1(task_archives, query_text)
+    lines: List[str] = []
+    if taskboard:
+        board_summary = _office_compact_text(taskboard.get("summary") or "", 220)
+        board_stage = str(taskboard.get("current_stage") or "").strip()
+        board_mode = _office_norm_exec_mode(taskboard.get("execution_mode"))
+        board_complexity = _office_norm_complexity(taskboard.get("complexity"))
+        steps = _office_compact_steps(taskboard.get("suggested_steps") or [])
+        lines.append("最近任务板状态：")
+        lines.append(f"- 目标摘要：{board_summary or '-'}")
+        if board_stage:
+            lines.append(f"- 当前阶段：{board_stage}")
+        if board_mode:
+            lines.append(f"- 执行模式：{board_mode}")
+        if board_complexity:
+            lines.append(f"- 复杂度：{board_complexity}")
+        if steps:
+            lines.append("- 最近步骤：")
+            for idx, step in enumerate(steps[:4]):
+                lines.append(f"  {idx + 1}. {step}")
+    if logs:
+        lines.append("最近工程日志摘要：")
+        for row in logs[-OFFICE_PROJECT_MEMORY_PROMPT_LOGS:]:
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            ts = str(item.get("created_at") or "").strip()
+            u = _office_compact_text(item.get("user_message_summary") or "", 80)
+            o = _office_compact_text(item.get("orchestrator_summary") or "", 100)
+            r = _office_compact_text(item.get("final_result_summary") or "", 100)
+            lines.append(f"- {ts} | 用户:{u or '-'} | 判断:{o or '-'} | 结果:{r or '-'}")
+    if bool(safe_bool(collab.get("enabled"), False)):
+        final_sum = _office_compact_text(collab.get("final_summary") or "", 220)
+        collaborators = collab.get("collaborators") if isinstance(collab.get("collaborators"), list) else []
+        if final_sum or collaborators:
+            lines.append("最近协作摘要：")
+            if collaborators:
+                role_lines: List[str] = []
+                for row in collaborators[:4]:
+                    role = str((row or {}).get("role") or "").strip()
+                    status = str((row or {}).get("status") or "").strip()
+                    if role:
+                        role_lines.append(f"{role}({status or '-'})")
+                if role_lines:
+                    lines.append(f"- 参与角色：{', '.join(role_lines)}")
+            if final_sum:
+                lines.append(f"- 汇总：{final_sum}")
+    result_summary = _office_compact_text(result_state.get("summary") or "", 220)
+    result_status = _office_norm_result_status(result_state.get("status"))
+    if result_summary or result_status:
+        lines.append("最近成果状态：")
+        if result_summary:
+            lines.append(f"- 结果摘要：{result_summary}")
+        if result_status:
+            lines.append(f"- 状态：{result_status}")
+    approval_status = _office_norm_approval_status(approval_state.get("status"))
+    if approval_status:
+        lines.append("最近审批状态：")
+        lines.append(f"- 审批结论：{approval_status}")
+        approval_summary = _office_compact_text(approval_state.get("target_summary") or "", 160)
+        if approval_summary:
+            lines.append(f"- 审批对象摘要：{approval_summary}")
+    if result_hist:
+        lines.append("最近成果历史：")
+        for row in result_hist[-3:]:
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            ts = str(item.get("updated_at") or "").strip()
+            status = _office_norm_result_status(item.get("status"))
+            mode = _office_norm_exec_mode(item.get("execution_mode"))
+            summary = _office_compact_text(item.get("summary") or "", 120)
+            lines.append(
+                f"- {ts} | {mode or '-'} | {status or '-'} | {summary or '-'}"
+            )
+    if approval_hist:
+        lines.append("最近审批历史：")
+        for row in approval_hist[-3:]:
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            ts = str(item.get("approved_at") or "").strip()
+            status = _office_norm_approval_status(item.get("status"))
+            summary = _office_compact_text(item.get("summary") or "", 100)
+            lines.append(f"- {ts} | {status or '-'} | {summary or '-'}")
+    if recent_events:
+        lines.append("最近项目轨迹：")
+        for row in recent_events[-3:]:
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            ts = str(item.get("created_at") or "").strip()
+            event_type = str(item.get("event_type") or "").strip()
+            summary = _office_compact_text(item.get("summary") or "", 100)
+            lines.append(f"- {ts} | {event_type or '-'} | {summary or '-'}")
+    if selected_archives:
+        lines.append("任务记忆注入（3+1）：")
+        latest_task_id = str(selected_archives[-1].get("task_id") or "").strip() if selected_archives else ""
+        for idx, row in enumerate(selected_archives):
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            task_id = str(item.get("task_id") or "").strip() or "-"
+            marker = "最近一次任务" if (task_id and task_id == latest_task_id) else f"相关任务{idx + 1}"
+            task_name = _office_compact_text(item.get("task_name") or "", 80) or "-"
+            task_goal = _office_compact_text(item.get("task_goal") or "", 90) or "-"
+            result_summary = _office_compact_text(item.get("result_summary") or "", 110) or "-"
+            result_status = _office_norm_result_status(item.get("result_status") or item.get("status")) or "-"
+            archive_path = str(item.get("archive_md_path") or "").strip() or "-"
+            lines.append(f"- [{marker}] {task_id} | {task_name} | {result_status}")
+            lines.append(f"  目标:{task_goal}")
+            lines.append(f"  结果:{result_summary}")
+            lines.append(f"  归档:{archive_path}")
+    text = "\n".join([x for x in lines if str(x or "").strip()]).strip()
+    if len(text) > 2600:
+        text = text[:2600].rstrip() + "…"
+    return {
+        "enabled": True,
+        "summary_text": text,
+        "memory": payload,
+        "injected_task_ids": [str((x or {}).get("task_id") or "").strip() for x in selected_archives if isinstance(x, dict)],
+    }
+
+
+def _office_persist_round_memory(
+    user_id: str,
+    project: Dict[str, Any],
+    workspace_settings: Dict[str, Any],
+    user_message: str,
+    orchestrator: Dict[str, Any],
+    success: bool,
+    result_summary: str,
+    collaboration: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    mem_cfg = ws.get("memory") if isinstance(ws.get("memory"), dict) else {}
+    memory_enabled = bool(safe_bool(mem_cfg.get("enabled"), True))
+
+    project_id = str((project or {}).get("id") or "").strip()
+    if not project_id:
+        return {}
+    now_at = _office_now_iso()
+    doc = _office_load_project_memory(user_id, project_id)
+
+    save_logs = memory_enabled and bool(safe_bool(mem_cfg.get("save_logs"), True))
+    save_board = memory_enabled and bool(safe_bool(mem_cfg.get("save_board"), True))
+    save_collab = memory_enabled and bool(safe_bool(mem_cfg.get("save_collab_summary"), True))
+
+    mode = _office_norm_exec_mode((orchestrator or {}).get("execution_mode"))
+    complexity = _office_norm_complexity((orchestrator or {}).get("complexity"))
+    task_type = _office_norm_task_type((orchestrator or {}).get("task_type"))
+    suggested_steps = _office_compact_steps((orchestrator or {}).get("suggested_steps") or [])
+    orchestrator_summary = _office_compact_text((orchestrator or {}).get("summary") or "", 220)
+    result_summary_compact = _office_compact_text(result_summary or "", 260)
+    user_summary = _office_compact_text(user_message or "", 140)
+    status_text = "success" if success else "failed"
+    collab_input = collaboration if isinstance(collaboration, dict) else {}
+    collab_enabled_hint = bool(safe_bool(collab_input.get("enabled"), False) or mode == "collaborative")
+    collab_rows_hint = collab_input.get("task_results") if isinstance(collab_input.get("task_results"), list) else []
+    collab_briefs: List[str] = []
+    for row in collab_rows_hint[:4]:
+        item = dict(row or {}) if isinstance(row, dict) else {}
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"frontend_worker", "backend_worker", "reviewer"}:
+            continue
+        role_status = "success" if str(item.get("status") or "").strip().lower() == "success" else "failed"
+        collab_briefs.append(f"{role}:{role_status}")
+    collaborators_summary = _office_compact_text(", ".join(collab_briefs), 220)
+    changed = False
+
+    doc["result_state"] = {
+        "summary": result_summary_compact,
+        "execution_mode": mode,
+        "status": status_text,
+        "suggest_continue": bool(
+            mode == "collaborative"
+            or complexity == "complex"
+            or (not success)
+        ),
+        "approval_status": "pending",
+        "updated_at": now_at,
+    }
+    doc["approval_state"] = {
+        "status": "pending",
+        "approved_at": "",
+        "target_summary": result_summary_compact,
+        "target_mode": mode,
+        "updated_at": now_at,
+    }
+    _office_history_append_bounded(
+        doc,
+        "result_history",
+        {
+            "id": _office_history_make_id("result"),
+            "project_id": project_id,
+            "summary": result_summary_compact,
+            "execution_mode": mode,
+            "status": status_text,
+            "collaboration_enabled": bool(collab_enabled_hint),
+            "collaborators_summary": collaborators_summary,
+            "updated_at": now_at,
+        },
+        OFFICE_PROJECT_MEMORY_MAX_RESULT_HISTORY,
+    )
+    task_event_summary = (
+        f"{'协作执行' if collab_enabled_hint else '单CC执行'}完成：{result_summary_compact or '-'}"
+    )
+    _office_history_append_bounded(
+        doc,
+        "recent_events",
+        _office_history_event_entry(
+            project_id,
+            "collaboration_completed" if collab_enabled_hint else "task_completed",
+            task_event_summary,
+            status=status_text,
+            execution_mode=mode,
+            created_at=now_at,
+            extra={
+                "task_type": task_type,
+                "complexity": complexity,
+                "collaborators_summary": collaborators_summary,
+            },
+        ),
+        OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS,
+    )
+    changed = True
+
+    if save_logs:
+        log_row = {
+            "id": f"office_memlog_{int(time.time() * 1000)}_{random.randint(100, 999)}",
+            "project_id": project_id,
+            "created_at": now_at,
+            "user_message_summary": user_summary,
+            "orchestrator_summary": orchestrator_summary,
+            "execution_mode": mode,
+            "final_result_summary": result_summary_compact,
+            "status": status_text,
+        }
+        logs = doc.get("project_logs") if isinstance(doc.get("project_logs"), list) else []
+        logs.append(log_row)
+        doc["project_logs"] = logs[-OFFICE_PROJECT_MEMORY_MAX_LOGS:]
+        changed = True
+
+    if save_board:
+        if success:
+            stage = "已完成"
+        else:
+            stage = "失败"
+        doc["taskboard_state"] = {
+            "summary": orchestrator_summary or result_summary_compact,
+            "current_stage": stage,
+            "suggested_steps": suggested_steps,
+            "execution_mode": mode,
+            "complexity": complexity,
+            "task_type": task_type,
+            "updated_at": now_at,
+        }
+        changed = True
+
+    collab = collab_input
+    collab_enabled = bool(safe_bool(collab.get("enabled"), False))
+    if save_collab and collab_enabled:
+        collab_rows = collab.get("task_results") if isinstance(collab.get("task_results"), list) else []
+        compact_results: List[Dict[str, Any]] = []
+        compact_collaborators: List[Dict[str, Any]] = []
+        for row in collab_rows:
+            item = dict(row or {}) if isinstance(row, dict) else {}
+            role = str(item.get("role") or "").strip().lower()
+            if role not in {"frontend_worker", "backend_worker", "reviewer"}:
+                continue
+            status = "success" if str(item.get("status") or "").strip().lower() == "success" else "failed"
+            compact_results.append(
+                {
+                    "role": role,
+                    "name": str(item.get("name") or role).strip() or role,
+                    "task": _office_compact_text(item.get("task") or "", 180),
+                    "result": _office_compact_text(item.get("result") or "", 220),
+                    "error": _office_compact_text(item.get("error") or "", 220),
+                    "status": status,
+                    "createdAt": str(item.get("createdAt") or now_at).strip() or now_at,
+                    "agent_id": str(item.get("agent_id") or "").strip(),
+                    "position": _office_compact_text(item.get("position") or "", 90),
+                    "work_scope": _office_compact_text(item.get("work_scope") or "", 90),
+                    "responsibilities": _office_compact_text(item.get("responsibilities") or "", 90),
+                    "capabilities": _office_compact_text(item.get("capabilities") or "", 90),
+                }
+            )
+            compact_collaborators.append(
+                {
+                    "role": role,
+                    "name": str(item.get("name") or role).strip() or role,
+                    "task": _office_compact_text(item.get("task") or "", 180),
+                    "status": status,
+                    "result_summary": _office_compact_text(item.get("result") or item.get("error") or "", 220),
+                    "createdAt": str(item.get("createdAt") or now_at).strip() or now_at,
+                    "agent_id": str(item.get("agent_id") or "").strip(),
+                    "position": _office_compact_text(item.get("position") or "", 90),
+                    "work_scope": _office_compact_text(item.get("work_scope") or "", 90),
+                    "responsibilities": _office_compact_text(item.get("responsibilities") or "", 90),
+                    "capabilities": _office_compact_text(item.get("capabilities") or "", 90),
+                }
+            )
+        compact_collaborators = compact_collaborators[:8]
+        compact_results = compact_results[:8]
+        doc["collaboration_summary"] = {
+            "enabled": True,
+            "collaborators": compact_collaborators,
+            "task_results": compact_results,
+            "final_summary": _office_compact_text(collab.get("final_summary") or result_summary_compact or "", 600),
+            "updated_at": now_at,
+        }
+        changed = True
+
+    if changed:
+        doc["updated_at"] = now_at
+        _office_save_project_memory(user_id, project_id, doc)
+    return _office_memory_payload_for_api(doc, log_limit=10)
+
+
+def _office_save_project_approval(
+    user_id: str,
+    project_id: str,
+    approval_status: str,
+    target_summary: str = "",
+    target_mode: str = "",
+) -> Dict[str, Any]:
+    pid = str(project_id or "").strip()
+    status = _office_norm_approval_status(approval_status)
+    if not pid or status not in {"accepted", "deferred", "refine"}:
+        return {}
+
+    now_at = _office_now_iso()
+    doc = _office_load_project_memory(user_id, pid)
+    result_state = doc.get("result_state") if isinstance(doc.get("result_state"), dict) else {}
+    fallback_summary = _office_compact_text(
+        result_state.get("summary")
+        or (doc.get("taskboard_state") or {}).get("summary")
+        or "",
+        700,
+    )
+    summary = _office_compact_text(target_summary or fallback_summary, 700)
+    mode = _office_norm_exec_mode(
+        target_mode
+        or result_state.get("execution_mode")
+        or (doc.get("taskboard_state") or {}).get("execution_mode")
+    )
+
+    doc["approval_state"] = {
+        "status": status,
+        "approved_at": now_at,
+        "target_summary": summary,
+        "target_mode": mode,
+        "updated_at": now_at,
+    }
+    _office_history_append_bounded(
+        doc,
+        "approval_history",
+        {
+            "id": _office_history_make_id("approval"),
+            "project_id": pid,
+            "status": status,
+            "summary": summary,
+            "execution_mode": mode,
+            "result_status": _office_norm_result_status(result_state.get("status")),
+            "approved_at": now_at,
+        },
+        OFFICE_PROJECT_MEMORY_MAX_APPROVAL_HISTORY,
+    )
+    _office_history_append_bounded(
+        doc,
+        "recent_events",
+        _office_history_event_entry(
+            pid,
+            "approval_action",
+            f"审批动作：{status} | {summary or '-'}",
+            status=_office_norm_result_status(result_state.get("status")),
+            execution_mode=mode,
+            created_at=now_at,
+            extra={"approval_status": status},
+        ),
+        OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS,
+    )
+    next_result_state = dict(result_state or {})
+    next_result_state["approval_status"] = status
+    if summary:
+        next_result_state["summary"] = summary
+    if mode:
+        next_result_state["execution_mode"] = mode
+    next_result_state["updated_at"] = str(next_result_state.get("updated_at") or now_at).strip() or now_at
+    doc["result_state"] = next_result_state
+
+    taskboard = doc.get("taskboard_state") if isinstance(doc.get("taskboard_state"), dict) else {}
+    taskboard = dict(taskboard or {})
+    if status == "refine":
+        taskboard["current_stage"] = "待细化"
+    elif status == "accepted":
+        taskboard["current_stage"] = "结果已确认"
+    elif status == "deferred":
+        taskboard["current_stage"] = "结果暂缓"
+    if taskboard:
+        taskboard["updated_at"] = now_at
+        doc["taskboard_state"] = taskboard
+
+    doc["updated_at"] = now_at
+    _office_save_project_memory(user_id, pid, doc)
+    return _office_memory_payload_for_api(doc, log_limit=10)
+
+_OFFICE_TASK_TYPE_LABEL_ZH = {
+    "code_dev": "代码开发",
+    "doc_task": "文档整理",
+    "research_task": "研究分析",
+    "mixed_task": "混合任务",
+}
+_OFFICE_COMPLEXITY_LABEL_ZH = {
+    "simple": "简单",
+    "medium": "中等",
+    "complex": "复杂",
+}
+_OFFICE_EXEC_MODE_LABEL_ZH = {
+    "single_cc": "单CC执行",
+    "collaborative": "协作执行",
+}
+
+
+def _office_norm_task_type(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"code_dev", "doc_task", "research_task", "mixed_task"}:
+        return s
+    if s in {"doc_sorting", "doc"}:
+        return "doc_task"
+    if s in {"research_analysis", "research"}:
+        return "research_task"
+    return ""
+
+
+def _office_norm_complexity(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"simple", "medium", "complex"}:
+        return s
+    return "medium"
+
+
+def _office_norm_exec_mode(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"collaborative", "collaborative_placeholder"}:
+        return "collaborative"
+    return "single_cc"
+
+
+def _office_norm_result_status(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"success", "failed", "running"}:
+        return s
+    return ""
+
+
+def _office_norm_approval_status(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    if s in {"accepted", "deferred", "refine", "pending"}:
+        return s
+    return ""
+
+
+def _office_task_type_from_project(project_type: Any) -> str:
+    ptype = str(project_type or "").strip().lower()
+    if ptype == "code_dev":
+        return "code_dev"
+    if ptype in {"doc_sorting", "doc_task"}:
+        return "doc_task"
+    if ptype in {"research_analysis", "research_task"}:
+        return "research_task"
+    return "mixed_task"
+
+
+def _office_build_collaborator_placeholders(task_type: str, execution_mode: str, role_template: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    if _office_norm_exec_mode(execution_mode) != "collaborative":
+        return []
+    role_rows = role_template if isinstance(role_template, list) else list(_WORKSPACE_ROLE_TEMPLATE_DEFAULT)
+    out: List[Dict[str, str]] = []
+    for role in role_rows:
+        rr = str(role or "").strip().lower()
+        if rr not in {"frontend_worker", "backend_worker", "reviewer"}:
+            continue
+        out.append({"role": rr, "name": rr, "status": "pending"})
+    if out:
+        return out
+    return [
+        {"role": "frontend_worker", "name": "frontend_worker", "status": "pending"},
+        {"role": "backend_worker", "name": "backend_worker", "status": "pending"},
+        {"role": "reviewer", "name": "reviewer", "status": "pending"},
+    ]
+
+
+def _first_non_empty_text(*values: Any) -> str:
+    for val in values:
+        txt = str(val or "").strip()
+        if txt:
+            return txt
+    return ""
+
+
+def _agent_workspace_override(agent_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    cfg = _normalize_agent_entry(agent_cfg or {}, DEFAULT_AGENT_ID)
+    scene = cfg.get("scene_overrides") if isinstance(cfg.get("scene_overrides"), dict) else {}
+    raw = scene.get("workspace") if isinstance(scene.get("workspace"), dict) else {}
+    return _normalize_agent_workspace_override(raw)
+
+
+def _agent_lounge_override(agent_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    cfg = _normalize_agent_entry(agent_cfg or {}, DEFAULT_AGENT_ID)
+    scene = cfg.get("scene_overrides") if isinstance(cfg.get("scene_overrides"), dict) else {}
+    raw = scene.get("lounge") if isinstance(scene.get("lounge"), dict) else {}
+    return _normalize_agent_lounge_override(raw)
+
+
+def _resolve_workspace_agent_runtime_profile(
+    agent_id_hint: Any,
+    workspace_settings: Optional[Dict[str, Any]] = None,
+    scene_prompt_override: Any = "",
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    fallback_id = _normalize_agent_id(ws.get("main_agent_id"), _default_agent_id_from_config())
+    agent_id = _normalize_agent_id(agent_id_hint, fallback_id)
+    cfg = _get_agent_config(agent_id)
+    cfg = _normalize_agent_entry(cfg, agent_id)
+    override = _agent_workspace_override(cfg)
+    basic_prompt = _agent_system_prompt_text(cfg)
+    explicit_prompt = str(scene_prompt_override or "").strip()
+    effective_prompt = _first_non_empty_text(explicit_prompt, override.get("engineering_prompt"), basic_prompt)
+    position = _first_non_empty_text(
+        override.get("position"),
+        cfg.get("agent_title"),
+        cfg.get("display_name"),
+        cfg.get("agent_name"),
+        cfg.get("agent_id"),
+    )
+    work_scope = _first_non_empty_text(override.get("work_scope"))
+    responsibilities = _first_non_empty_text(override.get("responsibilities"), work_scope)
+    capabilities = _first_non_empty_text(override.get("capabilities"))
+    workspace_params = _first_non_empty_text(override.get("workspace_params"))
+    return {
+        "agent_id": str(cfg.get("agent_id") or agent_id).strip(),
+        "display_name": _agent_display_name(cfg),
+        "position": position,
+        "work_scope": work_scope,
+        "responsibilities": responsibilities,
+        "capabilities": capabilities,
+        "workspace_params": workspace_params,
+        "engineering_prompt": str(override.get("engineering_prompt") or "").strip(),
+        "effective_prompt": effective_prompt,
+        "collaboration_enabled": bool(safe_bool(override.get("collaboration_enabled"), True)),
+    }
+
+
+def _resolve_workspace_runtime_profiles(
+    project: Optional[Dict[str, Any]],
+    workspace_settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    proj = dict(project or {}) if isinstance(project, dict) else {}
+    explicit_main_prompt = str(ws.get("main_prompt") or "").strip()
+    main_agent_hint = _first_non_empty_text(proj.get("mainAgent"), ws.get("main_agent_id"), _default_agent_id_from_config())
+    main_profile = _resolve_workspace_agent_runtime_profile(
+        main_agent_hint,
+        ws,
+        scene_prompt_override=explicit_main_prompt,
+    )
+
+    proj_members = proj.get("memberAgents") if isinstance(proj.get("memberAgents"), list) else []
+    sub_ids: List[str] = _workspace_norm_agent_list(proj_members)
+
+    sub_profiles: List[Dict[str, Any]] = []
+    seen = set()
+    for aid in sub_ids:
+        aa = _normalize_agent_id(aid, "")
+        if (not aa) or aa in seen:
+            continue
+        seen.add(aa)
+        sub_profiles.append(_resolve_workspace_agent_runtime_profile(aa, ws, scene_prompt_override=""))
+
+    collab_candidates = [row for row in sub_profiles if bool(safe_bool((row or {}).get("collaboration_enabled"), True))]
+    if not collab_candidates and sub_profiles:
+        collab_candidates = list(sub_profiles)
+    if (not collab_candidates) and bool(safe_bool(main_profile.get("collaboration_enabled"), True)):
+        collab_candidates = [dict(main_profile)]
+
+    return {
+        "main_profile": main_profile,
+        "sub_profiles": sub_profiles,
+        "collaboration_candidates": collab_candidates,
+    }
+
+
+def _resolve_lounge_runtime_config(
+    agent_cfg: Optional[Dict[str, Any]],
+    scene: Any = "private",
+) -> Dict[str, Any]:
+    cfg = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
+    scene_key = "group" if str(scene or "").strip().lower() == "group" else "private"
+    lounge_settings = get_lounge_settings(refresh=False)
+    scene_cfg = lounge_settings.get(scene_key) if isinstance(lounge_settings.get(scene_key), dict) else {}
+    memory_cfg = lounge_settings.get("memory") if isinstance(lounge_settings.get("memory"), dict) else {}
+    legacy_prompts = _legacy_lounge_prompt_defaults()
+    basic_prompt = _agent_system_prompt_text(cfg)
+    scene_prompt = _resolve_lounge_scene_prompt_value(
+        scene_cfg if isinstance(scene_cfg, dict) else {},
+        "",
+        legacy_prompts.get(scene_key),
+    )
+    effective_prompt = _first_non_empty_text(scene_prompt, basic_prompt)
+    default_agent = _normalize_agent_id(scene_cfg.get("default_agent_id"), "") if str(scene_cfg.get("default_agent_id") or "").strip() else ""
+    return {
+        "scene": scene_key,
+        "default_agent_id": default_agent,
+        "effective_prompt": effective_prompt,
+        "reply_style": _first_non_empty_text(scene_cfg.get("reply_style")),
+        "initiative": _first_non_empty_text(scene_cfg.get("initiative")),
+        "trigger_rule": _first_non_empty_text(scene_cfg.get("trigger_rule")),
+        "trigger_rules_v1": _store_norm_trigger_rules_v1(
+            scene_cfg.get("trigger_rules_v1") if isinstance(scene_cfg.get("trigger_rules_v1"), dict) else {},
+            fallback=(_lounge_default_settings().get("group") or {}).get("trigger_rules_v1") if scene_key == "group" else None,
+        ) if scene_key == "group" else {},
+        "memory_enabled": bool(safe_bool(scene_cfg.get("memory_enabled"), True)),
+        "summary_enabled": bool(safe_bool(scene_cfg.get("summary_enabled"), True)),
+        "relationship_memory_enabled": bool(safe_bool(scene_cfg.get("relationship_memory_enabled"), True)),
+        "user_profile_enabled": bool(safe_bool(scene_cfg.get("user_profile_enabled"), True)),
+        "memory_strip_rule": _first_non_empty_text(memory_cfg.get("memory_strip_rule")),
+        "user_profile_rule": _first_non_empty_text(memory_cfg.get("user_profile_rule")),
+        "relationship_rule": _first_non_empty_text(memory_cfg.get("relationship_rule")),
+        "relationship_param_rule": _first_non_empty_text(memory_cfg.get("relationship_param_rule")),
+        "rumination_enabled": bool(safe_bool(memory_cfg.get("rumination_enabled"), True)),
+        "deepthink_enabled": bool(safe_bool(memory_cfg.get("deepthink_enabled"), True)),
+    }
+
+
+def _build_lounge_runtime_block(runtime_cfg: Optional[Dict[str, Any]]) -> str:
+    cfg = runtime_cfg if isinstance(runtime_cfg, dict) else {}
+    scene_key = "group" if str(cfg.get("scene") or "").strip().lower() == "group" else "private"
+    lines: List[str] = ["【休闲区场景配置（已生效）】"]
+    if scene_key == "group":
+        lines.append("- 场景: 群聊")
+        lines.append(f"- 群聊记忆: {'开启' if safe_bool(cfg.get('memory_enabled'), True) else '关闭'}")
+        lines.append(f"- 群聊总结: {'开启' if safe_bool(cfg.get('summary_enabled'), True) else '关闭'}")
+        if str(cfg.get("trigger_rule") or "").strip():
+            lines.append(f"- 群聊触发规则: {str(cfg.get('trigger_rule') or '').strip()}")
+    else:
+        lines.append("- 场景: 私聊")
+        lines.append(f"- 关系记忆: {'开启' if safe_bool(cfg.get('relationship_memory_enabled'), True) else '关闭'}")
+        lines.append(f"- 用户画像: {'开启' if safe_bool(cfg.get('user_profile_enabled'), True) else '关闭'}")
+        if str(cfg.get("initiative") or "").strip():
+            lines.append(f"- 主动性: {str(cfg.get('initiative') or '').strip()}")
+    if str(cfg.get("reply_style") or "").strip():
+        lines.append(f"- 回复风格: {str(cfg.get('reply_style') or '').strip()}")
+    if str(cfg.get("memory_strip_rule") or "").strip():
+        lines.append(f"- 记忆条规则: {str(cfg.get('memory_strip_rule') or '').strip()}")
+    if str(cfg.get("user_profile_rule") or "").strip():
+        lines.append(f"- 用户画像规则: {str(cfg.get('user_profile_rule') or '').strip()}")
+    if str(cfg.get("relationship_rule") or "").strip():
+        lines.append(f"- 人际关系规则: {str(cfg.get('relationship_rule') or '').strip()}")
+    if str(cfg.get("relationship_param_rule") or "").strip():
+        lines.append(f"- 关系参数更新规则: {str(cfg.get('relationship_param_rule') or '').strip()}")
+    lines.append(f"- 陪伴反刍层: {'开启' if safe_bool(cfg.get('rumination_enabled'), True) else '关闭'}")
+    lines.append(f"- 陪伴深思层: {'开启' if safe_bool(cfg.get('deepthink_enabled'), True) else '关闭'}")
+    return "\n".join(lines).strip()
+
+
+def _office_build_suggested_steps(task_type: str, execution_mode: str) -> List[str]:
+    t = _office_norm_task_type(task_type) or "mixed_task"
+    mode = _office_norm_exec_mode(execution_mode)
+    base_map: Dict[str, List[str]] = {
+        "code_dev": [
+            "澄清输入输出与修改范围",
+            "让 CC 给出最小可运行改动方案并执行",
+            "回收结果并补充验证步骤",
+        ],
+        "doc_task": [
+            "明确文档目标读者与交付格式",
+            "让 CC 输出结构化草稿",
+            "统一术语并给出可复用模板",
+        ],
+        "research_task": [
+            "明确研究问题与比较维度",
+            "让 CC 先做第一轮信息归纳",
+            "整理结论与后续验证建议",
+        ],
+        "mixed_task": [
+            "先拆分代码/文档/研究子目标",
+            "让 CC 完成第一阶段综合分析",
+            "汇总可执行下一步清单",
+        ],
+    }
+    steps = list(base_map.get(t) or base_map["mixed_task"])
+    if mode == "collaborative":
+        steps = [
+            "总控先拆分为 frontend_worker / backend_worker / reviewer 子任务",
+            "按顺序调用 CC 执行每个子任务并收集结果",
+            "由总控汇总所有子任务输出并返回最终建议",
+        ]
+    return [str(x or "").strip() for x in steps if str(x or "").strip()]
+
+
+def analyze_office_task(
+    project: Dict[str, Any],
+    user_message: str,
+    workspace_settings: Optional[Dict[str, Any]] = None,
+    memory_context_text: str = "",
+) -> Dict[str, Any]:
+    msg = str(user_message or "").strip()
+    low = msg.lower()
+    project_type = str(project.get("type") or "").strip().lower()
+    fallback_type = _office_task_type_from_project(project_type)
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    workspace_profiles = _resolve_workspace_runtime_profiles(project, ws)
+    main_profile = (
+        dict(workspace_profiles.get("main_profile") or {})
+        if isinstance(workspace_profiles.get("main_profile"), dict)
+        else {}
+    )
+    sub_profiles = list(workspace_profiles.get("sub_profiles") or []) if isinstance(workspace_profiles.get("sub_profiles"), list) else []
+    collab_candidates = (
+        list(workspace_profiles.get("collaboration_candidates") or [])
+        if isinstance(workspace_profiles.get("collaboration_candidates"), list)
+        else []
+    )
+    main_agent = str(main_profile.get("agent_id") or project.get("mainAgent") or ws.get("main_agent_id") or "").strip()
+    role_template = _workspace_norm_role_template(ws.get("sub_agent_role_template"))
+    sub_agents_enabled = [
+        _normalize_agent_id((item or {}).get("agent_id"), "")
+        for item in collab_candidates
+        if isinstance(item, dict)
+    ]
+    sub_agents_enabled = [x for x in sub_agents_enabled if x]
+    default_exec_mode = _workspace_norm_exec_mode(ws.get("default_execution_mode"))
+
+    code_hits = sum(
+        1
+        for kw in [
+            "代码",
+            "开发",
+            "修复",
+            "重构",
+            "接口",
+            "api",
+            "bug",
+            "前端",
+            "后端",
+            "function",
+            "class",
+            "compile",
+            "build",
+            "test",
+            "deploy",
+        ]
+        if kw in low
+    )
+    doc_hits = sum(
+        1
+        for kw in [
+            "文档",
+            "整理",
+            "手册",
+            "说明",
+            "readme",
+            "spec",
+            "总结",
+            "润色",
+            "写作",
+        ]
+        if kw in low
+    )
+    research_hits = sum(
+        1
+        for kw in [
+            "研究",
+            "分析",
+            "调研",
+            "评估",
+            "对比",
+            "benchmark",
+            "风险",
+            "方案",
+            "可行性",
+        ]
+        if kw in low
+    )
+
+    task_type = fallback_type
+    active_types = sum([1 if code_hits > 0 else 0, 1 if doc_hits > 0 else 0, 1 if research_hits > 0 else 0])
+    if active_types >= 2:
+        task_type = "mixed_task"
+    elif code_hits >= max(doc_hits, research_hits) and code_hits > 0:
+        task_type = "code_dev"
+    elif doc_hits >= max(code_hits, research_hits) and doc_hits > 0:
+        task_type = "doc_task"
+    elif research_hits > 0:
+        task_type = "research_task"
+    task_type = _office_norm_task_type(task_type) or "mixed_task"
+
+    score = 0
+    if len(msg) >= 180:
+        score += 1
+    if len(msg) >= 360:
+        score += 1
+    if re.search(r"(端到端|全链路|多模块|跨模块|架构|迁移|并发|多agent|multi-agent|协作|审批)", msg, flags=re.IGNORECASE):
+        score += 2
+    if re.search(r"(改造|联调|集成|优化|新增|重构|测试)", msg, flags=re.IGNORECASE):
+        score += 1
+    if msg.count("\n") >= 2:
+        score += 1
+    if task_type == "mixed_task":
+        score += 1
+
+    if score >= 3:
+        complexity = "complex"
+    elif score >= 1:
+        complexity = "medium"
+    else:
+        complexity = "simple"
+    complexity = _office_norm_complexity(complexity)
+
+    if default_exec_mode == "single_cc":
+        execution_mode = "single_cc"
+    else:
+        execution_mode = "collaborative" if complexity == "complex" else "single_cc"
+    execution_mode = _office_norm_exec_mode(execution_mode)
+
+    suggested_steps = _office_build_suggested_steps(task_type, execution_mode)
+    summary = (
+        f"本地Agent判断：{_OFFICE_TASK_TYPE_LABEL_ZH.get(task_type, task_type)}，"
+        f"{_OFFICE_COMPLEXITY_LABEL_ZH.get(complexity, complexity)}复杂度，"
+        f"建议{_OFFICE_EXEC_MODE_LABEL_ZH.get(execution_mode, execution_mode)}。"
+    )
+    if main_agent:
+        summary = f"{summary} 主Agent：{main_agent}。"
+    if str(main_profile.get("position") or "").strip():
+        summary = f"{summary} 岗位：{str(main_profile.get('position') or '').strip()}。"
+    if str(main_profile.get("responsibilities") or "").strip():
+        summary = f"{summary} 职责：{str(main_profile.get('responsibilities') or '').strip()}。"
+    if str(memory_context_text or "").strip():
+        summary = f"{summary} 已参考最近工程记忆。"
+
+    return {
+        "task_type": task_type,
+        "complexity": complexity,
+        "execution_mode": execution_mode,
+        "summary": summary,
+        "suggested_steps": suggested_steps,
+        "collaboration_mode": execution_mode == "collaborative",
+        "collaborators": _office_build_collaborator_placeholders(task_type, execution_mode, role_template),
+        "sub_tasks": suggested_steps,
+        "controller_agent": main_agent,
+        "sub_agents_enabled": sub_agents_enabled,
+        "default_execution_mode": default_exec_mode,
+        "workspace_main_prompt": str(main_profile.get("effective_prompt") or ws.get("main_prompt") or "").strip(),
+        "workspace_main_profile": main_profile,
+        "workspace_sub_agent_profiles": sub_profiles,
+        "workspace_collaboration_candidates": collab_candidates,
+        "memory_policy": dict(ws.get("memory") or {}),
+        "memory_context_used": bool(str(memory_context_text or "").strip()),
+    }
+
+
+def _build_office_cc_prompt(
+    project: Dict[str, Any],
+    user_message: str,
+    analysis: Dict[str, Any],
+    memory_context_text: str = "",
+) -> str:
+    members = project.get("memberAgents") if isinstance(project.get("memberAgents"), list) else []
+    member_text = ", ".join([str(x or "").strip() for x in members if str(x or "").strip()]) or "(none)"
+    task_type = _office_norm_task_type(analysis.get("task_type")) or "mixed_task"
+    complexity = _office_norm_complexity(analysis.get("complexity"))
+    execution_mode = _office_norm_exec_mode(analysis.get("execution_mode"))
+    summary = str(analysis.get("summary") or "").strip()
+    workspace_main_prompt = str(analysis.get("workspace_main_prompt") or "").strip()
+    main_profile = analysis.get("workspace_main_profile") if isinstance(analysis.get("workspace_main_profile"), dict) else {}
+    collab_candidates = analysis.get("workspace_collaboration_candidates") if isinstance(analysis.get("workspace_collaboration_candidates"), list) else []
+    memory_text = str(memory_context_text or "").strip()
+    steps = analysis.get("suggested_steps") if isinstance(analysis.get("suggested_steps"), list) else []
+    step_lines = [str(x or "").strip() for x in steps if str(x or "").strip()]
+    steps_text = "\n".join([f"{idx + 1}. {item}" for idx, item in enumerate(step_lines)]) if step_lines else "-"
+    collab_lines: List[str] = []
+    for item in collab_candidates[:6]:
+        if not isinstance(item, dict):
+            continue
+        role_name = _first_non_empty_text(item.get("display_name"), item.get("agent_id"), "-")
+        role_parts = []
+        if str(item.get("position") or "").strip():
+            role_parts.append(f"职位:{str(item.get('position') or '').strip()}")
+        if str(item.get("responsibilities") or "").strip():
+            role_parts.append(f"职责:{str(item.get('responsibilities') or '').strip()}")
+        if str(item.get("capabilities") or "").strip():
+            role_parts.append(f"能力:{str(item.get('capabilities') or '').strip()}")
+        role_extra = f" ({' / '.join(role_parts)})" if role_parts else ""
+        collab_lines.append(f"- {role_name}{role_extra}")
+    collab_text = "\n".join(collab_lines) if collab_lines else "- (none)"
+    main_position = str(main_profile.get("position") or "").strip() or "-"
+    main_scope = str(main_profile.get("work_scope") or "").strip() or "-"
+    main_resp = str(main_profile.get("responsibilities") or "").strip() or "-"
+    main_cap = str(main_profile.get("capabilities") or "").strip() or "-"
+    main_params = str(main_profile.get("workspace_params") or "").strip() or "-"
+
+    return (
+        "你是 TYXT 工作区项目的施工执行层（CC）。请基于项目上下文与本地Agent判断，给出本轮可执行回复。\n\n"
+        f"项目名称: {str(project.get('name') or '').strip() or '-'}\n"
+        f"项目类型: {str(project.get('type') or '').strip() or '-'}\n"
+        f"主Agent: {str(project.get('mainAgent') or '').strip() or '-'}\n"
+        f"主Agent职位: {main_position}\n"
+        f"主Agent工作内容: {main_scope}\n"
+        f"主Agent工程职责: {main_resp}\n"
+        f"主Agent工程能力: {main_cap}\n"
+        f"主Agent工作区参数: {main_params}\n"
+        f"参与Agent: {member_text}\n"
+        f"可参与协作Agent画像:\n{collab_text}\n"
+        f"项目知识库路径: {str(project.get('kbPath') or '').strip() or '-'}\n"
+        f"本地工作目录: {str(project.get('workspacePath') or '').strip() or '-'}\n\n"
+        f"本地Agent判断 task_type: {task_type}\n"
+        f"本地Agent判断 complexity: {complexity}\n"
+        f"本地Agent判断 execution_mode: {execution_mode}\n"
+        f"本地Agent摘要: {summary or '-'}\n"
+        f"工作区主Agent提示词: {workspace_main_prompt or '-'}\n"
+        f"最近工程记忆摘要:\n{memory_text or '-'}\n"
+        f"建议步骤:\n{steps_text}\n\n"
+        "输出要求：\n"
+        "1) 先给出本轮执行结论\n"
+        "2) 再给出可执行步骤\n"
+        "3) 若 execution_mode=collaborative，请给出下一阶段协作建议\n"
+        "4) 涉及文件/命令时必须先实际执行，再给出验证结果；无法验证时必须明确失败，不得宣称已完成\n"
+        "5) 按 CC 既有记忆/日志机制记录本轮执行过程（无需重复解释机制）\n\n"
+        "用户本轮任务:\n"
+        f"{str(user_message or '').strip()}\n"
+    )
+
+
+def _office_role_label(role: str) -> str:
+    r = str(role or "").strip().lower()
+    if r == "frontend_worker":
+        return "frontend_worker"
+    if r == "backend_worker":
+        return "backend_worker"
+    if r == "reviewer":
+        return "reviewer"
+    return r or "worker"
+
+
+def _office_role_instruction(role: str, task_type: str) -> str:
+    r = str(role or "").strip().lower()
+    t = _office_norm_task_type(task_type) or "mixed_task"
+    if r == "frontend_worker":
+        return "你是 frontend_worker，只关注前端界面、交互、组件、状态管理与可用性。"
+    if r == "backend_worker":
+        return "你是 backend_worker，只关注后端接口、数据流、服务逻辑与稳定性。"
+    if r == "reviewer":
+        if t == "doc_task":
+            return "你是 reviewer，请审阅前序结果并统一输出文档结构、质量与缺口。"
+        if t == "research_task":
+            return "你是 reviewer，请审阅前序结果并给出风险、结论与下一步验证建议。"
+        return "你是 reviewer，请审阅前序结果并给出整合建议、风险点与下一步计划。"
+    return "你是执行助手，请严格聚焦当前子任务。"
+
+
+def _office_make_sub_tasks(task_type: str, user_message: str, role_template: Optional[List[str]] = None) -> List[Dict[str, str]]:
+    t = _office_norm_task_type(task_type) or "mixed_task"
+    msg = str(user_message or "").strip() or "（未提供任务描述）"
+    normalized_roles = _workspace_norm_role_template(role_template)
+    role_order = normalized_roles if normalized_roles else list(_WORKSPACE_ROLE_TEMPLATE_DEFAULT)
+
+    role_task_map: Dict[str, str] = {}
+    if t == "doc_task":
+        role_task_map = {
+            "frontend_worker": f"从用户任务中提取面向用户的文档结构与可读性改进：{msg}",
+            "backend_worker": f"从用户任务中提取接口/流程/数据口径说明并给出文档化建议：{msg}",
+            "reviewer": "审阅前两项结果，产出统一文档提纲、术语规范和交付清单。",
+        }
+    elif t == "research_task":
+        role_task_map = {
+            "frontend_worker": f"聚焦用户侧与展示层研究问题，提炼对比维度：{msg}",
+            "backend_worker": f"聚焦后端与架构层研究问题，提炼可行方案：{msg}",
+            "reviewer": "审阅前两项研究结论，输出风险矩阵与推荐路径。",
+        }
+    else:
+        role_task_map = {
+            "frontend_worker": f"处理前端相关子任务并给出可执行步骤：{msg}",
+            "backend_worker": f"处理后端相关子任务并给出可执行步骤：{msg}",
+            "reviewer": "审阅前两项结果，输出整合方案、风险点和下一步优先级。",
+        }
+
+    out: List[Dict[str, str]] = []
+    for role in role_order:
+        rr = str(role or "").strip().lower()
+        if rr not in {"frontend_worker", "backend_worker", "reviewer"}:
+            continue
+        out.append(
+            {
+                "role": rr,
+                "name": rr,
+                "task": str(role_task_map.get(rr) or f"围绕本轮任务执行 {rr} 子任务：{msg}").strip(),
+            }
+        )
+    return out
+
+
+def _office_cleanup_candidate_path(path_text: str) -> str:
+    text = str(path_text or "").strip().strip("`").strip("'").strip('"')
+    text = re.sub(r"[，。；;,.!！?？]+$", "", text).strip()
+    return text
+
+
+def _office_extract_file_names_for_verify(text: str) -> List[str]:
+    src = str(text or "").strip()
+    if not src:
+        return []
+    out: List[str] = []
+    seen = set()
+    candidates = re.findall(r"([A-Za-z0-9_.\-]+\.[A-Za-z0-9]{1,16})", src)
+    for raw in candidates:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        low = name.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(name)
+    return out
+
+
+def _office_extract_abs_file_paths_for_verify(text: str) -> List[str]:
+    src = str(text or "").strip()
+    if not src:
+        return []
+    out: List[str] = []
+    seen = set()
+    inline_tokens = re.findall(r"`([^`\n]{1,420})`", src)
+    direct_tokens = re.findall(r"([A-Za-z]:\\[^`\"'\r\n]{1,420})", src)
+    for token in inline_tokens + direct_tokens:
+        cleaned = _office_cleanup_candidate_path(token)
+        if not cleaned:
+            continue
+        if not re.match(r"^[A-Za-z]:[\\/]", cleaned):
+            continue
+        basename = os.path.basename(cleaned.replace("/", os.sep).replace("\\", os.sep))
+        if "." not in basename:
+            continue
+        try:
+            fp = os.path.abspath(cleaned)
+        except Exception:
+            fp = cleaned
+        key = fp.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(fp)
+    return out
+
+
+def _office_verify_single_cc_result(
+    *,
+    user_message: str,
+    result_text: str,
+    workspace_path: str,
+) -> Dict[str, Any]:
+    msg = str(user_message or "").strip()
+    reply = str(result_text or "").strip()
+    merged_text = f"{msg}\n{reply}".strip()
+    if not merged_text:
+        return {"ok": True, "reason": "empty_text"}
+    create_like = bool(
+        re.search(r"(创建|新建|新增|生成|写入|落盘|create|touch|write|save)", merged_text, flags=re.IGNORECASE)
+    )
+    if not create_like:
+        return {"ok": True, "reason": "no_create_intent"}
+    file_names = _office_extract_file_names_for_verify(merged_text)
+    if not file_names:
+        return {"ok": True, "reason": "no_file_target"}
+
+    check_paths: List[str] = []
+    seen_paths = set()
+    for abs_fp in _office_extract_abs_file_paths_for_verify(merged_text):
+        key = str(abs_fp or "").strip().lower()
+        if not key or key in seen_paths:
+            continue
+        seen_paths.add(key)
+        check_paths.append(abs_fp)
+
+    ws = str(workspace_path or "").strip()
+    if ws:
+        try:
+            ws = os.path.abspath(ws)
+        except Exception:
+            ws = str(ws).strip()
+    for name in file_names:
+        if not ws:
+            break
+        fp = os.path.join(ws, name)
+        key = str(fp or "").strip().lower()
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        check_paths.append(fp)
+
+    if not check_paths:
+        return {"ok": True, "reason": "no_check_path"}
+
+    existing = [p for p in check_paths if os.path.isfile(p)]
+    if existing:
+        return {"ok": True, "reason": "verified", "paths": existing}
+
+    show_paths = ", ".join(check_paths[:4])
+    return {
+        "ok": False,
+        "reason": "file_not_found",
+        "error": f"cc_result_verification_failed: expected file not found ({show_paths})",
+        "checked_paths": check_paths[:8],
+    }
+
+
+def _office_shorten_text(v: Any, max_len: int = 180) -> str:
+    txt = clean_reply_text(str(v or "").strip())
+    txt = re.sub(r"\s+", " ", txt).strip()
+    if len(txt) <= max_len:
+        return txt
+    return txt[: max(16, max_len - 1)].rstrip() + "…"
+
+
+def _build_office_role_prompt(
+    project: Dict[str, Any],
+    user_message: str,
+    analysis: Dict[str, Any],
+    role: str,
+    sub_task: str,
+    previous_results: List[Dict[str, Any]],
+    assigned_profile: Optional[Dict[str, Any]] = None,
+    memory_context_text: str = "",
+) -> str:
+    members = project.get("memberAgents") if isinstance(project.get("memberAgents"), list) else []
+    member_text = ", ".join([str(x or "").strip() for x in members if str(x or "").strip()]) or "(none)"
+    prev_lines: List[str] = []
+    for row in previous_results[-3:]:
+        rr = str(row.get("role") or "").strip() or "worker"
+        status = str(row.get("status") or "").strip() or "unknown"
+        result_txt = _office_shorten_text(row.get("result") or row.get("error") or "-", max_len=140)
+        prev_lines.append(f"- {rr} [{status}] {result_txt}")
+    prev_text = "\n".join(prev_lines) if prev_lines else "- (none)"
+    memory_text = str(memory_context_text or "").strip() or "-"
+    ap = assigned_profile if isinstance(assigned_profile, dict) else {}
+    assigned_agent_id = str(ap.get("agent_id") or "").strip()
+    assigned_agent_name = _first_non_empty_text(ap.get("display_name"), assigned_agent_id, "-")
+    assigned_position = str(ap.get("position") or "").strip() or "-"
+    assigned_scope = str(ap.get("work_scope") or "").strip() or "-"
+    assigned_resp = str(ap.get("responsibilities") or "").strip() or "-"
+    assigned_cap = str(ap.get("capabilities") or "").strip() or "-"
+    assigned_params = str(ap.get("workspace_params") or "").strip() or "-"
+    return (
+        f"{_office_role_instruction(role, analysis.get('task_type'))}\n\n"
+        "你正在参与 TYXT 工作区多角色顺序协作，请只完成当前角色任务。\n\n"
+        f"项目名称: {str(project.get('name') or '').strip() or '-'}\n"
+        f"项目类型: {str(project.get('type') or '').strip() or '-'}\n"
+        f"主Agent: {str(project.get('mainAgent') or '').strip() or '-'}\n"
+        f"参与Agent: {member_text}\n"
+        f"项目知识库路径: {str(project.get('kbPath') or '').strip() or '-'}\n"
+        f"本地工作目录: {str(project.get('workspacePath') or '').strip() or '-'}\n\n"
+        f"总控判断 task_type: {str(analysis.get('task_type') or '-')}\n"
+        f"总控判断 complexity: {str(analysis.get('complexity') or '-')}\n"
+        f"总控判断 execution_mode: {str(analysis.get('execution_mode') or '-')}\n\n"
+        f"用户原始任务:\n{str(user_message or '').strip()}\n\n"
+        f"当前角色: {_office_role_label(role)}\n"
+        f"分配协作Agent: {assigned_agent_name} ({assigned_agent_id or '-'})\n"
+        f"协作Agent职位: {assigned_position}\n"
+        f"协作Agent工作内容: {assigned_scope}\n"
+        f"协作Agent工程职责: {assigned_resp}\n"
+        f"协作Agent工程能力: {assigned_cap}\n"
+        f"协作Agent工作区参数: {assigned_params}\n"
+        f"当前子任务:\n{str(sub_task or '').strip()}\n\n"
+        f"最近工程记忆摘要:\n{memory_text}\n\n"
+        f"前序结果（供参考）:\n{prev_text}\n\n"
+        "输出要求：\n"
+        "1) 仅输出当前角色可执行结论与步骤\n"
+        "2) 涉及文件/命令时必须先执行再给结论，无法验证时按失败说明\n"
+        "3) 必须包含风险/依赖提示\n"
+        "4) 尽量简洁，避免重复前序内容\n"
+        "5) 按 CC 既有记忆/日志机制记录当前子任务执行过程\n"
+    )
+
+
+def _office_build_collaboration_final_summary(
+    analysis: Dict[str, Any],
+    task_results: List[Dict[str, Any]],
+) -> str:
+    reviewer_ok = [
+        x for x in task_results
+        if str(x.get("role") or "").strip().lower() == "reviewer" and str(x.get("status") or "").strip().lower() == "success"
+    ]
+    if reviewer_ok:
+        txt = clean_reply_text(str(reviewer_ok[-1].get("result") or "").strip())
+        if txt:
+            return txt
+    success_count = len([x for x in task_results if str(x.get("status") or "").strip().lower() == "success"])
+    total = len(task_results)
+    lines = [f"本轮协作执行完成：{success_count}/{total} 个角色成功。"]
+    for row in task_results:
+        role = str(row.get("role") or "worker").strip()
+        status = "成功" if str(row.get("status") or "").strip().lower() == "success" else "失败"
+        brief = _office_shorten_text(row.get("result") or row.get("error") or "-", max_len=120)
+        lines.append(f"- {role}（{status}）：{brief or '-'}")
+    lines.append(
+        f"总控判断：{_OFFICE_TASK_TYPE_LABEL_ZH.get(str(analysis.get('task_type') or ''), str(analysis.get('task_type') or '-'))} / "
+        f"{_OFFICE_COMPLEXITY_LABEL_ZH.get(str(analysis.get('complexity') or ''), str(analysis.get('complexity') or '-'))}"
+    )
+    return "\n".join(lines).strip()
+
+
+def run_office_collaboration(
+    project: Dict[str, Any],
+    user_message: str,
+    analysis: Dict[str, Any],
+    workspace_settings: Optional[Dict[str, Any]] = None,
+    memory_context_text: str = "",
+    bridge_extra_env: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    sub_tasks = _office_make_sub_tasks(analysis.get("task_type"), user_message, ws.get("sub_agent_role_template"))
+    collab_profiles = (
+        list(analysis.get("workspace_collaboration_candidates") or [])
+        if isinstance(analysis.get("workspace_collaboration_candidates"), list)
+        else []
+    )
+    if not collab_profiles:
+        profile_bundle = _resolve_workspace_runtime_profiles(project, ws)
+        collab_profiles = (
+            list(profile_bundle.get("collaboration_candidates") or [])
+            if isinstance(profile_bundle.get("collaboration_candidates"), list)
+            else []
+        )
+    if (not collab_profiles) and isinstance(analysis.get("workspace_main_profile"), dict):
+        collab_profiles = [dict(analysis.get("workspace_main_profile") or {})]
+    workspace_path = str(project.get("workspacePath") or "").strip()
+    task_results: List[Dict[str, Any]] = []
+    collaborators: List[Dict[str, Any]] = []
+    total_duration = 0
+
+    for idx, item in enumerate(sub_tasks):
+        role = str(item.get("role") or "worker").strip().lower() or "worker"
+        role_name = str(item.get("name") or role).strip() or role
+        task_text = str(item.get("task") or "").strip()
+        assigned_profile = {}
+        if collab_profiles:
+            candidate = collab_profiles[idx % len(collab_profiles)]
+            if isinstance(candidate, dict):
+                assigned_profile = dict(candidate)
+        prompt = _build_office_role_prompt(
+            project,
+            user_message,
+            analysis,
+            role,
+            task_text,
+            task_results,
+            assigned_profile=assigned_profile,
+            memory_context_text=memory_context_text,
+        )
+        call_res = call_local_cc_once(
+            prompt=prompt,
+            workspace_path=workspace_path,
+            bridge_config=ws,
+            extra_env=bridge_extra_env,
+        )
+        duration_ms = safe_int(call_res.get("duration_ms"), 0)
+        total_duration += duration_ms
+        ok = bool(safe_bool(call_res.get("ok"), False))
+        result_text = clean_reply_text(str(call_res.get("text") or "").strip()) if ok else ""
+        err_text = str(call_res.get("error") or "").strip()
+        status = "success" if ok else "failed"
+        now_at = _office_now_iso()
+        task_row = {
+            "role": role,
+            "name": role_name,
+            "task": task_text,
+            "result": result_text if ok else "",
+            "error": err_text if not ok else "",
+            "status": status,
+            "createdAt": now_at,
+            "duration_ms": duration_ms,
+            "exit_code": safe_int(call_res.get("exit_code"), 0),
+            "cc_log_path": str(call_res.get("cc_log_path") or "").strip(),
+            "cc_workdir": str(call_res.get("cwd") or "").strip(),
+            "agent_id": str(assigned_profile.get("agent_id") or "").strip(),
+            "position": str(assigned_profile.get("position") or "").strip(),
+            "work_scope": str(assigned_profile.get("work_scope") or "").strip(),
+            "responsibilities": str(assigned_profile.get("responsibilities") or "").strip(),
+            "capabilities": str(assigned_profile.get("capabilities") or "").strip(),
+        }
+        task_results.append(task_row)
+        collaborators.append(
+            {
+                "role": role,
+                "name": _first_non_empty_text(assigned_profile.get("display_name"), role_name),
+                "task": task_text,
+                "status": "completed" if ok else "failed",
+                "result_summary": _office_shorten_text(result_text if ok else err_text, max_len=140),
+                "createdAt": now_at,
+                "agent_id": str(assigned_profile.get("agent_id") or "").strip(),
+                "position": str(assigned_profile.get("position") or "").strip(),
+                "work_scope": str(assigned_profile.get("work_scope") or "").strip(),
+                "responsibilities": str(assigned_profile.get("responsibilities") or "").strip(),
+                "capabilities": str(assigned_profile.get("capabilities") or "").strip(),
+            }
+        )
+
+    success_count = len([x for x in task_results if str(x.get("status") or "").strip().lower() == "success"])
+    total_count = len(task_results)
+    final_summary = _office_build_collaboration_final_summary(analysis, task_results)
+    cc_log_paths = []
+    for node in task_results:
+        if not isinstance(node, dict):
+            continue
+        p = str(node.get("cc_log_path") or node.get("cc_workdir") or "").strip()
+        if p:
+            cc_log_paths.append(p)
+    return {
+        "enabled": True,
+        "mode": "sequential_v1",
+        "collaborators": collaborators,
+        "task_results": task_results,
+        "final_summary": final_summary,
+        "success_count": success_count,
+        "total_count": total_count,
+        "all_success": success_count == total_count and total_count > 0,
+        "duration_ms": total_duration,
+        "cc_log_paths": cc_log_paths,
+    }
 
 # ============================================================
 # 14 路由：/health 与 /chat（第三方桥接入口）
@@ -14561,6 +18408,8 @@ def _should_skip_error_turn_persist(assistant_text: Any) -> bool:
     return any(k in low for k in markers)
 
 
+# Theater prompt path is kept separate from light_chain on purpose.
+# Do not route theater through prompt_builder/query_context in this stage.
 def _build_theater_system_prompt(
     user_input: str,
     meta: Optional[Dict[str, Any]],
@@ -17991,7 +21840,41 @@ _WEB_SEARCH_MCP_SKILL_IDS = (
 )
 
 
-def _find_enabled_mcp_web_search_skill_id() -> str:
+def _is_web_search_scene_allowed(scene: str = "") -> bool:
+    """
+    Scene gate for web_search tool injection.
+    If web-search skill rows exist, at least one must allow current scene.
+    If no web-search skill row exists, keep backward-compatible allow=True.
+    """
+    scene_token = str(scene or "").strip().lower()
+    try:
+        skills = skills_registry.load_all_skills(force=False)
+    except Exception:
+        return True
+
+    candidates: List[str] = []
+    for sid in _WEB_SEARCH_MCP_SKILL_IDS:
+        if sid in skills:
+            candidates.append(sid)
+    for sid, d in skills.items():
+        if (not sid) or d is None:
+            continue
+        if str(getattr(d, "skill_type", "")).strip().lower() != skills_registry.SKILL_TYPE_MCP:
+            continue
+        server_name = str(getattr(d, "server_name", "") or "").strip().lower()
+        tool_name = str(getattr(d, "tool_name", "") or "").strip().lower()
+        if server_name == "mcp_web_search" and tool_name in {"web_search", "search"}:
+            if sid not in candidates:
+                candidates.append(sid)
+    if not candidates:
+        return True
+    for sid in candidates:
+        if skills_registry.is_skill_scene_allowed(sid, scene_token, default=True):
+            return True
+    return False
+
+
+def _find_enabled_mcp_web_search_skill_id(scene: str = "") -> str:
     """
     Return an enabled MCP web-search skill id if available, otherwise empty string.
     """
@@ -18010,6 +21893,8 @@ def _find_enabled_mcp_web_search_skill_id() -> str:
             continue
         if str(getattr(d, "skill_type", "")).strip().lower() != skills_registry.SKILL_TYPE_MCP:
             continue
+        if not skills_registry.is_skill_scene_allowed(sid, scene, default=True):
+            continue
         return sid
     # 2) Fallback: locate by target server/tool in any MCP skill.
     for sid, d in skills.items():
@@ -18020,6 +21905,8 @@ def _find_enabled_mcp_web_search_skill_id() -> str:
         if not bool(getattr(d, "enabled", False)):
             continue
         if str(getattr(d, "skill_type", "")).strip().lower() != skills_registry.SKILL_TYPE_MCP:
+            continue
+        if not skills_registry.is_skill_scene_allowed(sid, scene, default=True):
             continue
         server_name = str(getattr(d, "server_name", "") or "").strip().lower()
         tool_name = str(getattr(d, "tool_name", "") or "").strip().lower()
@@ -18082,7 +21969,8 @@ def _search_engine_items_with_fallback(
     provider = _normalize_web_search_provider(
         m.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))
     )
-    mcp_skill_id = _find_enabled_mcp_web_search_skill_id()
+    scene = str(m.get("scene") or m.get("channel_type") or "").strip().lower()
+    mcp_skill_id = _find_enabled_mcp_web_search_skill_id(scene=scene)
     if mcp_skill_id:
         try:
             args = {
@@ -19546,6 +23434,13 @@ def _prepare_light_main_context(
 ) -> Dict[str, Any]:
     m = dict(meta or {})
     cfg = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
+    scene_key = str(m.get("scene") or "").strip().lower()
+    lounge_runtime = (
+        dict(m.get("lounge_runtime") or {})
+        if isinstance(m.get("lounge_runtime"), dict)
+        else _resolve_lounge_runtime_config(cfg, "group" if scene_key == "group" else "private")
+    )
+    lounge_policy_block = _build_lounge_runtime_block(lounge_runtime if scene_key in {"private", "group"} else {})
     agent_id = str(cfg.get("agent_id") or _default_agent_id_from_config()).strip()
     chat_permissions = _get_agent_scene_permissions(agent_id, "chat")
     allow_profile_read = _permission_allows_read(chat_permissions.get("user_profile"))
@@ -19555,6 +23450,21 @@ def _prepare_light_main_context(
     allow_runtime_logs_read = _permission_allows_read(chat_permissions.get("runtime_logs"))
     allow_vault_docs_read = _permission_allows_read(chat_permissions.get("vault_docs"))
     allow_deepthink_reports_read = _permission_allows_read(chat_permissions.get("deepthink_reports"))
+    if scene_key in {"private", "group"}:
+        if not bool(safe_bool(lounge_runtime.get("rumination_enabled"), True)):
+            allow_runtime_logs_read = False
+        if not bool(safe_bool(lounge_runtime.get("deepthink_enabled"), True)):
+            allow_deepthink_reports_read = False
+    if scene_key in {"private", "group"}:
+        if not bool(safe_bool(lounge_runtime.get("user_profile_enabled"), True)):
+            allow_profile_read = False
+        if scene_key == "private":
+            if not bool(safe_bool(lounge_runtime.get("relationship_memory_enabled"), True)):
+                allow_relationships_read = False
+                allow_relationship_params_read = False
+        else:
+            if not bool(safe_bool(lounge_runtime.get("memory_enabled"), True)):
+                allow_memory_strips_read = False
     profile_base_dir = _agent_profile_root(cfg)
     profiles_cache = _load_user_profiles()
     primary_user_id = _resolve_primary_profile_user_id(m)
@@ -19629,7 +23539,7 @@ def _prepare_light_main_context(
             if block:
                 third_party_blocks.append(block)
 
-    _scene_key = str(m.get("scene") or "").strip().lower()
+    _scene_key = scene_key
     _default_turn_n = 10 if _scene_key == "group" else 3
     recent_turn_n = safe_int(m.get("context_turn_n"), _default_turn_n)
     if recent_turn_n <= 0:
@@ -19689,6 +23599,8 @@ def _prepare_light_main_context(
         "chat_permissions": dict(chat_permissions or {}),
         "permission_block": _build_agent_permission_block(agent_id, "chat"),
         "session_bucket": _light_session_bucket_label(m),
+        "lounge_runtime": lounge_runtime,
+        "lounge_policy_block": lounge_policy_block,
     }
 
 
@@ -19717,6 +23629,32 @@ def _normalize_light_tool_name(value: Any) -> str:
     if name in {"shared_io", "shared_file", "shared_folder", "file", "file_tools"}:
         return "shared_io"
     return ""
+
+
+def _normalize_recent_level(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    if token in {"short", "s"}:
+        return "short"
+    if token in {"long", "l"}:
+        return "long"
+    return "medium"
+
+
+def _trim_recent_messages_by_level(
+    recent_messages: Optional[List[Dict[str, Any]]],
+    level: str = "medium",
+) -> List[Dict[str, Any]]:
+    rows = [dict(item) for item in list(recent_messages or []) if isinstance(item, dict)]
+    if not rows:
+        return []
+    lvl = _normalize_recent_level(level)
+    if lvl == "short":
+        limit = 4
+    elif lvl == "long":
+        limit = 20
+    else:
+        limit = 10
+    return rows[-limit:]
 
 
 def _call_agent_json_task(
@@ -19959,9 +23897,11 @@ def _build_light_tool_specs(
     m = dict(meta or {})
     ctx = dict(light_ctx or {})
     specs: Dict[str, Dict[str, Any]] = {}
+    scene_token = str(m.get("scene") or m.get("channel_type") or "").strip().lower()
     chat_permissions = ctx.get("chat_permissions") if isinstance(ctx.get("chat_permissions"), dict) else {}
     allow_reports_read = _permission_allows_read(chat_permissions.get("deepthink_reports"))
-    if allow_web and _normalize_web_search_mode(m.get("web_search_mode", MODEL_CONFIG.get("web_search_mode", "default"))) != "off":
+    web_scene_allowed = _is_web_search_scene_allowed(scene_token)
+    if allow_web and web_scene_allowed and _normalize_web_search_mode(m.get("web_search_mode", MODEL_CONFIG.get("web_search_mode", "default"))) != "off":
         specs["web_search"] = {
             "name": "web_search",
             "desc": "联网搜索实时或外部信息。适用于新闻、网页资料、最新动态、公开事实核验。",
@@ -20001,6 +23941,9 @@ def _build_light_tool_spec_text(
     return "\n".join(lines).strip()
 
 
+# Main light_chain prompt entry:
+# - query_context_builder: unified read values
+# - prompt_builder: prefix/suffix section assembly
 def _build_light_chain_system_prompt(
     meta: Optional[Dict[str, Any]],
     agent_cfg: Optional[Dict[str, Any]],
@@ -20011,27 +23954,88 @@ def _build_light_chain_system_prompt(
     tool_result_blocks: Optional[List[str]] = None,
     planning_mode: bool = False,
 ) -> str:
-    m = dict(meta or {})
-    cfg = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
-    ctx = dict(light_ctx or {})
+    qc = build_light_chain_query_context(
+        meta=meta,
+        light_ctx=light_ctx,
+        agent_cfg=agent_cfg,
+    )
+    m = dict(qc.get("meta") or {})
+    ctx = dict(qc.get("light_ctx") or {})
+    cfg = _normalize_agent_entry(qc.get("agent_cfg") or {}, _default_agent_id_from_config())
+    recent_summary = str(qc.get("recent_summary") or "").strip()
+    recent_messages = (
+        list(qc.get("recent_messages"))
+        if isinstance(qc.get("recent_messages"), list)
+        else []
+    )
+    if recent_summary and (not str(ctx.get("recent_summary") or "").strip()):
+        ctx["recent_summary"] = recent_summary
+    if recent_messages and (not isinstance(ctx.get("recent_messages"), list)):
+        ctx["recent_messages"] = recent_messages
     lines: List[str] = []
 
-    scene = str(m.get("scene") or "private").strip().lower()
+    scene = str(qc.get("scene") or m.get("scene") or "private").strip().lower()
     agent_global_prompt_txt = _agent_global_system_prompt_text(cfg, scene=scene)
-    if agent_global_prompt_txt:
-        lines.append("【Agent系统提示词】\n" + agent_global_prompt_txt)
     agent_prompt_txt = _agent_system_prompt_text(cfg)
-    if agent_prompt_txt:
-        lines.append("【当前 Agent 人格设定】\n" + agent_prompt_txt)
     policy_block = _build_reply_policy_block(cfg)
-    if policy_block:
-        lines.append(policy_block)
     group_policy_block = _build_group_policy_block(cfg)
-    if group_policy_block:
-        lines.append(group_policy_block)
-    lines.append(_build_system_time_block())
+    lounge_runtime = (
+        dict(ctx.get("lounge_runtime") or {})
+        if isinstance(ctx.get("lounge_runtime"), dict)
+        else _resolve_lounge_runtime_config(cfg, "group" if scene == "group" else "private")
+    )
+    if scene in {"private", "group"}:
+        lounge_prompt = str(lounge_runtime.get("effective_prompt") or "").strip()
+        if lounge_prompt:
+            agent_global_prompt_txt = lounge_prompt
+        else:
+            agent_global_prompt_txt = agent_prompt_txt
 
-    scene = str(m.get("scene") or "private").strip()
+    group_prompt_blocks: List[str] = []
+    if scene == "group":
+        try:
+            if isinstance(ctx.get("group_prompt_blocks"), list):
+                group_prompt_blocks = [
+                    str(x).strip()
+                    for x in list(ctx.get("group_prompt_blocks") or [])
+                    if str(x or "").strip()
+                ]
+            else:
+                group_cfg = (
+                    dict(ctx.get("group_cfg"))
+                    if isinstance(ctx.get("group_cfg"), dict)
+                    else {}
+                )
+                route_result = (
+                    dict(ctx.get("group_route"))
+                    if isinstance(ctx.get("group_route"), dict)
+                    else {}
+                )
+                if group_cfg or route_result:
+                    group_prompt_blocks = list(
+                        build_group_prompt_blocks(
+                            meta=m,
+                            group_cfg=group_cfg,
+                            route_result=route_result,
+                        )
+                        or []
+                    )
+        except Exception:
+            group_prompt_blocks = []
+
+    lines.extend(
+        build_light_chain_prompt_prefix(
+            scene=scene,
+            agent_global_prompt=agent_global_prompt_txt,
+            agent_prompt=agent_prompt_txt,
+            policy_block=policy_block,
+            group_policy_block=group_policy_block,
+            system_time_block=_build_system_time_block(),
+            group_prompt_blocks=group_prompt_blocks,
+        )
+    )
+
+    scene = str(qc.get("scene") or m.get("scene") or "private").strip()
     lines.append(
         "\n".join(
             [
@@ -20045,12 +24049,13 @@ def _build_light_chain_system_prompt(
         )
     )
 
-    if str(m.get("target_user_id") or "").strip():
+    target_user_id = str(qc.get("target_user_id") or "").strip()
+    if target_user_id:
         lines.append(
             "\n".join(
                 [
                     "【群聊回复对象确认】",
-                    f"- target_user_id: {str(m.get('target_user_id') or '').strip()}",
+                    f"- target_user_id: {target_user_id}",
                     f"- target_name: {str(m.get('target_name') or '').strip()}",
                     f"- target_is_peach: {str(bool(m.get('target_is_peach', False))).lower()}",
                     "- 群聊时只对 target_user_id 对应的人直接说话，不要把其他群成员误当成当前对象。",
@@ -20063,31 +24068,59 @@ def _build_light_chain_system_prompt(
 
     if ctx.get("permission_block"):
         lines.append(str(ctx.get("permission_block") or "").strip())
+    if scene in {"private", "group"}:
+        lounge_policy_block = str(ctx.get("lounge_policy_block") or "").strip()
+        if not lounge_policy_block:
+            lounge_policy_block = _build_lounge_runtime_block(lounge_runtime)
+        if lounge_policy_block:
+            lines.append(lounge_policy_block)
+
     if safe_bool(ctx.get("allow_deepthink_reports_read"), False):
         lines.append(
             "【小本本参考说明】\n"
             "你可参考 deepthink_reports 下的 Agent 深度思考小本本。"
             "其内容属于“可参考线索”，请结合本轮上下文交叉验证，不要机械复述。"
         )
-    if ctx.get("current_user_block"):
-        lines.append(str(ctx.get("current_user_block") or "").strip())
-    if ctx.get("agent_deepthink_notebook_block"):
-        lines.append(str(ctx.get("agent_deepthink_notebook_block") or "").strip())
-    for block in list(ctx.get("third_party_blocks") or []):
+
+    memory_block = str(
+        qc.get("current_user_block") or ctx.get("current_user_block") or ""
+    ).strip()
+    rag_block = str(
+        qc.get("agent_deepthink_notebook_block")
+        or ctx.get("agent_deepthink_notebook_block")
+        or ""
+    ).strip()
+    context_extra_blocks: List[str] = []
+    for block in list(qc.get("third_party_blocks") or []):
         if str(block or "").strip():
-            lines.append(str(block).strip())
-    if ctx.get("recent_context_block"):
-        lines.append(str(ctx.get("recent_context_block") or "").strip())
+            context_extra_blocks.append(str(block).strip())
+    recent_context_block = str(
+        qc.get("recent_context_block") or ctx.get("recent_context_block") or ""
+    ).strip()
+    if recent_context_block:
+        context_extra_blocks.append(recent_context_block)
+    for block in list(qc.get("extra_blocks") or []):
+        if str(block or "").strip():
+            context_extra_blocks.append(str(block).strip())
     if extra_blocks:
         for block in extra_blocks:
             if str(block or "").strip():
-                lines.append(str(block).strip())
+                context_extra_blocks.append(str(block).strip())
+
+    lines.extend(
+        build_light_chain_prompt_suffix(
+            memory_block=memory_block,
+            rag_block=rag_block,
+            extra_blocks=context_extra_blocks,
+        )
+    )
 
     # 当前轮次的用户问题只通过 user role 传入，避免 system + user 双注入造成“重复输入”误判。
 
     if planning_mode:
-        lines.append(_build_light_tool_spec_text(tool_specs, meta=m))
-        lines.append(
+        planning_extra_blocks: List[str] = []
+        planning_extra_blocks.append(_build_light_tool_spec_text(tool_specs, meta=m))
+        planning_extra_blocks.append(
             "\n".join(
                 [
                     "【主模型工具决策协议】",
@@ -20107,21 +24140,25 @@ def _build_light_chain_system_prompt(
                 ]
             )
         )
+        lines.extend(
+            build_light_chain_prompt_suffix(
+                extra_blocks=planning_extra_blocks,
+            )
+        )
     else:
+        runtime_extra_blocks: List[str] = []
         if tool_result_blocks:
             for block in tool_result_blocks:
                 if str(block or "").strip():
-                    lines.append(str(block).strip())
-            lines.append(
-                "【工具结果使用要求】\n"
-                "若已提供工具结果，请优先依据工具结果作答。"
-                "不要再说“无法联网/无法访问本地记忆/无法访问共享目录”。"
-                "若工具结果不足，请明确指出不确定点，不要编造。"
+                    runtime_extra_blocks.append(str(block).strip())
+            runtime_extra_blocks.append(str(qc.get("tool_result_block") or "").strip())
+        runtime_extra_blocks.append(
+            str(qc.get("output_requirement_block") or "").strip()
+        )
+        lines.extend(
+            build_light_chain_prompt_suffix(
+                extra_blocks=runtime_extra_blocks,
             )
-        lines.append(
-            "【输出要求】\n"
-            "默认用自然、简洁、直接的语气回答。"
-            "除非用户明确要求长文，否则优先短句和轻量表达。"
         )
 
     return "\n\n".join([x for x in lines if str(x or "").strip()])
@@ -20309,6 +24346,13 @@ def _run_light_main_agent_loop(
 ) -> Dict[str, Any]:
     m = dict(meta or {})
     cfg = _normalize_agent_entry(agent_cfg or {}, _default_agent_id_from_config())
+    use_memory = safe_bool(m.get("use_memory"), True)
+    use_rag = safe_bool(m.get("use_rag"), True)
+    recent_level = _normalize_recent_level(m.get("recent_level"))
+    trimmed_recent_messages = _trim_recent_messages_by_level(
+        recent_messages=recent_messages,
+        level=recent_level,
+    )
     relay_fast_mode = bool(
         safe_bool(m.get("relay_fast_mode"), False)
         or safe_bool(m.get("relay_chain_call"), False)
@@ -20317,11 +24361,28 @@ def _run_light_main_agent_loop(
         meta=m,
         agent_cfg=cfg,
         user_input=user_input,
-        recent_messages=recent_messages,
-        include_third_party=allow_memory,
+        recent_messages=trimmed_recent_messages,
+        include_third_party=bool(allow_memory and use_memory),
     )
+    if not use_memory:
+        light_ctx["current_user_block"] = ""
+        light_ctx["third_party_blocks"] = []
+        light_ctx["memory_tool_allowed"] = False
+        light_ctx["allow_memory_strips_read"] = False
+    if not use_rag:
+        light_ctx["agent_deepthink_notebook_block"] = ""
+        light_ctx["agent_deepthink_notebook_raw"] = ""
+        light_ctx["allow_runtime_logs_read"] = False
+        light_ctx["allow_vault_docs_read"] = False
+        light_ctx["allow_deepthink_reports_read"] = False
+    light_ctx["recent_messages"] = list(trimmed_recent_messages or [])
+    light_ctx["recent_level"] = recent_level
     chat_permissions = light_ctx.get("chat_permissions") if isinstance(light_ctx.get("chat_permissions"), dict) else {}
-    allow_memory = bool(allow_memory and safe_bool(light_ctx.get("memory_tool_allowed"), False))
+    allow_memory = bool(
+        allow_memory
+        and use_memory
+        and safe_bool(light_ctx.get("memory_tool_allowed"), False)
+    )
     allow_shared_io = bool(
         allow_shared_io and any(
             _permission_allows_read(chat_permissions.get(key))
@@ -20601,12 +24662,15 @@ def _build_group_route_agent_roster(
             or (agent_row or {}).get("agent_name")
             or aid
         ).strip() or aid
+        member_nickname = str((member_row or {}).get("member_nickname") or (member_row or {}).get("nickname") or "").strip()
         aliases = _group_route_aliases(
             aid,
             display_name,
             (agent_row or {}).get("agent_title"),
             (agent_row or {}).get("agent_name"),
+            (agent_row or {}).get("agent_nickname"),
             (agent_row or {}).get("display_name"),
+            member_nickname,
         )
         rows.append(
             {
@@ -20740,21 +24804,21 @@ def _semantic_group_route_decision(
     if not text:
         return {"used": False}
     route = base_route if isinstance(base_route, dict) else {}
-    if safe_bool(route.get("agent_self_mention_noop"), False):
+    if safe_bool(group_route.get("agent_self_mention_noop"), False):
         return {"used": False, "skipped": "agent_self_mention_noop"}
     sender_type = str(meta.get("sender_member_type") or "").strip().lower()
     relay_chain_call = safe_bool(meta.get("relay_chain_call"), False)
-    if safe_bool(route.get("sender_is_agent"), False):
+    if safe_bool(group_route.get("sender_is_agent"), False):
         sender_type = "agent"
     # Agent 接力场景只走轻量 Router，不再进入重语义裁决。
     if sender_type == "agent" or relay_chain_call:
         return {"used": False, "skipped": "agent_relay_light_router"}
-    mention_order = [str(x or "").strip() for x in list(route.get("mentioned_agent_ids_ordered") or []) if str(x or "").strip()]
+    mention_order = [str(x or "").strip() for x in list(group_route.get("mentioned_agent_ids_ordered") or []) if str(x or "").strip()]
     force_semantic = bool(
         safe_bool(meta.get("semantic_route_required"), False)
     )
-    selected_by = str(route.get("selected_by") or "").strip()
-    selected_priority = safe_int(route.get("selected_priority"), 0)
+    selected_by = str(group_route.get("selected_by") or "").strip()
+    selected_priority = safe_int(group_route.get("selected_priority"), 0)
     single_explicit_pick = bool(
         len(mention_order) == 1
         and selected_priority >= 4
@@ -20777,7 +24841,7 @@ def _semantic_group_route_decision(
     if not roster:
         return {"used": False}
 
-    allowed_ids = [str(x or "").strip() for x in list(route.get("allowed_agent_ids") or []) if str(x or "").strip()]
+    allowed_ids = [str(x or "").strip() for x in list(group_route.get("allowed_agent_ids") or []) if str(x or "").strip()]
     if not allowed_ids:
         allowed_ids = [str(x.get("agent_id") or "").strip() for x in roster if isinstance(x, dict)]
 
@@ -20809,7 +24873,7 @@ def _semantic_group_route_decision(
         max_lines=10,
     )
     assistant_cfg = _assistant_config_from_model_config(MODEL_CONFIG)
-    route_agent_id = str(route.get("selected_agent_id") or _default_agent_id_from_config()).strip()
+    route_agent_id = str(group_route.get("selected_agent_id") or _default_agent_id_from_config()).strip()
     route_agent_cfg = _get_agent_config(route_agent_id)
     system_prompt = (
         "你是群聊路由裁决器，只输出 JSON。\n"
@@ -20842,9 +24906,9 @@ def _semantic_group_route_decision(
         f"sender_profile: {json.dumps(sender_profile, ensure_ascii=False)}\n"
         f"current_message: {text}\n"
         f"recent_10_lines: {json.dumps(recent_lines, ensure_ascii=False)}\n"
-        f"heuristic_selected_agent: {str(route.get('selected_agent_id') or '').strip()}\n"
-        f"heuristic_reason: {str(route.get('selected_by') or route.get('reason') or '').strip()}\n"
-        f"heuristic_mentioned_agent_ids_ordered: {json.dumps(list(route.get('mentioned_agent_ids_ordered') or []), ensure_ascii=False)}\n"
+        f"heuristic_selected_agent: {str(group_route.get('selected_agent_id') or '').strip()}\n"
+        f"heuristic_reason: {str(group_route.get('selected_by') or group_route.get('reason') or '').strip()}\n"
+        f"heuristic_mentioned_agent_ids_ordered: {json.dumps(list(group_route.get('mentioned_agent_ids_ordered') or []), ensure_ascii=False)}\n"
         f"agent_roster: {json.dumps(roster, ensure_ascii=False)}"
     )
     task = _call_secretary_json_task(
@@ -20853,9 +24917,16 @@ def _semantic_group_route_decision(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
     )
-    obj = task.get("json")
-    if not isinstance(obj, dict):
+    parsed = _parse_json_payload_with_schema(
+        raw_text=task.get("raw"),
+        schema=GROUP_ROUTE_SCHEMA,
+        fallback={},
+        aliases=GROUP_ROUTE_SCHEMA_ALIASES,
+        parsed_obj=task.get("json") if isinstance(task.get("json"), dict) else None,
+    )
+    if not safe_bool(parsed.get("ok"), False):
         return {"used": False, "errors": list(task.get("errors") or [])}
+    obj = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
 
     target_type = str(obj.get("target_type") or "").strip().lower()
     need_agent_reply = safe_bool(obj.get("need_agent_reply"), target_type in {"agent", "multi_agent"})
@@ -20867,7 +24938,7 @@ def _semantic_group_route_decision(
     )
     if need_agent_reply and (not target_agent_ids) and target_type in {"agent", "multi_agent"}:
         # 兜底：至少保留启发式候选，避免语义器输出空路由。
-        fallback = str(route.get("selected_agent_id") or "").strip()
+        fallback = str(group_route.get("selected_agent_id") or "").strip()
         if fallback and fallback in allowed_ids:
             target_agent_ids = [fallback]
 
@@ -20995,7 +25066,26 @@ def _apply_group_route_context(
         fallback_name=fallback_group_name,
     )
 
+    lounge_runtime_hint = (
+        dict(m.get("lounge_runtime") or {})
+        if isinstance(m.get("lounge_runtime"), dict)
+        else _resolve_lounge_runtime_config(
+            _get_agent_config(requested_agent_id or m.get("agent_id") or _default_agent_id_from_config()),
+            "group",
+        )
+    )
     route_meta = {**m, **(data or {})}
+    lounge_trigger_rule_hint = str(lounge_runtime_hint.get("trigger_rule") or "").strip()
+    if lounge_trigger_rule_hint:
+        route_meta["lounge_trigger_rule"] = lounge_trigger_rule_hint
+        route_meta["group_trigger_rule"] = lounge_trigger_rule_hint
+    lounge_trigger_rules_hint = (
+        lounge_runtime_hint.get("trigger_rules_v1") if isinstance(lounge_runtime_hint.get("trigger_rules_v1"), dict) else {}
+    )
+    if lounge_trigger_rules_hint:
+        route_meta["lounge_trigger_rules_v1"] = lounge_trigger_rules_hint
+    if isinstance(group_cfg, dict):
+        group_cfg["lounge_trigger_rules_v1"] = lounge_trigger_rules_hint
     agents_rows = _list_agents()
     route = decide_group_route(
         message_text=user_input,
@@ -21030,8 +25120,35 @@ def _apply_group_route_context(
     if not target_name:
         target_name = _group_member_name(group_cfg, target_uid, fallback=str(m.get("nickname") or m.get("sender_name") or target_uid))
 
+    lounge_runtime = _resolve_lounge_runtime_config(_get_agent_config(selected_agent_id), "group")
+    group_trigger_rule = str(lounge_runtime.get("trigger_rule") or "").strip()
+    group_trigger_rules_v1 = _store_resolve_trigger_rules_v1(
+        group_input={},
+        prev_group=group_cfg,
+        lounge_rules=lounge_trigger_rules_hint,
+    )
+    group_reply_style = str(lounge_runtime.get("reply_style") or "").strip()
     group_memory_path = str(group_cfg.get("group_memory_path") or "").strip()
-    group_memory_enabled = safe_bool(group_cfg.get("group_memory_enabled"), True)
+    group_memory_enabled = bool(
+        safe_bool(group_cfg.get("group_memory_enabled"), True)
+        and safe_bool(lounge_runtime.get("memory_enabled"), True)
+    )
+    group_summary_enabled = bool(safe_bool(lounge_runtime.get("summary_enabled"), True))
+    allow_group_rag = bool(route.get("allow_group_rag", group_cfg.get("allow_group_rag", True))) and bool(group_memory_enabled)
+    route["resolved_trigger_rules_v1"] = dict(group_trigger_rules_v1)
+    route["lounge_trigger_rules_v1"] = dict(lounge_trigger_rules_hint or {})
+    route["allow_group_rag"] = bool(allow_group_rag)
+    route["group_summary_enabled"] = bool(group_summary_enabled)
+    route["lounge_trigger_rule"] = group_trigger_rule
+    route["lounge_reply_style"] = group_reply_style
+    group_cfg["trigger_rules_v1"] = dict(group_trigger_rules_v1)
+    group_cfg["group_mode"] = str(group_trigger_rules_v1.get("mode") or group_cfg.get("group_mode") or "semi_active").strip()
+    group_cfg["trigger_rules_v1_explicit"] = bool(group_cfg.get("trigger_rules_v1_explicit"))
+    group_cfg["summary_enabled"] = bool(group_summary_enabled)
+    if group_trigger_rule:
+        group_cfg["trigger_rule"] = group_trigger_rule
+    if group_reply_style:
+        group_cfg["reply_style"] = group_reply_style
     if group_memory_enabled and group_memory_path:
         m["memory_root"] = group_memory_path
 
@@ -21041,15 +25158,21 @@ def _apply_group_route_context(
             "group_name": str(group_cfg.get("group_name") or fallback_group_name or gid).strip(),
             "group_intro": str(group_cfg.get("group_intro") or group_cfg.get("group_topic") or "").strip(),
             "group_topic": str(group_cfg.get("group_topic") or "").strip(),
-            "group_mode": str(group_cfg.get("group_mode") or "semi_active").strip(),
+            "group_mode": str(group_trigger_rules_v1.get("mode") or group_cfg.get("group_mode") or "semi_active").strip(),
             "default_agent_id": str(group_cfg.get("default_agent_id") or selected_agent_id).strip(),
             "allowed_agent_ids": list(group_cfg.get("allowed_agent_ids") or []),
             "target_user_id": target_uid,
             "target_name": target_name,
             "target_source": str(route.get("target_source") or "").strip(),
             "group_memory_enabled": bool(group_memory_enabled),
+            "group_summary_enabled": bool(group_summary_enabled),
             "group_memory_path": group_memory_path,
-            "allow_group_rag": bool(route.get("allow_group_rag", group_cfg.get("allow_group_rag", True))),
+            "allow_group_rag": bool(allow_group_rag),
+            "group_trigger_rule": group_trigger_rule,
+            "trigger_rules_v1": dict(group_trigger_rules_v1),
+            "resolved_trigger_rules_v1": dict(group_trigger_rules_v1),
+            "lounge_trigger_rules_v1": dict(lounge_trigger_rules_hint or {}),
+            "group_reply_style": group_reply_style,
             "allow_cross_domain_analysis": bool(
                 route.get("allow_cross_domain_analysis", group_cfg.get("allow_cross_domain_analysis", True))
             ),
@@ -21360,6 +25483,17 @@ def chat_post():
             upstream_meta.get("attachments") if isinstance(upstream_meta.get("attachments"), list) else data.get("attachments")
         )
         web_top_k = safe_int(upstream_meta.get("web_top_k", data.get("web_top_k")), 6)
+        use_memory = safe_bool(
+            upstream_meta.get("use_memory", data.get("use_memory", True)),
+            True,
+        )
+        use_rag = safe_bool(
+            upstream_meta.get("use_rag", data.get("use_rag", True)),
+            True,
+        )
+        recent_level = _normalize_recent_level(
+            upstream_meta.get("recent_level", data.get("recent_level", "medium"))
+        )
 
         # scene：优先用上游 meta 的明确值
         scene_raw = upstream_meta.get("scene") or ("theater" if str(theater_id).strip() else ("group" if str(group_id).strip() else "private"))
@@ -21406,6 +25540,9 @@ def chat_post():
             "file_tools_enabled": file_tools_enabled,
             "attachments": attachments,
             "web_top_k": max(1, min(web_top_k, 10)),
+            "use_memory": bool(use_memory),
+            "use_rag": bool(use_rag),
+            "recent_level": recent_level,
         }
         agent_id = _resolve_request_agent_id(data, meta)
         agent_cfg = _get_agent_config(agent_id)
@@ -21746,6 +25883,27 @@ def chat_post():
             except Exception:
                 pass
 
+        chat_extra_ctx_seed = build_light_extra_context(
+            recent_messages=None,
+            extra_blocks=light_extra_blocks,
+            recent_context_block="",
+        )
+        chat_qc_seed = build_light_chain_query_context(
+            meta=meta,
+            light_ctx=chat_extra_ctx_seed,
+            agent_cfg=agent_cfg,
+        )
+        loop_recent_messages = (
+            list(chat_qc_seed.get("recent_messages"))
+            if isinstance(chat_qc_seed.get("recent_messages"), list)
+            else []
+        )
+        loop_extra_blocks = [
+            str(x).strip()
+            for x in list(chat_qc_seed.get("extra_blocks") or [])
+            if str(x or "").strip()
+        ]
+
         user_message_content: Any = user_input
         if use_newapi_vision:
             parts: List[Dict[str, Any]] = [{"type": "text", "text": user_input}]
@@ -21760,8 +25918,8 @@ def chat_post():
             agent_cfg=agent_cfg,
             user_input=user_input,
             user_message_content=user_message_content,
-            recent_messages=None,
-            extra_blocks=light_extra_blocks,
+            recent_messages=loop_recent_messages,
+            extra_blocks=loop_extra_blocks,
             allow_web=(not isolate_image_context) and web_feature_enabled,
             allow_memory=(not isolate_image_context) and (
                 str(meta.get("scene") or "").strip().lower() != "group"
@@ -21944,10 +26102,17 @@ def chat_post():
                 "max_reply_length": safe_int(meta.get("max_reply_length"), 260),
                 "context_turn_n": safe_int(meta.get("context_turn_n"), 10 if str(meta.get("scene") or "").strip().lower() == "group" else 3),
                 "group_memory_enabled": bool(meta.get("group_memory_enabled", True)),
+                "group_summary_enabled": bool(meta.get("group_summary_enabled", True)),
                 "allow_group_rag": bool(meta.get("allow_group_rag", True)),
                 "allow_followup_short_reply": bool(meta.get("allow_followup_short_reply", False)),
                 "allow_followup_multi_agent": bool(meta.get("allow_followup_multi_agent", False)),
                 "followup_candidate_agent_ids": list(meta.get("followup_candidate_agent_ids") or []),
+                "trigger_rules_v1": dict(route_payload.get("trigger_rules_v1") or meta.get("trigger_rules_v1") or {}),
+                "resolved_trigger_rules_v1": dict(meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}),
+                "followup_window_seconds": safe_int(
+                    ((meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}).get("followup") or {}).get("window_seconds"),
+                    20,
+                ),
             }
         return jsonify({
             "reply": reply,
@@ -22002,6 +26167,7 @@ def build_runtime_context_blocks(meta: dict) -> dict:
     meta = meta or {}
     scene = str(meta.get("scene") or "").strip().lower()
     gid = str(meta.get("group_id") or "").strip()
+    group_summary_enabled = bool(safe_bool(meta.get("group_summary_enabled"), True))
 
     groups_dir  = _runtime_groups_root()
 
@@ -22053,14 +26219,14 @@ def build_runtime_context_blocks(meta: dict) -> dict:
 
     # 本群 summary（如果有，优先新结构）
     group_sum = ""
-    if gid:
+    if gid and group_summary_enabled:
         group_sum = tail_blocks(_runtime_group_summary_path(gid), SUM_N)
         if not group_sum:
             group_sum = tail_blocks(os.path.join(groups_dir, f"group_summary_{gid}.txt"), SUM_N)
 
     # 私聊时“所有群 summary”（如果未来你要）
     all_group_summaries = ""
-    if scene != "group":
+    if scene != "group" and group_summary_enabled:
         try:
             import glob
             summary_paths = []
@@ -23193,9 +27359,10 @@ def _read_ocr(p, max_chars=200000):
     return txt[:max_chars]
 
 def read_file_auto(rel_or_name: str) -> str:
-    # 统一安全Path: 只能读 ALLOWED_DIR 里的内容
-    abs_path = os.path.abspath(os.path.join(ALLOWED_DIR, rel_or_name))
-    if not abs_path.startswith(os.path.abspath(ALLOWED_DIR)):
+    # 统一安全Path: 只能读共享目录里的内容
+    try:
+        abs_path = safe_path(rel_or_name)
+    except Exception:
         return "❌ Access denied."
     if not os.path.exists(abs_path):
         return f"❌ File not found: {rel_or_name}"
@@ -23420,12 +27587,74 @@ def save_chat(user_text: str, assistant_text: str, meta=None):
 #   说明：这里只负责“共享目录文件操作”，不包含聊天落盘工具，避免重复定义覆盖
 # ============================================================
 
+def safe_path(path: Any) -> str:
+    """
+    安全路径解析（共享目录）：
+    - 仅允许访问 SHARED_DIR（项目目录下的 Ollama_agent_shared）
+    - 禁止路径穿越
+    """
+    base = os.path.abspath(SHARED_DIR)
+    raw = str(path or "").replace("\\", "/").strip()
+    rel = raw.lstrip("/")
+    full = os.path.abspath(os.path.join(base, rel))
+    try:
+        if os.path.commonpath([full, base]) != base:
+            raise Exception("非法路径")
+    except Exception:
+        raise Exception("非法路径")
+    return full
+
+
 def _safe_abs(rel: str):
-    #把相对路径转为安全的绝对路径（限制在 ALLOWED_DIR 内）
-    ap = os.path.abspath(os.path.join(ALLOWED_DIR, rel))
-    if not ap.startswith(os.path.abspath(ALLOWED_DIR)):
+    # 把相对路径转为安全的绝对路径（限制在 ALLOWED_DIR 内）
+    try:
+        return safe_path(rel)
+    except Exception:
         return None
-    return ap
+
+
+def _shared_rel_path(abs_path: str) -> str:
+    base = os.path.abspath(SHARED_DIR)
+    ap = os.path.abspath(str(abs_path or ""))
+    return os.path.relpath(ap, base).replace("\\", "/")
+
+
+def _file_ext_token(name_or_path: Any) -> str:
+    ext = os.path.splitext(str(name_or_path or "").strip())[1].lower().lstrip(".")
+    return ext
+
+
+def _file_kind_by_ext(name_or_path: Any) -> str:
+    ext = _file_ext_token(name_or_path)
+    if ext in {"txt", "md", "json", "log", "py", "yaml", "yml", "ini", "cfg"}:
+        return "text"
+    if ext in {"csv", "xls", "xlsx"}:
+        return "table"
+    if ext in {"png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff", "tif"}:
+        return "image"
+    if ext == "pdf":
+        return "pdf"
+    return "binary"
+
+
+def _read_table_matrix(p: str, max_rows: int = 200, max_cols: int = 20) -> Dict[str, Any]:
+    p_low = str(p or "").lower()
+    if p_low.endswith((".xls", ".xlsx")):
+        df = pd.read_excel(p)
+    else:
+        try:
+            df = pd.read_csv(p, encoding="utf-8", encoding_errors="ignore", engine="python")
+        except Exception:
+            df = pd.read_csv(p, encoding="utf-8", errors="ignore", engine="python")
+    if not isinstance(df, pd.DataFrame):
+        return {"columns": [], "rows": []}
+    df = df.fillna("")
+    clipped = df.iloc[: max_rows, : max_cols]
+    columns = [str(c or "").strip() for c in list(clipped.columns)]
+    rows: List[List[str]] = []
+    for row in clipped.itertuples(index=False, name=None):
+        rows.append([str(x or "").strip() for x in list(row)])
+    return {"columns": columns, "rows": rows}
 
 def append_file(rel: str, content: str) -> str:
    #向共享目录里的文件追加内容（如果文件不存在会新建）
@@ -23465,9 +27694,9 @@ def _ensure_index(force: bool = False):
     if _FILE_INDEX_BUILT and not force:
         return
     _FILE_INDEX = []
-    for root, _, files in os.walk(ALLOWED_DIR):
+    for root, _, files in os.walk(SHARED_DIR):
         for fn in files:
-            rel = os.path.relpath(os.path.join(root, fn), ALLOWED_DIR)
+            rel = os.path.relpath(os.path.join(root, fn), SHARED_DIR)
             _FILE_INDEX.append((fn.lower(), rel.replace("\\", "/")))
     _FILE_INDEX_BUILT = True
 
@@ -23496,7 +27725,7 @@ def list_shared_folder(max_items: int = 200) -> str:
     #列出共享目录里的全部文件（相对路径），返回文本清单
     _ensure_index(force=True)
     if not _FILE_INDEX:
-        return f"(Shared directory is empty)\nPath: {ALLOWED_DIR}"
+        return f"(Shared directory is empty)\nPath: {SHARED_DIR}"
 
     out = []
     for _, rel in _FILE_INDEX[:max_items]:
@@ -24044,10 +28273,1350 @@ def extract_scene_from_request(data: dict) -> dict:
         pass
     return meta
 
+
+@app.route("/office/projects", methods=["GET", "POST", "OPTIONS"])
+def office_projects_api():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if request.method == "GET":
+            req_payload = {
+                "user_id": str(request.args.get("user_id") or request.args.get("userId") or "").strip()
+            }
+            ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(req_payload)
+            user_id = str(ctx_user_id or req_payload.get("user_id") or "").strip() or "anonymous"
+            projects = _office_list_projects(user_id)
+            return jsonify({"ok": True, "projects": projects}), 200
+
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+        workspace_settings = get_workspace_settings(refresh=False)
+        project_payload_raw = payload.get("project") if isinstance(payload.get("project"), dict) else payload
+        project_payload = _office_apply_workspace_path_fallback(project_payload_raw, workspace_settings)
+        project_row, created = _office_create_or_merge_project(user_id, project_payload, allow_merge_by_name=True)
+        if not project_row:
+            return jsonify({"ok": False, "msg": "project_name_required"}), 200
+        return jsonify({"ok": True, "created": bool(created), "project": project_row}), 200
+    except Exception as e:
+        print("[ERROR] office_projects_api:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/projects/<project_id>", methods=["GET", "POST", "OPTIONS"])
+def office_project_detail_api(project_id: str):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        pid = _office_norm_project_id(project_id)
+        if not pid:
+            return jsonify({"ok": False, "msg": "project_id is empty"}), 200
+        if request.method == "GET":
+            req_payload = {
+                "user_id": str(request.args.get("user_id") or request.args.get("userId") or "").strip()
+            }
+            ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(req_payload)
+            user_id = str(ctx_user_id or req_payload.get("user_id") or "").strip() or "anonymous"
+            project = _office_get_project_from_store(user_id, pid)
+            if not project:
+                return jsonify({"ok": False, "msg": "project_not_found"}), 200
+            return jsonify({"ok": True, "project": project}), 200
+
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+        action = str(payload.get("action") or "").strip().lower()
+        if action in {"delete", "remove"}:
+            deleted = _office_delete_project(user_id, pid)
+            if not deleted:
+                return jsonify({"ok": False, "msg": "project_not_found"}), 200
+            return jsonify({"ok": True, "deleted": True, "project_id": pid, "project": deleted}), 200
+        workspace_settings = get_workspace_settings(refresh=False)
+        patch_raw = payload.get("project") if isinstance(payload.get("project"), dict) else payload
+        patch = _office_apply_workspace_path_fallback(patch_raw, workspace_settings)
+        project = _office_update_project(user_id, pid, patch)
+        if not project:
+            return jsonify({"ok": False, "msg": "project_not_found"}), 200
+        return jsonify({"ok": True, "project": project}), 200
+    except Exception as e:
+        print("[ERROR] office_project_detail_api:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+def _office_build_bridge_task_env(
+    *,
+    project_id: str,
+    task_id: str = "",
+    task_name: str = "",
+    task_goal: str = "",
+    role: str = "",
+) -> Dict[str, str]:
+    env: Dict[str, str] = {
+        "TYXT_PROJECT_ID": str(project_id or "").strip(),
+    }
+    if str(task_id or "").strip():
+        env["TYXT_TASK_ID"] = str(task_id or "").strip()
+    if str(task_name or "").strip():
+        env["TYXT_TASK_NAME"] = str(task_name or "").strip()
+    if str(task_goal or "").strip():
+        env["TYXT_TASK_GOAL"] = str(task_goal or "").strip()
+    if str(role or "").strip():
+        env["TYXT_TASK_ROLE"] = str(role or "").strip()
+    return env
+
+
+def _office_guess_cc_start_cmd(cc_root: str) -> str:
+    base = os.path.abspath(str(cc_root or "").strip())
+    if not base:
+        return ""
+    candidates = [
+        "start_cc.bat",
+        "start_cc.cmd",
+        "start.bat",
+        "start.cmd",
+        os.path.join("tools", "start_cc.bat"),
+        os.path.join("tools", "start_cc.cmd"),
+        os.path.join("tools", "start.bat"),
+        os.path.join("tools", "start.cmd"),
+    ]
+    for rel in candidates:
+        fp = os.path.join(base, rel)
+        if os.path.isfile(fp):
+            return f"\"{fp}\""
+    return ""
+
+
+def _office_run_probe_command(command_text: str, *, cwd: str, timeout_sec: int = 15) -> Dict[str, Any]:
+    cmd_raw = str(command_text or "").strip()
+    run_cwd = os.path.abspath(str(cwd or "").strip() or PROJECT_ROOT)
+    if not cmd_raw:
+        return {"ok": False, "error": "empty_command", "stdout": "", "stderr": "", "exit_code": 1}
+    try:
+        use_shell = bool(re.search(r"[|&<>]", cmd_raw)) or (
+            os.name == "nt" and cmd_raw.strip().lower().startswith("start ")
+        )
+        if use_shell:
+            proc = subprocess.run(
+                cmd_raw,
+                cwd=run_cwd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=max(1, safe_int(timeout_sec, 15)),
+                check=False,
+            )
+        else:
+            parts = shlex.split(cmd_raw, posix=(os.name != "nt"))
+            if not parts:
+                return {"ok": False, "error": "empty_command", "stdout": "", "stderr": "", "exit_code": 1}
+            if os.name == "nt":
+                head = str(parts[0] or "").strip().lower()
+                if head.endswith(".bat") or head.endswith(".cmd"):
+                    parts = ["cmd", "/c"] + parts
+            proc = subprocess.run(
+                parts,
+                cwd=run_cwd,
+                shell=False,
+                capture_output=True,
+                text=True,
+                timeout=max(1, safe_int(timeout_sec, 15)),
+                check=False,
+            )
+        out = str(proc.stdout or "").strip()
+        err = str(proc.stderr or "").strip()
+        return {
+            "ok": int(proc.returncode) == 0,
+            "error": "" if int(proc.returncode) == 0 else (err or out or f"exit_{int(proc.returncode)}"),
+            "stdout": out,
+            "stderr": err,
+            "exit_code": int(proc.returncode),
+        }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "timeout", "stdout": "", "stderr": "", "exit_code": 124}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "stdout": "", "stderr": "", "exit_code": 1}
+
+
+def _office_ensure_cc_runtime_ready(
+    workspace_settings: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    ws = _workspace_settings_from_raw(workspace_settings, get_workspace_settings(refresh=False))
+    cc_root = os.path.abspath(str(ws.get("cc_root") or "").strip())
+    if not cc_root:
+        return {"ok": False, "error": "cc_root_empty", "msg": "CC root is empty"}
+    if not os.path.isdir(cc_root):
+        return {"ok": False, "error": f"cc_root_not_found: {cc_root}", "msg": f"CC root not found: {cc_root}"}
+    cli_path = os.path.join(cc_root, "cli.js")
+    if not os.path.isfile(cli_path):
+        return {"ok": False, "error": f"cc_cli_not_found: {cli_path}", "msg": f"CC cli.js not found: {cli_path}"}
+
+    check_cmd = str(ws.get("cc_health_check_cmd") or "").strip() or "bun cli.js --version"
+    probe = _office_run_probe_command(check_cmd, cwd=cc_root, timeout_sec=12)
+    if probe.get("ok"):
+        return {"ok": True, "started": False, "check_cmd": check_cmd}
+
+    auto_start = bool(safe_bool(ws.get("cc_auto_start"), True))
+    if not auto_start:
+        return {
+            "ok": False,
+            "error": f"cc_probe_failed: {probe.get('error')}",
+            "msg": f"CC health check failed: {probe.get('error')}",
+            "check_cmd": check_cmd,
+            "probe": probe,
+        }
+
+    start_cmd = str(ws.get("cc_start_cmd") or "").strip() or _office_guess_cc_start_cmd(cc_root)
+    if not start_cmd:
+        return {
+            "ok": False,
+            "error": f"cc_probe_failed_no_start_cmd: {probe.get('error')}",
+            "msg": f"CC health check failed and no start command configured: {probe.get('error')}",
+            "check_cmd": check_cmd,
+            "probe": probe,
+        }
+
+    start_res = _office_run_probe_command(start_cmd, cwd=cc_root, timeout_sec=30)
+    if not start_res.get("ok"):
+        return {
+            "ok": False,
+            "error": f"cc_start_failed: {start_res.get('error')}",
+            "msg": f"CC start command failed: {start_res.get('error')}",
+            "check_cmd": check_cmd,
+            "start_cmd": start_cmd,
+            "probe": probe,
+            "start": start_res,
+        }
+
+    time.sleep(1.0)
+    probe_after = _office_run_probe_command(check_cmd, cwd=cc_root, timeout_sec=12)
+    if probe_after.get("ok"):
+        return {
+            "ok": True,
+            "started": True,
+            "check_cmd": check_cmd,
+            "start_cmd": start_cmd,
+        }
+    return {
+        "ok": False,
+        "error": f"cc_probe_after_start_failed: {probe_after.get('error')}",
+        "msg": f"CC health check failed after start command: {probe_after.get('error')}",
+        "check_cmd": check_cmd,
+        "start_cmd": start_cmd,
+        "probe": probe_after,
+    }
+
+
+def _office_execute_project_round(
+    *,
+    user_id: str,
+    project: Dict[str, Any],
+    project_id: str,
+    message: str,
+    workspace_settings: Dict[str, Any],
+    task_id: str = "",
+    task_name: str = "",
+) -> Dict[str, Any]:
+    _office_resolve_project_workspace_path(project, workspace_settings)
+    memory_snapshot = _office_memory_prompt_snapshot(
+        user_id,
+        project_id,
+        workspace_settings,
+        query_text=message,
+    )
+    memory_context_text = str(memory_snapshot.get("summary_text") or "").strip()
+    orchestrator = analyze_office_task(
+        project,
+        message,
+        workspace_settings=workspace_settings,
+        memory_context_text=memory_context_text,
+    )
+    execution_mode = _office_norm_exec_mode(orchestrator.get("execution_mode"))
+    log_time = _office_now_iso()
+    bridge_env = _office_build_bridge_task_env(
+        project_id=project_id,
+        task_id=task_id,
+        task_name=task_name,
+        task_goal=message,
+    )
+    cc_root_hint = os.path.abspath(str(workspace_settings.get("cc_root") or "").strip()) if str(workspace_settings.get("cc_root") or "").strip() else ""
+    if cc_root_hint and str(task_id or "").strip():
+        cc_log_dir = os.path.join(cc_root_hint, "state", "tyxt_task_logs")
+        cc_log_file = f"{_office_memory_safe_key(project_id)}__{_office_memory_safe_key(task_id)}.md"
+        bridge_env["TYXT_CC_LOG_PATH"] = os.path.join(cc_log_dir, cc_log_file)
+
+    if execution_mode == "collaborative":
+        collab = run_office_collaboration(
+            project,
+            message,
+            orchestrator,
+            workspace_settings=workspace_settings,
+            memory_context_text=memory_context_text,
+            bridge_extra_env=bridge_env,
+        )
+        success_count = safe_int(collab.get("success_count"), 0)
+        total_count = safe_int(collab.get("total_count"), 0)
+        overall_ok = success_count > 0
+        final_summary = clean_reply_text(str(collab.get("final_summary") or "").strip())
+        if not final_summary:
+            final_summary = "-"
+        persisted_memory = _office_persist_round_memory(
+            user_id=user_id,
+            project=project,
+            workspace_settings=workspace_settings,
+            user_message=message,
+            orchestrator=orchestrator,
+            success=overall_ok,
+            result_summary=final_summary,
+            collaboration=collab,
+        )
+        collab_duration = safe_int(collab.get("duration_ms"), 0)
+        collab_log_paths = collab.get("cc_log_paths") if isinstance(collab.get("cc_log_paths"), list) else []
+        cc_log_path = str(collab_log_paths[0] if collab_log_paths else "").strip()
+        cc_payload = {
+            "ok": bool(overall_ok),
+            "text": final_summary,
+            "error": "" if overall_ok else "all_collaboration_calls_failed",
+            "duration_ms": collab_duration,
+            "exit_code": 0 if overall_ok else 1,
+            "mode": "collaborative",
+            "cc_log_path": cc_log_path or str(workspace_settings.get("cc_root") or "").strip(),
+        }
+        collaborators = collab.get("collaborators") if isinstance(collab.get("collaborators"), list) else []
+        last_agent_status = {
+            "orchestrator_status": "summarized",
+            "cc_status": "completed" if overall_ok else "failed",
+            "orchestrator_id": str(project.get("mainAgent") or "").strip(),
+            "cc_agent_id": "CC",
+            "cc_agent_name": "CC",
+            "collaborators": collaborators,
+        }
+        log_entries: List[Dict[str, Any]] = []
+        for row in (collab.get("task_results") if isinstance(collab.get("task_results"), list) else []):
+            role = str(row.get("role") or "worker").strip() or "worker"
+            status = str(row.get("status") or "").strip().lower()
+            ok_item = status == "success"
+            log_entries.append(
+                {
+                    "projectId": project_id,
+                    "status": "success" if ok_item else "failed",
+                    "message": f"{role} {'succeeded' if ok_item else 'failed'}",
+                    "createdAt": str(row.get("createdAt") or _office_now_iso()),
+                }
+            )
+        log_entry = {
+            "projectId": project_id,
+            "status": "success" if overall_ok else "failed",
+            "message": f"Collaboration finished ({success_count}/{total_count} succeeded)",
+            "createdAt": log_time,
+        }
+        return {
+            "ok": bool(overall_ok),
+            "msg": "" if overall_ok else "collaboration_failed",
+            "error": "" if overall_ok else str(cc_payload.get("error") or "collaboration_failed"),
+            "project_id": project_id,
+            "orchestrator": orchestrator,
+            "cc_result": cc_payload,
+            "collaboration": collab,
+            "log_entry": log_entry,
+            "log_entries": log_entries,
+            "last_agent_status": last_agent_status,
+            "reply": final_summary,
+            "log": log_entry,
+            "bridge": {
+                "duration_ms": collab_duration,
+                "exit_code": 0 if overall_ok else 1,
+                "login_mode": str(workspace_settings.get("login_mode") or "").strip(),
+            },
+            "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+        }
+
+    prompt_text = _build_office_cc_prompt(
+        project,
+        message,
+        orchestrator,
+        memory_context_text=memory_context_text,
+    )
+    workspace_path = str(project.get("workspacePath") or "").strip()
+    cc_result = call_local_cc_once(
+        prompt=prompt_text,
+        workspace_path=workspace_path,
+        bridge_config=workspace_settings,
+        extra_env=bridge_env,
+    )
+    if bool(safe_bool(cc_result.get("ok"), False)):
+        verify_res = _office_verify_single_cc_result(
+            user_message=message,
+            result_text=str(cc_result.get("text") or "").strip(),
+            workspace_path=workspace_path,
+        )
+        if not bool(safe_bool(verify_res.get("ok"), False)):
+            cc_result = dict(cc_result or {})
+            cc_result["ok"] = False
+            cc_result["error"] = str(
+                verify_res.get("error")
+                or verify_res.get("reason")
+                or "cc_result_verification_failed"
+            ).strip() or "cc_result_verification_failed"
+            cc_result["text"] = ""
+    duration_ms = safe_int(cc_result.get("duration_ms"), 0)
+    bridge_payload = {
+        "duration_ms": duration_ms,
+        "exit_code": safe_int(cc_result.get("exit_code"), 0),
+        "login_mode": str(cc_result.get("login_mode") or workspace_settings.get("login_mode") or "").strip(),
+    }
+    collaborators = orchestrator.get("collaborators") if isinstance(orchestrator.get("collaborators"), list) else []
+    last_agent_status = {
+        "orchestrator_status": "summarized",
+        "cc_status": "completed" if safe_bool(cc_result.get("ok"), False) else "failed",
+        "orchestrator_id": str(project.get("mainAgent") or "").strip(),
+        "cc_agent_id": "CC",
+        "cc_agent_name": "CC",
+        "collaborators": collaborators,
+    }
+    cc_payload = {
+        "ok": bool(safe_bool(cc_result.get("ok"), False)),
+        "text": str(cc_result.get("text") or "").strip(),
+        "error": str(cc_result.get("error") or "").strip(),
+        "duration_ms": duration_ms,
+        "exit_code": safe_int(cc_result.get("exit_code"), 0),
+        "mode": "single_cc",
+        "cc_log_path": str(cc_result.get("cc_log_path") or cc_result.get("cwd") or "").strip(),
+    }
+
+    if safe_bool(cc_result.get("ok"), False):
+        reply_text = clean_reply_text(str(cc_result.get("text") or "").strip())
+        if not reply_text:
+            reply_text = "-"
+        persisted_memory = _office_persist_round_memory(
+            user_id=user_id,
+            project=project,
+            workspace_settings=workspace_settings,
+            user_message=message,
+            orchestrator=orchestrator,
+            success=True,
+            result_summary=reply_text,
+            collaboration={"enabled": False},
+        )
+        log_entry = {
+            "projectId": project_id,
+            "status": "success",
+            "message": (
+                f"CC call succeeded ({duration_ms}ms)"
+                f" | mode={orchestrator.get('execution_mode')}"
+                f" | complexity={orchestrator.get('complexity')}"
+            ),
+            "createdAt": log_time,
+        }
+        return {
+            "ok": True,
+            "project_id": project_id,
+            "orchestrator": orchestrator,
+            "cc_result": dict(cc_payload, text=reply_text, error=""),
+            "collaboration": {
+                "enabled": False,
+                "mode": "single_cc",
+                "collaborators": collaborators,
+                "task_results": [],
+                "final_summary": reply_text,
+            },
+            "log_entry": log_entry,
+            "log_entries": [],
+            "last_agent_status": last_agent_status,
+            "reply": reply_text,
+            "log": log_entry,
+            "bridge": bridge_payload,
+            "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+        }
+
+    err_msg = str(cc_result.get("error") or "cc_bridge_failed").strip() or "cc_bridge_failed"
+    persisted_memory = _office_persist_round_memory(
+        user_id=user_id,
+        project=project,
+        workspace_settings=workspace_settings,
+        user_message=message,
+        orchestrator=orchestrator,
+        success=False,
+        result_summary=err_msg,
+        collaboration={"enabled": False},
+    )
+    log_entry = {
+        "projectId": project_id,
+        "status": "failed",
+        "message": f"CC call failed: {err_msg}",
+        "createdAt": log_time,
+    }
+    return {
+        "ok": False,
+        "msg": "cc_bridge_failed",
+        "error": err_msg,
+        "project_id": project_id,
+        "orchestrator": orchestrator,
+        "cc_result": dict(cc_payload, ok=False, text="", error=err_msg),
+        "collaboration": {
+            "enabled": False,
+            "mode": "single_cc",
+            "collaborators": collaborators,
+            "task_results": [],
+            "final_summary": "",
+        },
+        "log_entry": log_entry,
+        "log_entries": [],
+        "last_agent_status": last_agent_status,
+        "log": log_entry,
+        "bridge": bridge_payload,
+        "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+    }
+
+
+def _office_task_worker(
+    *,
+    user_id: str,
+    project_id: str,
+    task_id: str,
+    message: str,
+) -> None:
+    try:
+        row = _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "status": "running",
+                "phase": "initializing",
+                "progress_percent": 5,
+                "history_append": {
+                    "phase": "initializing",
+                    "status": "running",
+                    "progress_percent": 5,
+                    "message": "任务已启动，准备加载项目上下文",
+                },
+            },
+            log_line="task started",
+        )
+        if not row:
+            return
+
+        project = _get_cached_office_project(user_id, project_id)
+        if not project:
+            project = _office_get_project_from_store(user_id, project_id)
+        if not project:
+            _office_task_update_row(
+                user_id,
+                project_id,
+                task_id,
+                {
+                    "status": "failed",
+                    "phase": "failed",
+                    "progress_percent": 100,
+                    "error": "project_not_found",
+                    "result_status": "failed",
+                    "history_append": {
+                        "phase": "failed",
+                        "status": "failed",
+                        "progress_percent": 100,
+                        "message": "项目不存在，任务结束",
+                    },
+                },
+                log_line="project_not_found",
+            )
+            return
+
+        workspace_settings = get_workspace_settings(refresh=False)
+        cc_ready = _office_ensure_cc_runtime_ready(workspace_settings)
+        if not bool(safe_bool(cc_ready.get("ok"), False)):
+            err_msg = str(cc_ready.get("msg") or cc_ready.get("error") or "cc_not_ready").strip() or "cc_not_ready"
+            _office_task_update_row(
+                user_id,
+                project_id,
+                task_id,
+                {
+                    "status": "failed",
+                    "phase": "failed",
+                    "progress_percent": 100,
+                    "result_status": "failed",
+                    "error": err_msg,
+                    "history_append": {
+                        "phase": "failed",
+                        "status": "failed",
+                        "progress_percent": 100,
+                        "message": f"CC 运行环境不可用：{err_msg}",
+                    },
+                },
+                log_line=f"cc_not_ready: {err_msg}",
+            )
+            return
+        project["id"] = project_id
+        _office_resolve_project_workspace_path(project, workspace_settings)
+        if not str(project.get("mainAgent") or "").strip():
+            project["mainAgent"] = str(workspace_settings.get("main_agent_id") or "").strip()
+        if not isinstance(project.get("memberAgents"), list) or not project.get("memberAgents"):
+            project["memberAgents"] = []
+
+        _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "phase": "analyzing",
+                "progress_percent": 15,
+                "history_append": {
+                    "phase": "analyzing",
+                    "status": "running",
+                    "progress_percent": 15,
+                    "message": "TYXT Agent 正在分析任务并生成执行策略",
+                },
+            },
+            log_line="analyzing task",
+        )
+        _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "phase": "executing",
+                "progress_percent": 45,
+                "history_append": {
+                    "phase": "executing",
+                    "status": "running",
+                    "progress_percent": 45,
+                    "message": "任务已下发 CC，正在执行并处理子任务",
+                },
+            },
+            log_line="executing by cc",
+        )
+
+        task_name = str((row or {}).get("task_name") or "").strip()
+        run_payload = _office_execute_project_round(
+            user_id=user_id,
+            project=project,
+            project_id=project_id,
+            message=message,
+            workspace_settings=workspace_settings,
+            task_id=task_id,
+            task_name=task_name,
+        )
+        ok = bool(safe_bool(run_payload.get("ok"), False))
+        final_status = "completed" if ok else "failed"
+        result_summary = clean_reply_text(
+            str(
+                run_payload.get("reply")
+                or ((run_payload.get("cc_result") or {}).get("text") if isinstance(run_payload.get("cc_result"), dict) else "")
+                or run_payload.get("error")
+                or ""
+            ).strip()
+        )
+        if not result_summary:
+            result_summary = "-"
+        cc_result = run_payload.get("cc_result") if isinstance(run_payload.get("cc_result"), dict) else {}
+        cc_log_path = str(cc_result.get("cc_log_path") or "").strip()
+        if (not cc_log_path):
+            collab = run_payload.get("collaboration") if isinstance(run_payload.get("collaboration"), dict) else {}
+            cc_log_paths = collab.get("cc_log_paths") if isinstance(collab.get("cc_log_paths"), list) else []
+            cc_log_path = str(cc_log_paths[0] if cc_log_paths else "").strip()
+        if not cc_log_path:
+            cc_log_path = str(workspace_settings.get("cc_root") or "").strip()
+
+        row_after_exec = _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "phase": "reviewing",
+                "status": "running",
+                "progress_percent": 88,
+                "result_status": "success" if ok else "failed",
+                "result_summary": result_summary,
+                "result_mode": _office_norm_exec_mode(
+                    cc_result.get("mode")
+                    or ((run_payload.get("orchestrator") or {}).get("execution_mode") if isinstance(run_payload.get("orchestrator"), dict) else "")
+                ),
+                "error": "" if ok else str(run_payload.get("error") or cc_result.get("error") or "").strip(),
+                "orchestrator": run_payload.get("orchestrator") if isinstance(run_payload.get("orchestrator"), dict) else {},
+                "collaboration": run_payload.get("collaboration") if isinstance(run_payload.get("collaboration"), dict) else {},
+                "last_agent_status": run_payload.get("last_agent_status") if isinstance(run_payload.get("last_agent_status"), dict) else {},
+                "bridge": run_payload.get("bridge") if isinstance(run_payload.get("bridge"), dict) else {},
+                "cc_result": cc_result,
+                "cc_log_path": cc_log_path,
+                "history_append": {
+                    "phase": "reviewing",
+                    "status": "running",
+                    "progress_percent": 88,
+                    "message": "执行完成，正在整理任务结果与归档",
+                },
+            },
+            log_line="execution finished, archiving result",
+        )
+        if not row_after_exec:
+            return
+
+        archive_relpath = _office_write_task_archive_md(
+            user_id,
+            project_id,
+            row_after_exec,
+            run_payload,
+            user_message=message,
+        )
+
+        memory_payload = _office_upsert_task_archive_memory(
+            user_id,
+            project_id,
+            {
+                "task_id": task_id,
+                "task_name": str(row_after_exec.get("task_name") or "").strip(),
+                "task_goal": str(row_after_exec.get("task_goal") or message).strip(),
+                "status": final_status,
+                "result_status": "success" if ok else "failed",
+                "result_summary": result_summary,
+                "execution_mode": _office_norm_exec_mode(row_after_exec.get("result_mode")),
+                "archive_md_path": archive_relpath,
+                "log_path": str(row_after_exec.get("log_path") or "").strip(),
+                "cc_log_path": cc_log_path,
+                "created_at": str(row_after_exec.get("created_at") or _office_now_iso()).strip() or _office_now_iso(),
+                "updated_at": _office_now_iso(),
+                "completed_at": _office_now_iso(),
+            },
+        )
+        del memory_payload
+
+        _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "status": final_status,
+                "phase": "completed" if ok else "failed",
+                "progress_percent": 100,
+                "result_status": "success" if ok else "failed",
+                "result_summary": result_summary,
+                "archive_md_path": archive_relpath,
+                "cc_log_path": cc_log_path,
+                "history_append": {
+                    "phase": "completed" if ok else "failed",
+                    "status": final_status,
+                    "progress_percent": 100,
+                    "message": "任务执行结束，结果已写入任务归档",
+                },
+            },
+            log_line="task completed" if ok else "task failed",
+        )
+    except Exception as e:
+        err_text = str(e or "task_worker_failed").strip() or "task_worker_failed"
+        _office_task_update_row(
+            user_id,
+            project_id,
+            task_id,
+            {
+                "status": "failed",
+                "phase": "failed",
+                "progress_percent": 100,
+                "result_status": "failed",
+                "error": err_text,
+                "history_append": {
+                    "phase": "failed",
+                    "status": "failed",
+                    "progress_percent": 100,
+                    "message": f"任务执行异常：{err_text}",
+                },
+            },
+            log_line=f"task worker exception: {err_text}",
+        )
+
+
+@app.route("/office/project_memory", methods=["POST", "OPTIONS"])
+def office_project_memory_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        project_id = str(payload.get("project_id") or payload.get("projectId") or payload.get("id") or "").strip()
+        if not project_id:
+            return jsonify({"ok": False, "msg": "project_id is empty"}), 200
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+        workspace_settings = get_workspace_settings(refresh=False)
+        snapshot = _office_memory_prompt_snapshot(user_id, project_id, workspace_settings)
+        return jsonify(
+            {
+                "ok": True,
+                "project_id": project_id,
+                "enabled": bool(snapshot.get("enabled")),
+                "memory": snapshot.get("memory") or {},
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_project_memory_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/project_approval", methods=["POST", "OPTIONS"])
+def office_project_approval_post():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        project_id = str(payload.get("project_id") or payload.get("projectId") or payload.get("id") or "").strip()
+        if not project_id:
+            return jsonify({"ok": False, "msg": "project_id is empty"}), 200
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+
+        status = _office_norm_approval_status(
+            payload.get("status")
+            or payload.get("approval_status")
+            or payload.get("action")
+            or ""
+        )
+        if status not in {"accepted", "deferred", "refine"}:
+            return jsonify({"ok": False, "msg": "invalid_approval_status"}), 200
+
+        summary = str(payload.get("summary") or payload.get("target_summary") or "").strip()
+        mode = _office_norm_exec_mode(payload.get("mode") or payload.get("execution_mode") or "")
+        memory_payload = _office_save_project_approval(user_id, project_id, status, summary, mode)
+        if not memory_payload:
+            return jsonify({"ok": False, "msg": "approval_save_failed"}), 200
+
+        approval_state = memory_payload.get("approval_state") if isinstance(memory_payload.get("approval_state"), dict) else {}
+        return jsonify(
+            {
+                "ok": True,
+                "project_id": project_id,
+                "approval_state": approval_state,
+                "memory": memory_payload,
+                "log_entry": {
+                    "projectId": project_id,
+                    "status": "success",
+                    "message": f"Result approval updated: {status}",
+                    "createdAt": _office_now_iso(),
+                },
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_project_approval_post:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/task/start", methods=["POST", "OPTIONS"])
+def office_task_start_post():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+
+        message = str(
+            payload.get("message")
+            or payload.get("prompt")
+            or payload.get("input")
+            or payload.get("content")
+            or ""
+        ).strip()
+        if not message:
+            return jsonify({"ok": False, "msg": "empty_message"}), 200
+
+        project_id = str(
+            payload.get("project_id")
+            or payload.get("projectId")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not project_id:
+            return jsonify({"ok": False, "msg": "project_id is empty"}), 200
+
+        user_id = str(
+            payload.get("user_id")
+            or payload.get("userId")
+            or ctx_user_id
+            or ""
+        ).strip() or "anonymous"
+
+        workspace_settings = get_workspace_settings(refresh=False)
+        project_payload_raw = _normalize_office_project_payload(payload.get("project"), project_id_hint=project_id)
+        project_payload = _office_apply_workspace_path_fallback(project_payload_raw, workspace_settings)
+        if str(project_payload.get("id") or "").strip():
+            if str(project_payload.get("name") or "").strip():
+                saved_project, _created = _office_create_or_merge_project(user_id, project_payload, allow_merge_by_name=False)
+                if saved_project:
+                    _cache_office_project(user_id, saved_project)
+            else:
+                _cache_office_project(user_id, project_payload)
+
+        project = _get_cached_office_project(user_id, project_id)
+        if not project:
+            project = _office_get_project_from_store(user_id, project_id)
+        if not project:
+            return jsonify({"ok": False, "msg": "project_not_found"}), 200
+
+        cc_ready = _office_ensure_cc_runtime_ready(workspace_settings)
+        if not bool(safe_bool(cc_ready.get("ok"), False)):
+            return jsonify(
+                {
+                    "ok": False,
+                    "msg": str(cc_ready.get("msg") or cc_ready.get("error") or "cc_not_ready").strip() or "cc_not_ready",
+                    "cc_ready": cc_ready,
+                }
+            ), 200
+        _office_resolve_project_workspace_path(project, workspace_settings)
+
+        task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip() or _office_task_make_id()
+        task_name = str(payload.get("task_name") or payload.get("taskName") or "").strip() or _office_task_guess_name(message)
+        row = _office_task_default_row(
+            user_id=user_id,
+            project_id=project_id,
+            task_id=task_id,
+            task_name=task_name,
+            task_goal=message,
+        )
+        row["history"] = [
+            {
+                "ts": _office_now_iso(),
+                "phase": "queued",
+                "status": "queued",
+                "progress_percent": 0,
+                "message": "任务已入队，等待 TYXT Agent 调度",
+            }
+        ]
+        row = _office_task_save_row(user_id, project_id, task_id, row)
+        _office_task_append_log(user_id, project_id, task_id, "task queued")
+
+        doc = _office_load_project_memory(user_id, project_id)
+        _office_history_append_bounded(
+            doc,
+            "recent_events",
+            _office_history_event_entry(
+                project_id,
+                "task_queued",
+                f"任务已创建：{str(task_name or '').strip() or task_id}",
+                status="running",
+                execution_mode="single_cc",
+                created_at=_office_now_iso(),
+                extra={"task_id": task_id, "task_name": task_name},
+            ),
+            OFFICE_PROJECT_MEMORY_MAX_RECENT_EVENTS,
+        )
+        doc["updated_at"] = _office_now_iso()
+        _office_save_project_memory(user_id, project_id, doc)
+
+        thread = threading.Thread(
+            target=_office_task_worker,
+            kwargs={
+                "user_id": user_id,
+                "project_id": project_id,
+                "task_id": task_id,
+                "message": message,
+            },
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify(
+            {
+                "ok": True,
+                "project_id": project_id,
+                "task_id": task_id,
+                "task": row,
+                "msg": "task_started",
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_task_start_post:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/task/status", methods=["GET", "POST", "OPTIONS"])
+def office_task_status_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if request.method == "GET":
+            payload = {
+                "project_id": str(request.args.get("project_id") or request.args.get("projectId") or request.args.get("id") or "").strip(),
+                "task_id": str(request.args.get("task_id") or request.args.get("taskId") or "").strip(),
+                "user_id": str(request.args.get("user_id") or request.args.get("userId") or "").strip(),
+            }
+        else:
+            data = request.get_json(force=True, silent=True) or {}
+            payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        project_id = str(payload.get("project_id") or payload.get("projectId") or payload.get("id") or "").strip()
+        task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip()
+        if not project_id or not task_id:
+            return jsonify({"ok": False, "msg": "project_id/task_id is empty"}), 200
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+        row = _office_task_load_row(user_id, project_id, task_id)
+        if not row:
+            return jsonify({"ok": False, "msg": "task_not_found"}), 200
+        return jsonify(
+            {
+                "ok": True,
+                "project_id": project_id,
+                "task_id": task_id,
+                "task": row,
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_task_status_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/task/logs", methods=["GET", "POST", "OPTIONS"])
+def office_task_logs_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        if request.method == "GET":
+            payload = {
+                "project_id": str(request.args.get("project_id") or request.args.get("projectId") or request.args.get("id") or "").strip(),
+                "task_id": str(request.args.get("task_id") or request.args.get("taskId") or "").strip(),
+                "tail": str(request.args.get("tail") or "").strip(),
+                "user_id": str(request.args.get("user_id") or request.args.get("userId") or "").strip(),
+            }
+        else:
+            data = request.get_json(force=True, silent=True) or {}
+            payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+        project_id = str(payload.get("project_id") or payload.get("projectId") or payload.get("id") or "").strip()
+        task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip()
+        if not project_id or not task_id:
+            return jsonify({"ok": False, "msg": "project_id/task_id is empty"}), 200
+        user_id = str(payload.get("user_id") or payload.get("userId") or ctx_user_id or "").strip() or "anonymous"
+        row = _office_task_load_row(user_id, project_id, task_id)
+        if not row:
+            return jsonify({"ok": False, "msg": "task_not_found"}), 200
+        logs = _office_task_read_logs(user_id, project_id, task_id, tail=safe_int(payload.get("tail"), 160))
+        return jsonify(
+            {
+                "ok": True,
+                "project_id": project_id,
+                "task_id": task_id,
+                "task": row,
+                "logs": logs,
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_task_logs_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/office/chat", methods=["POST", "OPTIONS"])
+def office_chat_post():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        payload = data if isinstance(data, dict) else {}
+        ctx_user_id, _ctx_role, _ctx_nickname = get_current_user_ctx(payload)
+
+        message = str(
+            payload.get("message")
+            or payload.get("prompt")
+            or payload.get("input")
+            or payload.get("content")
+            or ""
+        ).strip()
+        if not message:
+            return jsonify({"ok": False, "msg": "empty_message"}), 200
+
+        project_id = str(
+            payload.get("project_id")
+            or payload.get("projectId")
+            or payload.get("id")
+            or ""
+        ).strip()
+        if not project_id:
+            return jsonify({"ok": False, "msg": "project_id is empty"}), 200
+
+        user_id = str(
+            payload.get("user_id")
+            or payload.get("userId")
+            or ctx_user_id
+            or ""
+        ).strip() or "anonymous"
+
+        workspace_settings = get_workspace_settings(refresh=False)
+        project_payload_raw = _normalize_office_project_payload(payload.get("project"), project_id_hint=project_id)
+        project_payload = _office_apply_workspace_path_fallback(project_payload_raw, workspace_settings)
+        if str(project_payload.get("id") or "").strip():
+            # 若前端透传了项目体，优先与后端项目实体做一次轻量合并，保证项目本体以后端为准。
+            if str(project_payload.get("name") or "").strip():
+                saved_project, _created = _office_create_or_merge_project(user_id, project_payload, allow_merge_by_name=False)
+                if saved_project:
+                    _cache_office_project(user_id, saved_project)
+            else:
+                _cache_office_project(user_id, project_payload)
+
+        project = _get_cached_office_project(user_id, project_id)
+        if not project:
+            project = _office_get_project_from_store(user_id, project_id)
+        if not project:
+            return jsonify({"ok": False, "msg": "project_not_found"}), 200
+
+        _office_resolve_project_workspace_path(project, workspace_settings)
+        cc_ready = _office_ensure_cc_runtime_ready(workspace_settings)
+        if not bool(safe_bool(cc_ready.get("ok"), False)):
+            return jsonify(
+                {
+                    "ok": False,
+                    "msg": str(cc_ready.get("msg") or cc_ready.get("error") or "cc_not_ready").strip() or "cc_not_ready",
+                    "cc_ready": cc_ready,
+                }
+            ), 200
+        project["id"] = project_id
+        if not str(project.get("mainAgent") or "").strip():
+            project["mainAgent"] = str(workspace_settings.get("main_agent_id") or "").strip()
+        if not isinstance(project.get("memberAgents"), list) or not project.get("memberAgents"):
+            project["memberAgents"] = []
+        memory_snapshot = _office_memory_prompt_snapshot(
+            user_id,
+            project_id,
+            workspace_settings,
+            query_text=message,
+        )
+        memory_context_text = str(memory_snapshot.get("summary_text") or "").strip()
+        orchestrator = analyze_office_task(
+            project,
+            message,
+            workspace_settings=workspace_settings,
+            memory_context_text=memory_context_text,
+        )
+        execution_mode = _office_norm_exec_mode(orchestrator.get("execution_mode"))
+        log_time = _office_now_iso()
+
+        if execution_mode == "collaborative":
+            collab = run_office_collaboration(
+                project,
+                message,
+                orchestrator,
+                workspace_settings=workspace_settings,
+                memory_context_text=memory_context_text,
+            )
+            success_count = safe_int(collab.get("success_count"), 0)
+            total_count = safe_int(collab.get("total_count"), 0)
+            overall_ok = success_count > 0
+            final_summary = clean_reply_text(str(collab.get("final_summary") or "").strip())
+            if not final_summary:
+                final_summary = "-"
+            persisted_memory = _office_persist_round_memory(
+                user_id=user_id,
+                project=project,
+                workspace_settings=workspace_settings,
+                user_message=message,
+                orchestrator=orchestrator,
+                success=overall_ok,
+                result_summary=final_summary,
+                collaboration=collab,
+            )
+            collab_duration = safe_int(collab.get("duration_ms"), 0)
+            cc_payload = {
+                "ok": bool(overall_ok),
+                "text": final_summary,
+                "error": "" if overall_ok else "all_collaboration_calls_failed",
+                "duration_ms": collab_duration,
+                "exit_code": 0 if overall_ok else 1,
+                "mode": "collaborative",
+            }
+            collaborators = collab.get("collaborators") if isinstance(collab.get("collaborators"), list) else []
+            last_agent_status = {
+                "orchestrator_status": "summarized",
+                "cc_status": "completed" if overall_ok else "failed",
+                "orchestrator_id": str(project.get("mainAgent") or "").strip(),
+                "cc_agent_id": "CC",
+                "cc_agent_name": "CC",
+                "collaborators": collaborators,
+            }
+            log_entries: List[Dict[str, Any]] = []
+            for row in (collab.get("task_results") if isinstance(collab.get("task_results"), list) else []):
+                role = str(row.get("role") or "worker").strip() or "worker"
+                status = str(row.get("status") or "").strip().lower()
+                ok_item = status == "success"
+                log_entries.append(
+                    {
+                        "projectId": project_id,
+                        "status": "success" if ok_item else "failed",
+                        "message": f"{role} {'succeeded' if ok_item else 'failed'}",
+                        "createdAt": str(row.get("createdAt") or _office_now_iso()),
+                    }
+                )
+            log_entry = {
+                "projectId": project_id,
+                "status": "success" if overall_ok else "failed",
+                "message": f"Collaboration finished ({success_count}/{total_count} succeeded)",
+                "createdAt": log_time,
+            }
+            return jsonify(
+                {
+                    "ok": bool(overall_ok),
+                    "msg": "" if overall_ok else "collaboration_failed",
+                    "error": "" if overall_ok else str(cc_payload.get("error") or "collaboration_failed"),
+                    "project_id": project_id,
+                    "orchestrator": orchestrator,
+                    "cc_result": cc_payload,
+                    "collaboration": collab,
+                    "log_entry": log_entry,
+                    "log_entries": log_entries,
+                    "last_agent_status": last_agent_status,
+                    "reply": final_summary,
+                    "log": log_entry,
+                    "bridge": {
+                        "duration_ms": collab_duration,
+                        "exit_code": 0 if overall_ok else 1,
+                        "login_mode": str(workspace_settings.get("login_mode") or "").strip(),
+                    },
+                    "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+                }
+            ), 200
+
+        prompt_text = _build_office_cc_prompt(
+            project,
+            message,
+            orchestrator,
+            memory_context_text=memory_context_text,
+        )
+        workspace_path = str(project.get("workspacePath") or "").strip()
+        cc_result = call_local_cc_once(
+            prompt=prompt_text,
+            workspace_path=workspace_path,
+            bridge_config=workspace_settings,
+        )
+        if bool(safe_bool(cc_result.get("ok"), False)):
+            verify_res = _office_verify_single_cc_result(
+                user_message=message,
+                result_text=str(cc_result.get("text") or "").strip(),
+                workspace_path=workspace_path,
+            )
+            if not bool(safe_bool(verify_res.get("ok"), False)):
+                cc_result = dict(cc_result or {})
+                cc_result["ok"] = False
+                cc_result["error"] = str(
+                    verify_res.get("error")
+                    or verify_res.get("reason")
+                    or "cc_result_verification_failed"
+                ).strip() or "cc_result_verification_failed"
+                cc_result["text"] = ""
+        duration_ms = safe_int(cc_result.get("duration_ms"), 0)
+        bridge_payload = {
+            "duration_ms": duration_ms,
+            "exit_code": safe_int(cc_result.get("exit_code"), 0),
+            "login_mode": str(cc_result.get("login_mode") or workspace_settings.get("login_mode") or "").strip(),
+        }
+        collaborators = orchestrator.get("collaborators") if isinstance(orchestrator.get("collaborators"), list) else []
+        last_agent_status = {
+            "orchestrator_status": "summarized",
+            "cc_status": "completed" if safe_bool(cc_result.get("ok"), False) else "failed",
+            "orchestrator_id": str(project.get("mainAgent") or "").strip(),
+            "cc_agent_id": "CC",
+            "cc_agent_name": "CC",
+            "collaborators": collaborators,
+        }
+        cc_payload = {
+            "ok": bool(safe_bool(cc_result.get("ok"), False)),
+            "text": str(cc_result.get("text") or "").strip(),
+            "error": str(cc_result.get("error") or "").strip(),
+            "duration_ms": duration_ms,
+            "exit_code": safe_int(cc_result.get("exit_code"), 0),
+            "mode": "single_cc",
+        }
+
+        if safe_bool(cc_result.get("ok"), False):
+            reply_text = clean_reply_text(str(cc_result.get("text") or "").strip())
+            if not reply_text:
+                reply_text = "-"
+            persisted_memory = _office_persist_round_memory(
+                user_id=user_id,
+                project=project,
+                workspace_settings=workspace_settings,
+                user_message=message,
+                orchestrator=orchestrator,
+                success=True,
+                result_summary=reply_text,
+                collaboration={"enabled": False},
+            )
+            log_entry = {
+                "projectId": project_id,
+                "status": "success",
+                "message": (
+                    f"CC call succeeded ({duration_ms}ms)"
+                    f" | mode={orchestrator.get('execution_mode')}"
+                    f" | complexity={orchestrator.get('complexity')}"
+                ),
+                "createdAt": log_time,
+            }
+            return jsonify(
+                {
+                    "ok": True,
+                    "project_id": project_id,
+                    "orchestrator": orchestrator,
+                    "cc_result": dict(cc_payload, text=reply_text, error=""),
+                    "collaboration": {
+                        "enabled": False,
+                        "mode": "single_cc",
+                        "collaborators": collaborators,
+                        "task_results": [],
+                        "final_summary": reply_text,
+                    },
+                    "log_entry": log_entry,
+                    "log_entries": [],
+                    "last_agent_status": last_agent_status,
+                    "reply": reply_text,
+                    "log": log_entry,
+                    "bridge": bridge_payload,
+                    "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+                }
+            ), 200
+
+        err_msg = str(cc_result.get("error") or "cc_bridge_failed").strip() or "cc_bridge_failed"
+        persisted_memory = _office_persist_round_memory(
+            user_id=user_id,
+            project=project,
+            workspace_settings=workspace_settings,
+            user_message=message,
+            orchestrator=orchestrator,
+            success=False,
+            result_summary=err_msg,
+            collaboration={"enabled": False},
+        )
+        log_entry = {
+            "projectId": project_id,
+            "status": "failed",
+            "message": f"CC call failed: {err_msg}",
+            "createdAt": log_time,
+        }
+        return jsonify(
+            {
+                "ok": False,
+                "msg": "cc_bridge_failed",
+                "error": err_msg,
+                "project_id": project_id,
+                "orchestrator": orchestrator,
+                "cc_result": dict(cc_payload, ok=False, text="", error=err_msg),
+                "collaboration": {
+                    "enabled": False,
+                    "mode": "single_cc",
+                    "collaborators": collaborators,
+                    "task_results": [],
+                    "final_summary": "",
+                },
+                "log_entry": log_entry,
+                "log_entries": [],
+                "last_agent_status": last_agent_status,
+                "log": log_entry,
+                "bridge": bridge_payload,
+                "memory": persisted_memory or (memory_snapshot.get("memory") or {}),
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] office_chat_post:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
 def clean_reply_text(s: str) -> str:
     
     #轻清洗：
-    #- 把字面量 \\n 转回真正换行
+    #- 仅在安全场景处理最常见转义，避免破坏 Windows 路径（如 \test 被误转义）
     #- 清除常见二次转义残留
     #- 压缩多余空行
     
@@ -24056,8 +29625,8 @@ def clean_reply_text(s: str) -> str:
 
     s = str(s)
 
-    # 1) 反转义：把“字面量 \n”变成真正换行（只处理最常见的）
-    s = s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    # 1) 反转义：仅处理最安全的 CRLF 字面量，避免把路径里的 \n/\t 误处理
+    s = s.replace("\\r\\n", "\n")
 
     # 2) 去掉一些常见的“二次转义残留”
     s = s.replace('\\"', '"').replace("\\'", "'")
@@ -24162,6 +29731,15 @@ def api_chat_completions():
             m2 = dict(data.get("meta") or {})
             m2.update(meta)   # meta 是规范化产物，优先保证最小字段齐全
             meta = m2
+        meta["use_memory"] = bool(
+            safe_bool(data.get("use_memory", meta.get("use_memory", True)), True)
+        )
+        meta["use_rag"] = bool(
+            safe_bool(data.get("use_rag", meta.get("use_rag", True)), True)
+        )
+        meta["recent_level"] = _normalize_recent_level(
+            data.get("recent_level", meta.get("recent_level", "medium"))
+        )
         agent_id = _resolve_request_agent_id(data, meta)
         agent_cfg = _get_agent_config(agent_id)
         meta = _apply_agent_context(meta, agent_cfg)
@@ -24403,13 +29981,34 @@ def api_chat_completions():
             except Exception:
                 pass
 
+        v1_extra_ctx_seed = build_light_extra_context(
+            recent_messages=norm_msgs,
+            extra_blocks=light_extra_blocks,
+            recent_context_block="",
+        )
+        v1_qc_seed = build_light_chain_query_context(
+            meta=meta,
+            light_ctx=v1_extra_ctx_seed,
+            agent_cfg=agent_cfg,
+        )
+        loop_recent_messages = (
+            list(v1_qc_seed.get("recent_messages"))
+            if isinstance(v1_qc_seed.get("recent_messages"), list)
+            else []
+        )
+        loop_extra_blocks = [
+            str(x).strip()
+            for x in list(v1_qc_seed.get("extra_blocks") or [])
+            if str(x or "").strip()
+        ]
+
         loop_result = _run_light_main_agent_loop(
             meta=meta,
             agent_cfg=agent_cfg,
             user_input=user_input,
             user_message_content=last_user_message_content,
-            recent_messages=norm_msgs,
-            extra_blocks=light_extra_blocks,
+            recent_messages=loop_recent_messages,
+            extra_blocks=loop_extra_blocks,
             allow_web=bool(web_search_enabled),
             allow_memory=(
                 str(meta.get("scene") or "").strip().lower() != "group"
@@ -24421,6 +30020,12 @@ def api_chat_completions():
             allow_shared_io=bool(file_tools_enabled),
         )
         light_ctx = dict(loop_result.get("light_ctx") or {})
+        v1_qc = build_light_chain_query_context(
+            meta=meta,
+            light_ctx=light_ctx,
+            agent_cfg=agent_cfg,
+        )
+        light_ctx = dict(v1_qc.get("light_ctx") or light_ctx)
         user_ctx_segments = dict(light_ctx.get("user_ctx_segments") or {})
         tool_calls_meta = [dict(x or {}) for x in list(loop_result.get("tool_calls_meta") or []) if isinstance(x, dict)]
         web_items = [dict(x or {}) for x in list(loop_result.get("web_items") or []) if isinstance(x, dict)]
@@ -24540,7 +30145,14 @@ def api_chat_completions():
                                 "max_reply_length": safe_int(meta.get("max_reply_length"), 260),
                                 "context_turn_n": safe_int(meta.get("context_turn_n"), 10 if str(meta.get("scene") or "").strip().lower() == "group" else 3),
                                 "group_memory_enabled": bool(meta.get("group_memory_enabled", True)),
+                                "group_summary_enabled": bool(meta.get("group_summary_enabled", True)),
                                 "allow_group_rag": bool(meta.get("allow_group_rag", True)),
+                                "trigger_rules_v1": dict(route_payload.get("trigger_rules_v1") or meta.get("trigger_rules_v1") or {}),
+                                "resolved_trigger_rules_v1": dict(meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}),
+                                "followup_window_seconds": safe_int(
+                                    ((meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}).get("followup") or {}).get("window_seconds"),
+                                    20,
+                                ),
                             }
                         yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
                     yield "data: [DONE]\n\n"
@@ -24994,6 +30606,7 @@ def api_chat_completions():
                             "max_reply_length": safe_int(meta.get("max_reply_length"), 260),
                             "context_turn_n": safe_int(meta.get("context_turn_n"), 10 if str(meta.get("scene") or "").strip().lower() == "group" else 3),
                             "group_memory_enabled": bool(meta.get("group_memory_enabled", True)),
+                            "group_summary_enabled": bool(meta.get("group_summary_enabled", True)),
                             "allow_group_rag": bool(meta.get("allow_group_rag", True)),
                         }
                     yield f"data: {json.dumps(meta_payload, ensure_ascii=False)}\n\n"
@@ -25106,10 +30719,17 @@ def api_chat_completions():
                 "max_reply_length": safe_int(meta.get("max_reply_length"), 260),
                 "context_turn_n": safe_int(meta.get("context_turn_n"), 10 if str(meta.get("scene") or "").strip().lower() == "group" else 3),
                 "group_memory_enabled": bool(meta.get("group_memory_enabled", True)),
+                "group_summary_enabled": bool(meta.get("group_summary_enabled", True)),
                 "allow_group_rag": bool(meta.get("allow_group_rag", True)),
                 "allow_followup_short_reply": bool(meta.get("allow_followup_short_reply", False)),
                 "allow_followup_multi_agent": bool(meta.get("allow_followup_multi_agent", False)),
                 "followup_candidate_agent_ids": list(meta.get("followup_candidate_agent_ids") or []),
+                "trigger_rules_v1": dict(route_payload.get("trigger_rules_v1") or meta.get("trigger_rules_v1") or {}),
+                "resolved_trigger_rules_v1": dict(meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}),
+                "followup_window_seconds": safe_int(
+                    ((meta.get("resolved_trigger_rules_v1") or route_payload.get("trigger_rules_v1") or {}).get("followup") or {}).get("window_seconds"),
+                    20,
+                ),
             }
         if resp_meta:
             resp["meta"] = resp_meta
@@ -25362,6 +30982,122 @@ def api_open_shared_folder():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _pick_folder_with_native_dialog(initial_dir: str = "") -> str:
+    initial = str(initial_dir or "").strip()
+    if initial:
+        try:
+            initial = os.path.abspath(os.path.normpath(os.path.expanduser(initial)))
+        except Exception:
+            initial = ""
+    if not initial or not os.path.isdir(initial):
+        initial = os.path.abspath(os.path.expanduser("~"))
+
+    # 优先 tkinter，避免依赖额外组件。
+    try:
+        import tkinter as tk  # type: ignore
+        from tkinter import filedialog  # type: ignore
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+        try:
+            root.update()
+        except Exception:
+            pass
+        selected = filedialog.askdirectory(initialdir=initial, title="选择文件夹")
+        try:
+            root.destroy()
+        except Exception:
+            pass
+        return str(selected or "").strip()
+    except Exception:
+        pass
+
+    # Windows 兜底：使用 FolderBrowserDialog。
+    if os.name == "nt":
+        try:
+            ps_script = r"""
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '选择文件夹'
+$dialog.ShowNewFolderButton = $true
+$init = $env:TYXT_INITIAL_DIR
+if($init -and (Test-Path -LiteralPath $init)){ $dialog.SelectedPath = $init }
+if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){
+  Write-Output $dialog.SelectedPath
+}
+"""
+            env = os.environ.copy()
+            env["TYXT_INITIAL_DIR"] = initial
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-STA", "-Command", ps_script],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=180,
+                env=env,
+            )
+            if proc.returncode == 0:
+                lines = [str(x).strip() for x in str(proc.stdout or "").splitlines() if str(x).strip()]
+                if lines:
+                    return lines[-1]
+        except Exception:
+            pass
+    return ""
+
+
+@app.post("/tools/pick_folder")
+def api_pick_folder():
+    try:
+        payload = request.get_json(silent=True) if request.is_json else {}
+        initial_dir = str((payload or {}).get("initial_dir") or request.values.get("initial_dir") or "").strip()
+        selected = _pick_folder_with_native_dialog(initial_dir)
+        if not selected:
+            return jsonify({"ok": False, "cancelled": True, "msg": "cancelled"}), 200
+        selected_abs = os.path.abspath(os.path.normpath(selected))
+        return jsonify({"ok": True, "path": selected_abs}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.post("/tools/open_office_docs_folder")
+def api_open_office_docs_folder():
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        target_dir = os.path.abspath(os.path.join(PROJECT_ROOT, "state"))
+        office_projects_dir = os.path.abspath(OFFICE_PROJECT_STORE_ROOT)
+        office_memory_dir = os.path.abspath(OFFICE_PROJECT_MEMORY_ROOT)
+        os.makedirs(target_dir, exist_ok=True)
+        os.makedirs(office_projects_dir, exist_ok=True)
+        os.makedirs(office_memory_dir, exist_ok=True)
+        try:
+            subprocess.Popen(["explorer.exe", target_dir])
+        except Exception:
+            try:
+                os.startfile(target_dir)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        return jsonify(
+            {
+                "ok": True,
+                "path": target_dir,
+                "office_projects_path": office_projects_dir,
+                "office_memory_path": office_memory_dir,
+                "msg": "√ Office docs folder opened",
+            }
+        ), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.post("/tools/open_import_folder")
 def api_open_import_folder():
     try:
@@ -25604,49 +31340,134 @@ def api_web_search_alias():
     return api_search_engine()
 
 
+@app.route("/tools/search/results", methods=["GET", "POST"])
+def api_search_results_panel():
+    try:
+        data = request.get_json(silent=True) if request.method != "GET" else None
+        if not isinstance(data, dict):
+            data = {}
+        if request.method == "GET":
+            data.update(dict(request.args or {}))
+        query = str(data.get("query") or "").strip()
+        source = str(data.get("source") or "web").strip().lower()
+        top_k = max(1, min(safe_int(data.get("top_k"), 8), 20))
+        if not query:
+            return jsonify({"query": "", "source": source or "web", "results": []}), 200
+
+        if source == "local":
+            rows = fuzzy_find_file(query, limit=top_k, cutoff=0)
+            results = [
+                {
+                    "title": str(name or rel or "").strip(),
+                    "path": str(rel or "").strip(),
+                    "score": float(score),
+                }
+                for score, rel, name in list(rows or [])
+            ]
+            return jsonify({"query": query, "source": "local", "results": results}), 200
+
+        provider = _normalize_web_search_provider(
+            data.get("web_search_provider", MODEL_CONFIG.get("web_search_provider", "builtin"))
+        )
+        meta = {
+            "web_search_provider": provider,
+            "user_id": str(data.get("user_id") or "").strip(),
+            "scene": str(data.get("scene") or "private").strip(),
+            "owner_id": str(data.get("owner_id") or "").strip(),
+            "role": str(data.get("role") or "").strip(),
+        }
+        items = _search_engine_items_with_fallback(query, top_k=top_k, meta=meta)
+        return jsonify({"query": query, "source": "web", "results": items[:top_k]}), 200
+    except Exception as e:
+        return jsonify({"query": "", "source": "web", "results": [], "error": str(e)}), 200
+
+
 # ========= 共享目录文件管理 API（供前端/插件调用）=========
-@app.post("/files/list")
+def _files_request_payload() -> Dict[str, Any]:
+    if request.method == "GET":
+        return dict(request.args or {})
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        return data
+    out: Dict[str, Any] = {}
+    try:
+        out.update(request.form.to_dict(flat=True))
+    except Exception:
+        pass
+    return out
+
+
+def _normalize_rel_path(raw: Any) -> str:
+    return str(raw or "").replace("\\", "/").strip().lstrip("/")
+
+
+@app.route("/files/list", methods=["GET", "POST"])
 def api_files_list():
     try:
-        data = request.get_json(silent=True) or {}
-        rel = str(data.get("path") or "").strip()
-        ap = _safe_abs(rel or ".")
-        if not ap:
-            return jsonify({"ok": False, "error": "Access denied."}), 200
+        data = _files_request_payload()
+        rel = _normalize_rel_path(data.get("path") or data.get("dir") or "")
+        ap = safe_path(rel or ".")
         if not os.path.exists(ap):
             return jsonify({"ok": False, "error": "path not found"}), 200
         if os.path.isfile(ap):
             return jsonify({"ok": False, "error": "path is a file"}), 200
 
-        items = []
-        for name in sorted(os.listdir(ap)):
+        dirs: List[str] = []
+        files: List[Dict[str, Any]] = []
+        items: List[Dict[str, Any]] = []
+        for name in sorted(os.listdir(ap), key=lambda x: str(x or "").lower()):
             fp = os.path.join(ap, name)
-            items.append({
-                "name": name,
-                "type": "dir" if os.path.isdir(fp) else "file",
-                "size": (os.path.getsize(fp) if os.path.isfile(fp) else None),
-            })
-        return jsonify({"ok": True, "path": rel or ".", "items": items}), 200
+            if os.path.isdir(fp):
+                dirs.append(name)
+                items.append({"name": name, "type": "dir", "size": None})
+                continue
+            ext = _file_ext_token(name)
+            file_type = ext or _file_kind_by_ext(name)
+            size = os.path.getsize(fp) if os.path.isfile(fp) else 0
+            files.append({"name": name, "type": file_type, "size": int(size)})
+            items.append({"name": name, "type": "file", "kind": file_type, "size": int(size)})
+        return jsonify(
+            {
+                "ok": True,
+                "path": rel,
+                "dirs": dirs,
+                "files": files,
+                "items": items,
+            }
+        ), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
 
 
-@app.post("/files/read")
+@app.route("/files/read", methods=["GET", "POST"])
 def api_files_read():
     try:
-        data = request.get_json(silent=True) or {}
-        rel = str(data.get("path") or "").strip()
+        data = _files_request_payload()
+        rel = _normalize_rel_path(data.get("path") or "")
         mode = str(data.get("mode") or "auto").strip().lower()
-        max_chars = safe_int(data.get("max_chars"), 20000 if mode == "text" else 200000)
-        max_chars = max(500, min(max_chars, 500000))
+        max_chars = max(500, min(safe_int(data.get("max_chars"), 120000), 500000))
 
-        ap = _safe_abs(rel)
-        if not ap:
-            return jsonify({"ok": False, "error": "Access denied."}), 200
+        ap = safe_path(rel)
         if not os.path.exists(ap):
             return jsonify({"ok": False, "error": "file not found"}), 200
         if os.path.isdir(ap):
             return jsonify({"ok": False, "error": "path is a directory"}), 200
+
+        kind = _file_kind_by_ext(ap)
+        ext = _file_ext_token(ap)
+        if mode == "table" or (mode == "auto" and kind == "table"):
+            table = _read_table_matrix(ap, max_rows=200, max_cols=24)
+            return jsonify(
+                {
+                    "ok": True,
+                    "path": rel,
+                    "kind": kind,
+                    "ext": ext,
+                    "table": table,
+                    "text": "",
+                    "truncated": False,
+                }
+            ), 200
 
         if mode == "text":
             with open(ap, "r", encoding="utf-8", errors="ignore") as f:
@@ -25654,12 +31475,85 @@ def api_files_read():
             truncated = len(txt) > max_chars
             if truncated:
                 txt = txt[:max_chars]
-            return jsonify({"ok": True, "path": rel, "text": txt, "truncated": truncated}), 200
+            return jsonify(
+                {
+                    "ok": True,
+                    "path": rel,
+                    "kind": kind,
+                    "ext": ext,
+                    "text": txt,
+                    "truncated": truncated,
+                }
+            ), 200
 
         txt = read_file_auto(rel)
         if len(txt) > max_chars:
-            txt = txt[:max_chars] + "..."
-        return jsonify({"ok": True, "path": rel, "text": txt, "truncated": False}), 200
+            txt = txt[:max_chars]
+        return jsonify(
+            {
+                "ok": True,
+                "path": rel,
+                "kind": kind,
+                "ext": ext,
+                "text": txt,
+                "truncated": False,
+            }
+        ), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+
+@app.get("/files/raw")
+def api_files_raw():
+    try:
+        rel = _normalize_rel_path(request.args.get("path") or "")
+        ap = safe_path(rel)
+        if not os.path.exists(ap) or os.path.isdir(ap):
+            return jsonify({"ok": False, "error": "file not found"}), 404
+        mime, _ = mimetypes.guess_type(ap)
+        return send_file(ap, mimetype=mime or "application/octet-stream", as_attachment=False)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.post("/files/upload")
+def api_files_upload():
+    try:
+        rel_dir = _normalize_rel_path(request.form.get("path") or "")
+        dst_dir = safe_path(rel_dir or ".")
+        if not os.path.exists(dst_dir):
+            os.makedirs(dst_dir, exist_ok=True)
+        if not os.path.isdir(dst_dir):
+            return jsonify({"ok": False, "error": "target path is not a directory"}), 200
+
+        file_list = list(request.files.getlist("file") or [])
+        if not file_list:
+            one = request.files.get("file")
+            if one is not None:
+                file_list = [one]
+        if not file_list:
+            return jsonify({"ok": False, "error": "file required"}), 200
+
+        uploaded: List[Dict[str, Any]] = []
+        for f in file_list:
+            if f is None:
+                continue
+            filename = secure_filename(str(getattr(f, "filename", "") or "").strip())
+            if not filename:
+                continue
+            dst = os.path.join(dst_dir, filename)
+            abs_dst = safe_path(_shared_rel_path(dst))
+            f.save(abs_dst)
+            uploaded.append(
+                {
+                    "name": filename,
+                    "path": _shared_rel_path(abs_dst),
+                    "size": int(os.path.getsize(abs_dst)) if os.path.exists(abs_dst) else 0,
+                    "type": _file_ext_token(filename) or _file_kind_by_ext(filename),
+                }
+            )
+        _ensure_index(force=True)
+        return jsonify({"ok": True, "path": rel_dir, "uploaded": uploaded}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
 
@@ -25668,7 +31562,7 @@ def api_files_read():
 def api_files_write():
     try:
         data = request.get_json(silent=True) or {}
-        rel = str(data.get("path") or "").strip()
+        rel = _normalize_rel_path(data.get("path") or "")
         content = str(data.get("content") or "")
         append = safe_bool(data.get("append"), False)
         if not rel:
@@ -25683,38 +31577,36 @@ def api_files_write():
 def api_files_delete():
     try:
         data = request.get_json(silent=True) or {}
-        rel = str(data.get("path") or "").strip()
+        rel = _normalize_rel_path(data.get("path") or data.get("src") or "")
         hard = safe_bool(data.get("hard"), False)
-        ap = _safe_abs(rel)
-        if not ap:
-            return jsonify({"ok": False, "error": "Access denied."}), 200
+        ap = safe_path(rel)
         if not os.path.exists(ap):
             return jsonify({"ok": False, "error": "path not found"}), 200
 
         if hard:
             if os.path.isdir(ap):
-                import shutil
                 shutil.rmtree(ap)
             else:
                 os.remove(ap)
             _ensure_index(force=True)
             return jsonify({"ok": True, "deleted": True, "hard": True}), 200
 
-        trash_root = os.path.join(ALLOWED_DIR, ".trash")
+        trash_root = os.path.join(SHARED_DIR, ".trash")
         os.makedirs(trash_root, exist_ok=True)
         rel_norm = rel.replace("\\", "/").lstrip("/")
         ts = time.strftime("%Y%m%d_%H%M%S")
         dst = os.path.join(trash_root, f"{rel_norm}__{ts}")
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        import shutil
         shutil.move(ap, dst)
         _ensure_index(force=True)
-        return jsonify({
-            "ok": True,
-            "deleted": True,
-            "hard": False,
-            "trash": os.path.relpath(dst, ALLOWED_DIR).replace("\\", "/")
-        }), 200
+        return jsonify(
+            {
+                "ok": True,
+                "deleted": True,
+                "hard": False,
+                "trash": os.path.relpath(dst, SHARED_DIR).replace("\\", "/"),
+            }
+        ), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 200
 
@@ -25723,10 +31615,8 @@ def api_files_delete():
 def api_files_mkdir():
     try:
         data = request.get_json(silent=True) or {}
-        rel = str(data.get("path") or "").strip()
-        ap = _safe_abs(rel)
-        if not ap:
-            return jsonify({"ok": False, "error": "Access denied."}), 200
+        rel = _normalize_rel_path(data.get("path") or "")
+        ap = safe_path(rel)
         os.makedirs(ap, exist_ok=True)
         return jsonify({"ok": True, "path": rel}), 200
     except Exception as e:
@@ -25737,14 +31627,16 @@ def api_files_mkdir():
 def api_files_rename():
     try:
         data = request.get_json(silent=True) or {}
-        src = str(data.get("src") or "").strip()
-        dst = str(data.get("dst") or "").strip()
+        src = _normalize_rel_path(data.get("src") or data.get("path") or "")
+        dst = _normalize_rel_path(data.get("dst") or "")
+        new_name = _normalize_rel_path(data.get("new_name") or "")
+        if src and (not dst) and new_name:
+            parent = os.path.dirname(src).replace("\\", "/")
+            dst = f"{parent}/{new_name}" if parent else new_name
         if not src or not dst:
             return jsonify({"ok": False, "error": "src/dst required"}), 200
-        src_ap = _safe_abs(src)
-        dst_ap = _safe_abs(dst)
-        if not src_ap or not dst_ap:
-            return jsonify({"ok": False, "error": "Access denied."}), 200
+        src_ap = safe_path(src)
+        dst_ap = safe_path(dst)
         if not os.path.exists(src_ap):
             return jsonify({"ok": False, "error": "src not found"}), 200
         os.makedirs(os.path.dirname(dst_ap), exist_ok=True)
@@ -26092,6 +31984,7 @@ def agents_basic_save():
         )
         agent_title = re.sub(r"\s+", " ", str(data.get("agent_title") or "")).strip()
         agent_name = re.sub(r"\s+", " ", str(data.get("agent_name") or "")).strip()
+        nickname_field_present = any(key in data for key in ("agent_nickname", "agentNickname", "nickname"))
         if len(agent_title) > 24:
             agent_title = agent_title[:24].strip()
         if len(agent_name) > 24:
@@ -26109,6 +32002,23 @@ def agents_basic_save():
             return jsonify({"ok": False, "msg": "Agent 不存在"}), 200
         if next_agent_id != old_agent_id and any(_normalize_agent_id(item.get("agent_id"), DEFAULT_AGENT_ID) == next_agent_id for item in out_rows):
             return jsonify({"ok": False, "msg": "目标 Agent ID 已存在"}), 200
+        if nickname_field_present:
+            raw_agent_nickname = (
+                data.get("agent_nickname")
+                if "agent_nickname" in data
+                else data.get("agentNickname")
+                if "agentNickname" in data
+                else data.get("nickname")
+            )
+        else:
+            raw_agent_nickname = (
+                source_row.get("agent_nickname")
+                if "agent_nickname" in source_row
+                else source_row.get("nickname")
+            )
+        agent_nickname = re.sub(r"\s+", " ", str(raw_agent_nickname or "")).strip()
+        if len(agent_nickname) > 24:
+            agent_nickname = agent_nickname[:24].strip()
 
         if next_agent_id != old_agent_id:
             block_reason = _agent_rename_block_reason(old_agent_id)
@@ -26128,6 +32038,7 @@ def agents_basic_save():
             data.get("display_name")
             or agent_title
             or agent_name
+            or agent_nickname
             or source_row.get("display_name")
             or next_agent_id
         ).strip() or next_agent_id
@@ -26137,6 +32048,7 @@ def agents_basic_save():
                 "agent_id": next_agent_id,
                 "agent_title": agent_title,
                 "agent_name": agent_name,
+                "agent_nickname": agent_nickname,
                 "display_name": display_name,
                 "profile_root": new_default_profile_root if use_scoped_profile_root else source_profile_root,
                 "memory_root": new_default_memory_root if use_scoped_memory_root else source_memory_root,
@@ -27500,6 +33412,34 @@ def tools_skills_toggle():
         return jsonify({"ok": False, "msg": f"Toggle failed: {e}"}), 200
 
 
+@app.route("/tools/skills/scene_access", methods=["POST", "OPTIONS"])
+def tools_skills_scene_access():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        skill_id = str(data.get("skill_id") or "").strip()
+        raw_access = data.get("scene_access") if isinstance(data.get("scene_access"), dict) else {}
+        if not skill_id:
+            return jsonify({"ok": False, "msg": "Missing skill_id"}), 200
+        scene_access = {
+            "workspace": safe_bool(raw_access.get("workspace"), True),
+            "lounge": safe_bool(raw_access.get("lounge"), True),
+            "creative": safe_bool(raw_access.get("creative"), True),
+        }
+        ok, reason, skill_row = skills_registry.set_skill_scene_access(skill_id, scene_access)
+        if not ok:
+            return jsonify({"ok": False, "msg": reason or "scene_access_update_failed", "skill": skill_row}), 200
+        return jsonify({"ok": True, "skill": skill_row}), 200
+    except Exception as e:
+        print(f"[tools/skills/scene_access error] {e}")
+        return jsonify({"ok": False, "msg": f"Scene access update failed: {e}"}), 200
+
+
 @app.route("/tools/skills/uninstall", methods=["POST", "OPTIONS"])
 def tools_skills_uninstall():
     if request.method == "OPTIONS":
@@ -28443,6 +34383,190 @@ def tools_soft_delete_chat_context_memory():
         return jsonify({"ok": False, "msg": str(e)}), 200
 
 
+@app.route("/tools/workspace_settings", methods=["GET", "OPTIONS"])
+def api_workspace_settings_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        settings = get_workspace_settings(refresh=True)
+        resolved = _workspace_settings_observability(settings)
+        return jsonify({"ok": True, "settings": settings, "resolved": resolved}), 200
+    except Exception as e:
+        print("[ERROR] api_workspace_settings_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/tools/workspace_settings/save", methods=["POST", "OPTIONS"])
+def api_workspace_settings_save():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        settings = save_workspace_settings(data)
+        resolved = _workspace_settings_observability(settings)
+        return jsonify({"ok": True, "settings": settings, "resolved": resolved, "msg": "workspace_settings_saved"}), 200
+    except Exception as e:
+        print("[ERROR] api_workspace_settings_save:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/tools/workspace_settings/test", methods=["POST", "OPTIONS"])
+def api_workspace_settings_test():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        current = get_workspace_settings(refresh=True)
+        settings = _workspace_settings_from_raw(data, current)
+        mode = _workspace_norm_login_mode(settings.get("login_mode"))
+
+        if mode == "openai_api":
+            base_url = str(settings.get("openai_base_url") or "").strip().rstrip("/")
+            api_key = str(settings.get("openai_api_key") or "").strip()
+            if not base_url:
+                return jsonify({"ok": False, "msg": "OpenAI Base URL is required", "mode": mode}), 200
+            if not api_key:
+                return jsonify({"ok": False, "msg": "OpenAI API Key is required", "mode": mode}), 200
+            try:
+                resp = requests.get(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=8,
+                )
+                if 200 <= int(resp.status_code) < 300:
+                    return jsonify({"ok": True, "msg": "OpenAI endpoint reachable", "mode": mode}), 200
+                if int(resp.status_code) in {401, 403}:
+                    return jsonify({"ok": False, "msg": f"OpenAI auth failed: HTTP {resp.status_code}", "mode": mode}), 200
+                return jsonify({"ok": False, "msg": f"OpenAI test failed: HTTP {resp.status_code}", "mode": mode}), 200
+            except Exception as req_err:
+                return jsonify({"ok": False, "msg": f"OpenAI request failed: {req_err}", "mode": mode}), 200
+
+        if mode == "ollama":
+            base_url = str(settings.get("ollama_base_url") or "").strip().rstrip("/")
+            model_name = str(settings.get("ollama_model") or "").strip()
+            if not base_url:
+                return jsonify({"ok": False, "msg": "Ollama Base URL is required", "mode": mode}), 200
+            try:
+                resp = requests.get(f"{base_url}/api/tags", timeout=8)
+                if 200 <= int(resp.status_code) < 300:
+                    j = {}
+                    try:
+                        j = resp.json() if resp.content else {}
+                    except Exception:
+                        j = {}
+                    model_rows = j.get("models") if isinstance(j, dict) else []
+                    model_count = len(model_rows) if isinstance(model_rows, list) else 0
+                    model_names: List[str] = []
+                    if isinstance(model_rows, list):
+                        for row in model_rows:
+                            if isinstance(row, dict):
+                                name = str(row.get("name") or row.get("model") or "").strip()
+                                if name:
+                                    model_names.append(name)
+                    if model_name:
+                        model_set = {str(x or "").strip() for x in model_names if str(x or "").strip()}
+                        model_hit = False
+                        if model_name in model_set:
+                            model_hit = True
+                        elif f"{model_name}:latest" in model_set:
+                            model_hit = True
+                        elif model_name.endswith(":latest") and model_name.split(":latest", 1)[0] in model_set:
+                            model_hit = True
+                        if not model_hit:
+                            return jsonify(
+                                {
+                                    "ok": False,
+                                    "msg": f"Ollama reachable but model not found: {model_name}",
+                                    "mode": mode,
+                                }
+                            ), 200
+                    return jsonify({"ok": True, "msg": f"Ollama reachable ({model_count} models)", "mode": mode}), 200
+                return jsonify({"ok": False, "msg": f"Ollama test failed: HTTP {resp.status_code}", "mode": mode}), 200
+            except Exception as req_err:
+                return jsonify({"ok": False, "msg": f"Ollama request failed: {req_err}", "mode": mode}), 200
+
+        cc_root = str(settings.get("cc_root") or "").strip()
+        if not cc_root:
+            return jsonify({"ok": False, "msg": "ClaudeCode_CN root is required", "mode": mode}), 200
+        if not os.path.isdir(cc_root):
+            return jsonify({"ok": False, "msg": f"CC root not found: {cc_root}", "mode": mode}), 200
+
+        bridge_res = call_local_cc_once(
+            prompt="请仅回复：连接测试通过。",
+            workspace_path="",
+            timeout_sec=45,
+            bridge_config=settings,
+        )
+        if bool(safe_bool(bridge_res.get("ok"), False)):
+            return jsonify(
+                {
+                    "ok": True,
+                    "msg": "CC bridge available",
+                    "mode": mode,
+                    "duration_ms": safe_int(bridge_res.get("duration_ms"), 0),
+                }
+            ), 200
+        err_msg = str(bridge_res.get("error") or "cc_bridge_test_failed").strip()
+        return jsonify(
+            {
+                "ok": False,
+                "msg": err_msg,
+                "mode": mode,
+                "duration_ms": safe_int(bridge_res.get("duration_ms"), 0),
+            }
+        ), 200
+    except Exception as e:
+        print("[ERROR] api_workspace_settings_test:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/tools/lounge_settings", methods=["GET", "OPTIONS"])
+def api_lounge_settings_get():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        settings = get_lounge_settings(refresh=True)
+        resolved = _lounge_settings_observability(settings)
+        return jsonify({"ok": True, "settings": settings, "resolved": resolved}), 200
+    except Exception as e:
+        print("[ERROR] api_lounge_settings_get:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
+@app.route("/tools/lounge_settings/save", methods=["POST", "OPTIONS"])
+def api_lounge_settings_save():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    admin_uid, err = _require_admin_session()
+    if err is not None:
+        return err
+    del admin_uid
+    try:
+        data = request.get_json(silent=True) or {}
+        settings = save_lounge_settings(data)
+        resolved = _lounge_settings_observability(settings)
+        return jsonify({"ok": True, "settings": settings, "resolved": resolved, "msg": "lounge_settings_saved"}), 200
+    except Exception as e:
+        print("[ERROR] api_lounge_settings_save:", e)
+        return jsonify({"ok": False, "msg": str(e)}), 200
+
+
 @app.route("/tools/save_params", methods=["POST", "OPTIONS"])
 def api_save_params():
     if request.method == "OPTIONS":
@@ -28585,6 +34709,11 @@ def api_save_params():
         saved_agents = _save_agents_from_ui(raw_agents)
         if not any(_normalize_agent_id(item.get("agent_id"), DEFAULT_AGENT_ID) == next_default_agent_id for item in saved_agents):
             _upsert_agent_config(_default_agent_config(next_default_agent_id, inherit_legacy_persona=False))
+        if isinstance(data.get("lounge_settings"), dict):
+            MODEL_CONFIG["lounge_settings"] = _lounge_settings_from_raw(
+                data.get("lounge_settings"),
+                get_lounge_settings(refresh=False),
+            )
 
         _save_config_file(MODEL_CONFIG)
         if prev_web_search_api_key != str(MODEL_CONFIG.get("web_search_api_key", "") or "").strip():
@@ -28627,6 +34756,7 @@ def api_load_params():
         if not cfg:
             cfg = _load_config_file()
         cfg["agents"] = [_agent_summary_payload(item) for item in _list_agents()]
+        cfg["lounge_settings"] = get_lounge_settings(refresh=False)
         return jsonify({"ok": True, "config": cfg}), 200
     except Exception as e:
         print("[ERROR] api_load_params:", e)

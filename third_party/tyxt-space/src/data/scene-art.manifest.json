@@ -1,0 +1,902 @@
+{
+  "meta": {
+    "version": "0.3.0",
+    "schema": "claw-library/scene-art.manifest.v2"
+  },
+  "globalLayers": [
+    {
+      "id": "default-floor-2026-03-09",
+      "renderLayer": "floor",
+      "textureKey": "default-floor-2026-03-09",
+      "path": "/assets/packs/default/2026-03-09/scene-floor.png",
+      "kind": "image",
+      "anchor": {
+        "x": 960,
+        "y": 540
+      },
+      "displaySize": {
+        "width": 1609.273159144893,
+        "height": 1072
+      }
+    },
+    {
+      "id": "default-objects-2026-03-09",
+      "renderLayer": "mid_props",
+      "textureKey": "default-objects-2026-03-09",
+      "path": "/assets/packs/default/2026-03-09/scene-objects.png",
+      "kind": "image",
+      "anchor": {
+        "x": 960,
+        "y": 540
+      },
+      "displaySize": {
+        "width": 1609.273159144893,
+        "height": 1072
+      }
+    }
+  ],
+  "roomSlices": [],
+  "actor": {
+    "id": "emoji-claw-duo-2026-03-13",
+    "displaySize": {
+      "width": 124,
+      "height": 124
+    },
+    "anchorOffset": {
+      "x": 0,
+      "y": -8
+    },
+    "shadow": {
+      "width": 56,
+      "height": 20,
+      "offsetY": 24,
+      "alpha": 0.28
+    },
+    "defaultVariantId": "tyxt-emoji",
+    "variants": [
+      {
+        "id": "tyxt-emoji",
+        "label": "TYXT-Emoji",
+        "modes": [
+          {
+            "mode": "idle",
+            "textureKey": "tyxt-emoji-stand-front-default",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/stand_front-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "textureKey": "tyxt-emoji-stand-back-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/stand_back-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 899,
+              "y": 244
+            },
+            "triggerRadius": 84,
+            "priority": 90,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "idle",
+            "textureKey": "tyxt-emoji-stand-front-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/stand_front-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 646,
+              "y": 837
+            },
+            "triggerRadius": 86,
+            "priority": 80,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "idle",
+            "textureKey": "tyxt-emoji-drink-idle",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/drink-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "stateIds": [
+              "resting"
+            ],
+            "triggerAnchor": {
+              "x": 489,
+              "y": 541
+            },
+            "triggerRadius": 98,
+            "priority": 110,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "idle",
+            "textureKey": "tyxt-emoji-sleep-idle",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/sleep-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 256,
+            "frameHeight": 128,
+            "frameCount": 18,
+            "animation": {
+              "fps": 5,
+              "repeat": -1
+            },
+            "stateIds": [
+              "resting"
+            ],
+            "triggerAnchor": {
+              "x": 342,
+              "y": 901
+            },
+            "triggerRadius": 118,
+            "priority": 120,
+            "triggerAnchorBasis": "center",
+            "displaySize": {
+              "width": 256,
+              "height": 128
+            }
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-down",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_down-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "down"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-up",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_up-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "up"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-left",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_left-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "left"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-right",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_right-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "right"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-downleft",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_downleft-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "downleft"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-downright",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_downright-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "downright"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-upleft",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_upleft-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "upleft"
+            ]
+          },
+          {
+            "mode": "moving",
+            "textureKey": "tyxt-emoji-walk-upright",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/walk_upright-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 11,
+              "repeat": -1
+            },
+            "directions": [
+              "upright"
+            ]
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-work-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/work-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 256,
+            "frameHeight": 256,
+            "frameCount": 6,
+            "animation": {
+              "fps": 8,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 1447,
+              "y": 856
+            },
+            "triggerRadius": 112,
+            "priority": 120,
+            "triggerAnchorBasis": "center",
+            "displaySize": {
+              "width": 256,
+              "height": 256
+            }
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-memo-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/memo-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 1223,
+              "y": 502
+            },
+            "triggerRadius": 90,
+            "priority": 110,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-sit-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/sit-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 256,
+            "frameHeight": 256,
+            "frameCount": 6,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 916,
+              "y": 515
+            },
+            "triggerRadius": 106,
+            "priority": 95,
+            "triggerAnchorBasis": "center",
+            "displaySize": {
+              "width": 256,
+              "height": 256
+            }
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-theater-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/theater-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 1364,
+              "y": 187
+            },
+            "triggerRadius": 92,
+            "priority": 102,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-think-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/think-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "triggerAnchor": {
+              "x": 1499,
+              "y": 516
+            },
+            "triggerRadius": 88,
+            "priority": 100,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-error-hotspot",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/error-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "stateIds": [
+              "error"
+            ],
+            "triggerAnchor": {
+              "x": 547,
+              "y": 241
+            },
+            "triggerRadius": 88,
+            "priority": 130,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-drink-working",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/drink-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 12,
+            "animation": {
+              "fps": 7,
+              "repeat": -1
+            },
+            "stateIds": [
+              "resting"
+            ],
+            "triggerAnchor": {
+              "x": 489,
+              "y": 541
+            },
+            "triggerRadius": 98,
+            "priority": 120,
+            "triggerAnchorBasis": "center"
+          },
+          {
+            "mode": "working",
+            "textureKey": "tyxt-emoji-sleep-working",
+            "path": "/assets/generated/actors/tyxt-emoji-v1/sheets/sleep-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 256,
+            "frameHeight": 128,
+            "frameCount": 18,
+            "animation": {
+              "fps": 5,
+              "repeat": -1
+            },
+            "stateIds": [
+              "resting"
+            ],
+            "triggerAnchor": {
+              "x": 342,
+              "y": 901
+            },
+            "triggerRadius": 118,
+            "priority": 140,
+            "triggerAnchorBasis": "center",
+            "displaySize": {
+              "width": 256,
+              "height": 128
+            }
+          }
+        ]
+      },
+      {
+        "id": "capy-claw-emoji",
+        "label": "Capy-Claw",
+        "modes": [
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "capy-claw-stand-back-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/stand_back-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 37,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "capy-claw-stand-front-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/stand_front-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 37,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "capy-claw-rest-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/rest-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 37,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "capy-claw-sleep-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/sleep-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 33,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "capy-claw-coffee-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/coffee-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "error"
+            ],
+            "textureKey": "capy-claw-lie-flat-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/lie_flat-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 28,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "moving",
+            "textureKey": "capy-claw-walk-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/walk-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 43,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "writing",
+              "executing"
+            ],
+            "textureKey": "capy-claw-work-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/work-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 31,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "cataloging",
+              "documenting"
+            ],
+            "textureKey": "capy-claw-read-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/read-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 35,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "monitoring",
+              "researching"
+            ],
+            "textureKey": "capy-claw-idea-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/idea-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 35,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "syncing"
+            ],
+            "textureKey": "capy-claw-repair-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/repair-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 23,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "error"
+            ],
+            "textureKey": "capy-claw-error-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/error-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 35,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "capy-claw-coffee-work-sheet",
+            "path": "/assets/generated/actors/capy-claw-emoji-v2/sheets/coffee-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          }
+        ]
+      },
+      {
+        "id": "cat-claw-emoji",
+        "label": "Cat-Claw",
+        "modes": [
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "cat-claw-stand-back-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/stand_back-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 31,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "cat-claw-stand-front-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/stand_front-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 36,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "idle"
+            ],
+            "textureKey": "cat-claw-front-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/front-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 30,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "cat-claw-sleep-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/sleep-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 23,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "cat-claw-game-idle-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/game-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 26,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "idle",
+            "stateIds": [
+              "error"
+            ],
+            "textureKey": "cat-claw-lie-side-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/lie_side-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 20,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "moving",
+            "textureKey": "cat-claw-walk-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/walk-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 13,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "writing",
+              "executing"
+            ],
+            "textureKey": "cat-claw-work-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/work-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 24,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "cataloging",
+              "documenting",
+              "monitoring",
+              "researching"
+            ],
+            "textureKey": "cat-claw-idea-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/idea-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 28,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "syncing"
+            ],
+            "textureKey": "cat-claw-repair-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/repair-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 21,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "error"
+            ],
+            "textureKey": "cat-claw-error-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/error-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 20,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          },
+          {
+            "mode": "working",
+            "stateIds": [
+              "resting"
+            ],
+            "textureKey": "cat-claw-game-work-sheet",
+            "path": "/assets/generated/actors/cat-claw-emoji-v1/sheets/game-spritesheet.png",
+            "kind": "spritesheet",
+            "frameWidth": 128,
+            "frameHeight": 128,
+            "frameCount": 26,
+            "animation": {
+              "fps": 6,
+              "repeat": -1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "conceptRefs": [
+    {
+      "id": "default-room-tags-2026-03-09",
+      "path": "/assets/packs/default/2026-03-09/reference-room-tags.png",
+      "prompt": "reference-only helper layer for room label placement; do not render in runtime"
+    },
+    {
+      "id": "default-walkable-ref-2026-03-09",
+      "path": "/assets/packs/default/2026-03-09/reference-walkable.png",
+      "prompt": "reference-only helper layer for approximate lobster walkable zones; do not render in runtime"
+    }
+  ]
+}
