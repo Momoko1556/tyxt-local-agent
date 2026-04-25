@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { defineConfig } from 'vite';
 import { execFile } from 'node:child_process';
+import sharp from 'sharp';
 import { clawlibraryConfig } from './scripts/clawlibrary-config.mjs';
 import { createOpenClawSnapshot, findSnapshotResource, resolveOpenClawPath } from './scripts/openclaw-telemetry.mjs';
 
@@ -31,6 +32,17 @@ const TYXT_THEATER_THEATERS_PATH = path.join(TYXT_PROJECT_ROOT, 'configs', 'thea
 const TYXT_PERSONA_CONFIG_PATH = path.join(TYXT_PROJECT_ROOT, 'configs', 'persona_config.json');
 const TYXT_GALLERY_INTRO_PATH = path.join(TYXT_PROJECT_ROOT, 'configs', 'gallery_intro.json');
 const TYXT_GALLERY_PHOTOS_ROOT = path.join(TYXT_PROJECT_ROOT, 'configs', 'gallery_photos');
+const TYXT_SPACE_ROOT = process.cwd();
+const TYXT_SPACE_PUBLIC_ROOT = path.join(TYXT_SPACE_ROOT, 'public');
+const TYXT_HOUSES_ROOT = path.join(TYXT_SPACE_PUBLIC_ROOT, 'assets', 'houses');
+const TYXT_HOUSES_DROPBOX_ROOT = path.join(TYXT_SPACE_ROOT, 'house_dropbox');
+const TYXT_HOUSES_INDEX_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'houses.json');
+const TYXT_SCENE_CONFIG_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'scene-config.json');
+const TYXT_SCENE_MAP_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'scene-map.json');
+const TYXT_FURNITURE_ROOT = path.join(TYXT_SPACE_PUBLIC_ROOT, 'assets', 'furnitures');
+const TYXT_FURNITURE_INDEX_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'furnitures.json');
+const TYXT_GENERATED_ACTORS_ROOT = path.join(TYXT_SPACE_PUBLIC_ROOT, 'assets', 'generated', 'actors');
+const TYXT_AGENT_ACTORS_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'agent-actors.json');
 const TYXT_SHARED_ROOT = path.join(TYXT_PROJECT_ROOT, 'Ollama_agent_shared');
 const TYXT_RUNTIME_PRIVATE_ROOT = path.join(TYXT_SHARED_ROOT, 'runtime_logs', 'private');
 const TYXT_SHARED_DOCUMENTS_ROOT = path.join(TYXT_SHARED_ROOT, 'documents');
@@ -86,6 +98,17 @@ const TEXT_CONTENT_TYPES: Record<string, string> = {
   '.xml': 'text/plain; charset=utf-8',
   '.sql': 'text/plain; charset=utf-8'
 };
+const HOUSE_ALLOWED_EXTENSIONS = new Set(['.png', '.webp']);
+const HOUSE_ALLOWED_MIME_TYPES = new Set(['image/png', 'image/webp']);
+const HOUSE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const HOUSE_MIN_WIDTH = 1200;
+const HOUSE_MIN_HEIGHT = 800;
+const HOUSE_RATIO_TOLERANCE = 0.01;
+const FURNITURE_ALLOWED_EXTENSIONS = new Set(['.png', '.webp']);
+const FURNITURE_ALLOWED_MIME_TYPES = new Set(['image/png', 'image/webp']);
+const FURNITURE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const FURNITURE_MIN_WIDTH = 32;
+const FURNITURE_MIN_HEIGHT = 32;
 
 type PreviewKind = 'markdown' | 'json' | 'text';
 type PreviewReadMode = 'full' | 'head' | 'tail';
@@ -177,6 +200,90 @@ type TyxtUserProfileEntry = {
   user_id?: unknown;
   role?: unknown;
   updated_at?: unknown;
+};
+
+type TyxtHouseFormat = 'png' | 'webp';
+
+type TyxtHouseIndexRow = {
+  id: string;
+  name: string;
+  file_name: string;
+  width: number;
+  height: number;
+  ratio: number;
+  format: TyxtHouseFormat;
+  file_size: number;
+  imported_at: string;
+  asset_url?: string;
+  is_default_baseline?: boolean;
+};
+
+type TyxtHouseCatalogPayload = {
+  houses: TyxtHouseIndexRow[];
+  current_house_id: string | null;
+  baseline_house_id: string | null;
+  baseline_ratio: number | null;
+  ratio_tolerance: number;
+  drop_folder_path?: string;
+};
+
+type TyxtHouseDropScanReport = {
+  imported: number;
+  skipped: number;
+  failed: number;
+  notes: string[];
+};
+
+type TyxtFurnitureCategory =
+  | 'sofa'
+  | 'bed'
+  | 'table'
+  | 'chair'
+  | 'bookcase'
+  | 'display_case'
+  | 'workbench'
+  | 'lighting'
+  | 'decoration';
+type TyxtFurnitureDirection = 'front' | 'left' | 'right' | 'back';
+type TyxtFurnitureFormat = 'png' | 'webp';
+type TyxtFurnitureDirectionAsset = {
+  file_name: string;
+  asset_url: string;
+  width: number;
+  height: number;
+  format: TyxtFurnitureFormat;
+  file_size: number;
+  frame_width?: number;
+  frame_height?: number;
+};
+type TyxtFurnitureAssetRow = {
+  id: string;
+  name: string;
+  category: TyxtFurnitureCategory;
+  imported_at: string;
+  directions: Record<TyxtFurnitureDirection, TyxtFurnitureDirectionAsset>;
+};
+type TyxtActorCatalogItem = {
+  id: string;
+  name: string;
+  demo_url: string;
+};
+const TYXT_FURNITURE_CATEGORIES: TyxtFurnitureCategory[] = [
+  'sofa',
+  'bed',
+  'table',
+  'chair',
+  'bookcase',
+  'display_case',
+  'workbench',
+  'lighting',
+  'decoration'
+];
+const TYXT_FURNITURE_DIRECTION_FRAME_INDEX: Record<TyxtFurnitureDirection, number> = {
+  front: 0,
+  left: 1,
+  back: 2,
+  right: 3
 };
 
 async function readJsonFileSafe(targetPath: string): Promise<unknown | null> {
@@ -430,6 +537,652 @@ function asRecord(value: unknown): Record<string, unknown> {
 function asString(value: unknown, fallback = ''): string {
   const text = String(value ?? '').trim();
   return text || fallback;
+}
+
+function normalizeHouseFormat(value: unknown): TyxtHouseFormat | null {
+  const normalized = asString(value).toLowerCase();
+  if (normalized === 'png' || normalized === 'image/png' || normalized.endsWith('.png')) {
+    return 'png';
+  }
+  if (normalized === 'webp' || normalized === 'image/webp' || normalized.endsWith('.webp')) {
+    return 'webp';
+  }
+  return null;
+}
+
+function safeHouseName(value: unknown, fallback: string): string {
+  const text = asString(value);
+  if (!text) {
+    return fallback;
+  }
+  return text.slice(0, 64);
+}
+
+function safeHouseId(value: unknown, fallback = 'house'): string {
+  const normalized = asString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return normalized || fallback;
+}
+
+function houseAssetUrlFromFileName(fileName: string): string {
+  const safeFileName = path.basename(asString(fileName));
+  return `assets/houses/${safeFileName}`;
+}
+
+function normalizeFurnitureCategory(input: unknown): TyxtFurnitureCategory | null {
+  const value = asString(input).toLowerCase();
+  return TYXT_FURNITURE_CATEGORIES.includes(value as TyxtFurnitureCategory)
+    ? value as TyxtFurnitureCategory
+    : null;
+}
+
+function normalizeFurnitureFormat(input: unknown): TyxtFurnitureFormat | null {
+  const value = asString(input).toLowerCase();
+  if (value === 'png' || value === 'image/png' || value.endsWith('.png')) {
+    return 'png';
+  }
+  if (value === 'webp' || value === 'image/webp' || value.endsWith('.webp')) {
+    return 'webp';
+  }
+  return null;
+}
+
+function normalizePositiveInteger(input: unknown, fallback: number): number {
+  const value = Number(input);
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : fallback;
+}
+
+function furnitureDirectionAssetUrl(category: TyxtFurnitureCategory, fileName: string): string {
+  return `assets/furnitures/${category}/${path.basename(fileName)}`;
+}
+
+function safeFurnitureId(value: unknown, fallback = 'furniture'): string {
+  const normalized = asString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return normalized || fallback;
+}
+
+function safeActorFolderName(value: unknown, fallback = ''): string {
+  const text = path.basename(asString(value).replace(/\\/g, '/')).trim().slice(0, 80);
+  if (!/^[a-zA-Z0-9._-]+$/.test(text)) {
+    return fallback;
+  }
+  return text;
+}
+
+async function fileExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readTyxtActorCatalog(): Promise<TyxtActorCatalogItem[]> {
+  const entries = await fs.readdir(TYXT_GENERATED_ACTORS_ROOT, { withFileTypes: true }).catch(() => []);
+  const actors: TyxtActorCatalogItem[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const folderName = safeActorFolderName(entry.name);
+    if (!folderName) {
+      continue;
+    }
+    const folderRoot = path.join(TYXT_GENERATED_ACTORS_ROOT, folderName);
+    const rootDemoPath = path.join(folderRoot, 'demo.png');
+    const sheetsDemoPath = path.join(folderRoot, 'sheets', 'demo.png');
+    const demoRelPath = await fileExists(rootDemoPath)
+      ? `assets/generated/actors/${folderName}/demo.png`
+      : await fileExists(sheetsDemoPath)
+        ? `assets/generated/actors/${folderName}/sheets/demo.png`
+        : '';
+    actors.push({
+      id: folderName,
+      name: folderName,
+      demo_url: demoRelPath
+    });
+  }
+  actors.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+  return actors;
+}
+
+function normalizeAgentActorAssignments(
+  rawAssignments: unknown,
+  validActorIds: Set<string>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const source = asRecord(rawAssignments);
+  for (const [agentIdRaw, actorIdRaw] of Object.entries(source)) {
+    const agentId = asString(agentIdRaw).slice(0, 128);
+    const actorId = safeActorFolderName(actorIdRaw);
+    if (!agentId || !actorId || !validActorIds.has(actorId)) {
+      continue;
+    }
+    out[agentId] = actorId;
+  }
+  return out;
+}
+
+async function readTyxtAgentActorAssignments(validActorIds: Set<string>): Promise<Record<string, string>> {
+  const payload = asRecord(await readJsonFileSafe(TYXT_AGENT_ACTORS_PATH));
+  return normalizeAgentActorAssignments(payload.assignments, validActorIds);
+}
+
+async function writeTyxtAgentActorAssignments(assignments: Record<string, string>): Promise<void> {
+  await fs.mkdir(path.dirname(TYXT_AGENT_ACTORS_PATH), { recursive: true });
+  await fs.writeFile(TYXT_AGENT_ACTORS_PATH, `${JSON.stringify({
+    version: 1,
+    assignments,
+    updated_at: new Date().toISOString()
+  }, null, 2)}\n`, 'utf8');
+}
+
+function normalizeTyxtSceneMapPayload(raw: unknown): Record<string, unknown> | null {
+  const wrapper = asRecord(raw);
+  const sceneMapRaw = Object.prototype.hasOwnProperty.call(wrapper, 'scene_map')
+    ? wrapper.scene_map
+    : Object.prototype.hasOwnProperty.call(wrapper, 'sceneMap')
+      ? wrapper.sceneMap
+      : raw;
+  const sceneMap = asRecord(sceneMapRaw);
+  const baseWidth = Number(sceneMap.base_width);
+  const baseHeight = Number(sceneMap.base_height);
+  if (!Number.isFinite(baseWidth) || !Number.isFinite(baseHeight)) {
+    return null;
+  }
+
+  return {
+    ...sceneMap,
+    base_width: Math.max(320, baseWidth),
+    base_height: Math.max(240, baseHeight),
+    floor_regions: Array.isArray(sceneMap.floor_regions) ? sceneMap.floor_regions : [],
+    wall_blocks: Array.isArray(sceneMap.wall_blocks) ? sceneMap.wall_blocks : [],
+    furnitures: Array.isArray(sceneMap.furnitures) ? sceneMap.furnitures : [],
+    room_label_anchors: asRecord(sceneMap.room_label_anchors),
+    interaction_points: Array.isArray(sceneMap.interaction_points) ? sceneMap.interaction_points : [],
+    interaction_boxes: Array.isArray(sceneMap.interaction_boxes) ? sceneMap.interaction_boxes : []
+  };
+}
+
+async function readTyxtSceneMapData(): Promise<Record<string, unknown> | null> {
+  return normalizeTyxtSceneMapPayload(await readJsonFileSafe(TYXT_SCENE_MAP_PATH));
+}
+
+async function writeTyxtSceneMapData(sceneMap: Record<string, unknown>): Promise<void> {
+  await fs.mkdir(path.dirname(TYXT_SCENE_MAP_PATH), { recursive: true });
+  await fs.writeFile(TYXT_SCENE_MAP_PATH, `${JSON.stringify(sceneMap, null, 2)}\n`, 'utf8');
+}
+
+async function buildTyxtActorSettingsResponse(): Promise<Record<string, unknown>> {
+  const actors = await readTyxtActorCatalog();
+  const validActorIds = new Set(actors.map((actor) => actor.id));
+  const assignments = await readTyxtAgentActorAssignments(validActorIds);
+  return {
+    ok: true,
+    actors,
+    assignments,
+    default_actor_id: actors[0]?.id ?? '',
+    config_path: TYXT_AGENT_ACTORS_PATH
+  };
+}
+
+function normalizeFurnitureRows(rawRows: unknown): TyxtFurnitureAssetRow[] {
+  if (!Array.isArray(rawRows)) {
+    return [];
+  }
+  const rows: TyxtFurnitureAssetRow[] = [];
+  for (const rowRaw of rawRows) {
+    const row = asRecord(rowRaw);
+    const id = safeFurnitureId(row.id, '');
+    const category = normalizeFurnitureCategory(row.category);
+    if (!id || !category) {
+      continue;
+    }
+    const directionsRaw = asRecord(row.directions);
+    const parsed: Partial<Record<TyxtFurnitureDirection, TyxtFurnitureDirectionAsset>> = {};
+    let valid = true;
+    for (const direction of ['front', 'left', 'right', 'back'] as TyxtFurnitureDirection[]) {
+      const assetRaw = asRecord(directionsRaw[direction]);
+      const fileName = path.basename(asString(assetRaw.file_name));
+      const format = normalizeFurnitureFormat(assetRaw.format || fileName);
+      const width = Number(assetRaw.width) || 0;
+      const height = Number(assetRaw.height) || 0;
+      const fileSize = Number(assetRaw.file_size) || 0;
+      if (!fileName || !format || width <= 0 || height <= 0 || fileSize <= 0) {
+        valid = false;
+        break;
+      }
+      const frameWidth = Math.min(width, normalizePositiveInteger(assetRaw.frame_width, width));
+      const frameHeight = Math.min(height, normalizePositiveInteger(assetRaw.frame_height, height));
+      parsed[direction] = {
+        file_name: fileName,
+        asset_url: furnitureDirectionAssetUrl(category, fileName),
+        width,
+        height,
+        format,
+        file_size: fileSize,
+        frame_width: frameWidth,
+        frame_height: frameHeight
+      };
+    }
+    if (!valid || !parsed.front || !parsed.left || !parsed.right || !parsed.back) {
+      continue;
+    }
+    rows.push({
+      id,
+      name: asString(row.name, id),
+      category,
+      imported_at: asString(row.imported_at, new Date().toISOString()),
+      directions: {
+        front: parsed.front,
+        left: parsed.left,
+        right: parsed.right,
+        back: parsed.back
+      }
+    });
+  }
+  return rows;
+}
+
+async function readTyxtFurnitureCatalog(): Promise<TyxtFurnitureAssetRow[]> {
+  const raw = await readJsonFileSafe(TYXT_FURNITURE_INDEX_PATH);
+  return normalizeFurnitureRows(raw);
+}
+
+async function writeTyxtFurnitureCatalog(rows: TyxtFurnitureAssetRow[]): Promise<void> {
+  await fs.mkdir(path.dirname(TYXT_FURNITURE_INDEX_PATH), { recursive: true });
+  await fs.writeFile(TYXT_FURNITURE_INDEX_PATH, `${JSON.stringify(rows, null, 2)}\n`, 'utf8');
+}
+
+function buildTyxtFurnitureCatalogResponse(rows: TyxtFurnitureAssetRow[]): Record<string, unknown> {
+  return {
+    ok: true,
+    categories: TYXT_FURNITURE_CATEGORIES,
+    assets: rows
+  };
+}
+
+function resolvePublicAssetPathFromUrl(assetUrl: string): string | null {
+  const clean = asString(assetUrl).split('?')[0]?.split('#')[0] ?? '';
+  const relativePath = clean.replace(/^\/+/, '');
+  if (!relativePath) {
+    return null;
+  }
+  const resolved = path.resolve(TYXT_SPACE_PUBLIC_ROOT, relativePath);
+  const publicRoot = path.resolve(TYXT_SPACE_PUBLIC_ROOT);
+  if (resolved !== publicRoot && !resolved.startsWith(`${publicRoot}${path.sep}`)) {
+    return null;
+  }
+  return resolved;
+}
+
+async function readJsonBody(req: Connect.IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  try {
+    return asRecord(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+  } catch {
+    return {};
+  }
+}
+
+async function readHouseImageMetaFromBuffer(binary: Buffer): Promise<{ width: number; height: number; format: TyxtHouseFormat | null }> {
+  const metadata = await sharp(binary).metadata();
+  return {
+    width: Number(metadata.width) || 0,
+    height: Number(metadata.height) || 0,
+    format: normalizeHouseFormat(metadata.format || '')
+  };
+}
+
+async function readHouseImageMetaFromFile(absPath: string): Promise<{ width: number; height: number; format: TyxtHouseFormat | null; fileSize: number }> {
+  const [metadata, stat] = await Promise.all([
+    sharp(absPath).metadata(),
+    fs.stat(absPath)
+  ]);
+  return {
+    width: Number(metadata.width) || 0,
+    height: Number(metadata.height) || 0,
+    format: normalizeHouseFormat(metadata.format || ''),
+    fileSize: Number(stat.size) || 0
+  };
+}
+
+async function readFurnitureImageMetaFromBuffer(binary: Buffer): Promise<{ width: number; height: number; format: TyxtFurnitureFormat | null }> {
+  const metadata = await sharp(binary).metadata();
+  return {
+    width: Number(metadata.width) || 0,
+    height: Number(metadata.height) || 0,
+    format: normalizeFurnitureFormat(metadata.format || '')
+  };
+}
+
+function normalizeHouseIndexRows(rawRows: unknown): TyxtHouseIndexRow[] {
+  if (!Array.isArray(rawRows)) {
+    return [];
+  }
+
+  const rows: TyxtHouseIndexRow[] = [];
+  for (const rowRaw of rawRows) {
+    const row = asRecord(rowRaw);
+    const id = safeHouseId(row.id, '');
+    const fileName = path.basename(asString(row.file_name));
+    const format = normalizeHouseFormat(row.format || fileName);
+    const width = Number(row.width) || 0;
+    const height = Number(row.height) || 0;
+    if (!id || !fileName || !format || width <= 0 || height <= 0) {
+      continue;
+    }
+    const ratio = Number(row.ratio) || (width / Math.max(1, height));
+    const assetUrlRaw = asString(row.asset_url);
+    const assetUrl = assetUrlRaw || houseAssetUrlFromFileName(fileName);
+    rows.push({
+      id,
+      name: safeHouseName(row.name, id),
+      file_name: fileName,
+      width,
+      height,
+      ratio,
+      format,
+      file_size: Number(row.file_size) || 0,
+      imported_at: asString(row.imported_at, new Date().toISOString()),
+      asset_url: assetUrl,
+      is_default_baseline: Boolean(row.is_default_baseline)
+    });
+  }
+  return rows;
+}
+
+async function writeTyxtHouseIndex(rows: TyxtHouseIndexRow[]): Promise<void> {
+  await fs.mkdir(path.dirname(TYXT_HOUSES_INDEX_PATH), { recursive: true });
+  await fs.writeFile(TYXT_HOUSES_INDEX_PATH, `${JSON.stringify(rows, null, 2)}\n`, 'utf8');
+}
+
+async function writeTyxtSceneConfig(config: { current_house_id: string | null; baseline_house_id: string | null }): Promise<void> {
+  await fs.mkdir(path.dirname(TYXT_SCENE_CONFIG_PATH), { recursive: true });
+  await fs.writeFile(TYXT_SCENE_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+function buildTyxtHouseCatalogResponse(
+  catalog: TyxtHouseCatalogPayload,
+  report?: TyxtHouseDropScanReport | null
+): Record<string, unknown> {
+  return {
+    ok: true,
+    current_house_id: catalog.current_house_id,
+    baseline_house_id: catalog.baseline_house_id,
+    baseline_ratio: catalog.baseline_ratio,
+    ratio_tolerance: catalog.ratio_tolerance,
+    drop_folder_path: catalog.drop_folder_path || TYXT_HOUSES_DROPBOX_ROOT,
+    drop_scan_report: report ?? null,
+    houses: catalog.houses.map((item) => ({
+      ...item,
+      asset_url: item.asset_url || houseAssetUrlFromFileName(item.file_name),
+      is_current: item.id === catalog.current_house_id
+    }))
+  };
+}
+
+async function bootstrapHousesFromAssetsDirectory(): Promise<TyxtHouseIndexRow[]> {
+  await fs.mkdir(TYXT_HOUSES_ROOT, { recursive: true });
+  const entries = await fs.readdir(TYXT_HOUSES_ROOT, { withFileTypes: true }).catch(() => []);
+  const usedIds = new Set<string>();
+  const rows: TyxtHouseIndexRow[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const fileName = String(entry.name || '').trim();
+    if (!fileName || fileName.startsWith('.')) {
+      continue;
+    }
+    const ext = path.extname(fileName).toLowerCase();
+    if (!HOUSE_ALLOWED_EXTENSIONS.has(ext)) {
+      continue;
+    }
+
+    const absPath = path.join(TYXT_HOUSES_ROOT, fileName);
+    try {
+      const [meta, stat] = await Promise.all([
+        readHouseImageMetaFromFile(absPath),
+        fs.stat(absPath)
+      ]);
+      const format = meta.format || normalizeHouseFormat(ext);
+      if (!format || meta.width <= 0 || meta.height <= 0) {
+        continue;
+      }
+
+      let houseId = safeHouseId(path.parse(fileName).name, 'house');
+      while (usedIds.has(houseId)) {
+        houseId = safeHouseId(`${houseId}-${Math.random().toString(36).slice(2, 6)}`, 'house');
+      }
+      usedIds.add(houseId);
+
+      rows.push({
+        id: houseId,
+        name: safeHouseName(path.parse(fileName).name, houseId),
+        file_name: fileName,
+        width: meta.width,
+        height: meta.height,
+        ratio: meta.width / Math.max(1, meta.height),
+        format,
+        file_size: Number(stat.size) || meta.fileSize || 0,
+        imported_at: new Date(stat.mtimeMs || Date.now()).toISOString(),
+        asset_url: houseAssetUrlFromFileName(fileName),
+        is_default_baseline: false
+      });
+    } catch {
+      // Skip invalid image file.
+    }
+  }
+
+  rows.sort((a, b) => a.imported_at.localeCompare(b.imported_at));
+  return rows;
+}
+
+async function ensureTyxtHouseCatalogInitialized(): Promise<TyxtHouseCatalogPayload> {
+  const rawHouses = await readJsonFileSafe(TYXT_HOUSES_INDEX_PATH);
+  let houses = normalizeHouseIndexRows(rawHouses);
+  let housesChanged = false;
+
+  if (houses.length === 0) {
+    houses = await bootstrapHousesFromAssetsDirectory();
+    housesChanged = true;
+  }
+
+  if (housesChanged) {
+    await writeTyxtHouseIndex(houses);
+  }
+
+  const sceneConfigRaw = asRecord(await readJsonFileSafe(TYXT_SCENE_CONFIG_PATH));
+  let baselineHouseId = asString(sceneConfigRaw.baseline_house_id);
+  if (!baselineHouseId || !houses.some((entry) => entry.id === baselineHouseId)) {
+    baselineHouseId = houses[0]?.id || null;
+  }
+
+  let currentHouseId = asString(sceneConfigRaw.current_house_id);
+  if (!currentHouseId || !houses.some((entry) => entry.id === currentHouseId)) {
+    currentHouseId = baselineHouseId || houses[0]?.id || '';
+  }
+
+  const baselineRatio = baselineHouseId
+    ? (houses.find((entry) => entry.id === baselineHouseId)?.ratio ?? null)
+    : null;
+  await writeTyxtSceneConfig({
+    current_house_id: currentHouseId || null,
+    baseline_house_id: baselineHouseId || null
+  });
+
+  return {
+    houses: houses.map((entry) => ({
+      ...entry,
+      asset_url: entry.asset_url || houseAssetUrlFromFileName(entry.file_name),
+      is_default_baseline: entry.id === baselineHouseId
+    })),
+    current_house_id: currentHouseId || null,
+    baseline_house_id: baselineHouseId || null,
+    baseline_ratio: baselineRatio,
+    ratio_tolerance: HOUSE_RATIO_TOLERANCE,
+    drop_folder_path: TYXT_HOUSES_DROPBOX_ROOT
+  };
+}
+
+async function persistTyxtHouseCatalog(catalog: TyxtHouseCatalogPayload): Promise<TyxtHouseCatalogPayload> {
+  const normalizedRows = normalizeHouseIndexRows(catalog.houses).map((row) => ({
+    ...row,
+    is_default_baseline: row.id === catalog.baseline_house_id
+  }));
+  await writeTyxtHouseIndex(normalizedRows);
+  await writeTyxtSceneConfig({
+    current_house_id: catalog.current_house_id,
+    baseline_house_id: catalog.baseline_house_id
+  });
+  return {
+    houses: normalizedRows,
+    current_house_id: catalog.current_house_id,
+    baseline_house_id: catalog.baseline_house_id,
+    baseline_ratio: catalog.baseline_ratio,
+    ratio_tolerance: HOUSE_RATIO_TOLERANCE,
+    drop_folder_path: TYXT_HOUSES_DROPBOX_ROOT
+  };
+}
+
+async function scanTyxtHouseDropFolder(catalog: TyxtHouseCatalogPayload): Promise<{
+  catalog: TyxtHouseCatalogPayload;
+  report: TyxtHouseDropScanReport;
+}> {
+  await fs.mkdir(TYXT_HOUSES_DROPBOX_ROOT, { recursive: true });
+  await fs.mkdir(TYXT_HOUSES_ROOT, { recursive: true });
+
+  const entries = await fs.readdir(TYXT_HOUSES_DROPBOX_ROOT, { withFileTypes: true }).catch(() => []);
+  const fileEntries = entries.filter((entry) => entry.isFile());
+  const report: TyxtHouseDropScanReport = {
+    imported: 0,
+    skipped: 0,
+    failed: 0,
+    notes: []
+  };
+
+  if (fileEntries.length === 0) {
+    return { catalog, report };
+  }
+
+  let nextCatalog: TyxtHouseCatalogPayload = {
+    ...catalog,
+    houses: [...catalog.houses]
+  };
+  const baselineRatio = Number(nextCatalog.baseline_ratio) || 0;
+
+  for (const entry of fileEntries) {
+    const entryName = String(entry.name || '').trim();
+    if (!entryName) {
+      continue;
+    }
+    if (
+      entryName.startsWith('.')
+      || /^readme(\..*)?$/i.test(entryName)
+      || /^thumbs\.db$/i.test(entryName)
+    ) {
+      continue;
+    }
+
+    const srcPath = path.join(TYXT_HOUSES_DROPBOX_ROOT, entry.name);
+    const ext = path.extname(entryName).toLowerCase();
+    if (!HOUSE_ALLOWED_EXTENSIONS.has(ext)) {
+      report.skipped += 1;
+      report.notes.push(`已跳过 ${entryName}：仅支持 PNG / WebP。`);
+      continue;
+    }
+
+    try {
+      const binary = await fs.readFile(srcPath);
+      if (binary.length <= 0 || binary.length > HOUSE_MAX_FILE_BYTES) {
+        report.failed += 1;
+        report.notes.push(`导入失败 ${entryName}：文件大小需在 0~5MB。`);
+        continue;
+      }
+
+      const meta = await readHouseImageMetaFromBuffer(binary);
+      const format = meta.format || normalizeHouseFormat(ext);
+      if (!format) {
+        report.failed += 1;
+        report.notes.push(`导入失败 ${entryName}：图片格式解析失败。`);
+        continue;
+      }
+      if (meta.width < HOUSE_MIN_WIDTH || meta.height < HOUSE_MIN_HEIGHT) {
+        report.failed += 1;
+        report.notes.push(`导入失败 ${entryName}：尺寸过小（${meta.width}×${meta.height}）。`);
+        continue;
+      }
+      const ratio = meta.width / Math.max(1, meta.height);
+      if (baselineRatio > 0) {
+        const ratioDelta = Math.abs(ratio - baselineRatio) / baselineRatio;
+        if (ratioDelta > HOUSE_RATIO_TOLERANCE) {
+          report.failed += 1;
+          report.notes.push(
+            `导入失败 ${entryName}：比例不匹配（当前 ${ratio.toFixed(3)}，基准 ${baselineRatio.toFixed(3)}）。`
+          );
+          continue;
+        }
+      }
+
+      const idBase = safeHouseId(path.parse(entryName).name, 'house');
+      const houseId = safeHouseId(`${idBase}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, 'house');
+      const outputFileName = `${houseId}.${format}`;
+      const outputPath = path.join(TYXT_HOUSES_ROOT, outputFileName);
+      await fs.writeFile(outputPath, binary);
+
+      nextCatalog.houses.push({
+        id: houseId,
+        name: safeHouseName(path.parse(entryName).name, houseId),
+        file_name: outputFileName,
+        width: meta.width,
+        height: meta.height,
+        ratio,
+        format,
+        file_size: binary.length,
+        imported_at: new Date().toISOString(),
+        asset_url: houseAssetUrlFromFileName(outputFileName),
+        is_default_baseline: false
+      });
+      if (!nextCatalog.baseline_house_id) {
+        nextCatalog.baseline_house_id = houseId;
+        nextCatalog.baseline_ratio = ratio;
+      }
+      if (!nextCatalog.current_house_id) {
+        nextCatalog.current_house_id = houseId;
+      }
+      report.imported += 1;
+      report.notes.push(`已导入 ${entryName}。`);
+      await fs.unlink(srcPath).catch(() => undefined);
+    } catch (error) {
+      report.failed += 1;
+      report.notes.push(`导入失败 ${entryName}：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (report.imported > 0) {
+    nextCatalog = await persistTyxtHouseCatalog(nextCatalog);
+  }
+
+  return { catalog: nextCatalog, report };
 }
 
 function relativeToProject(absPath: string): string {
@@ -1816,6 +2569,498 @@ function telemetryMiddleware() {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Cache-Control', 'no-store');
         res.end(JSON.stringify({ ok: true, ...payload }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/scene-map') && req.method === 'GET') {
+      try {
+        const sceneMap = await readTyxtSceneMapData();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify({
+          ok: true,
+          scene_map: sceneMap,
+          config_path: TYXT_SCENE_MAP_PATH
+        }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/scene-map') && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const sceneMap = normalizeTyxtSceneMapPayload(body);
+        if (!sceneMap) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: 'scene_map 数据无效。' }));
+          return;
+        }
+
+        await writeTyxtSceneMapData(sceneMap);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify({
+          ok: true,
+          scene_map: sceneMap,
+          config_path: TYXT_SCENE_MAP_PATH
+        }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/actors') && req.method === 'GET') {
+      try {
+        const payload = await buildTyxtActorSettingsResponse();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(payload));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/agent-actors') && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const actors = await readTyxtActorCatalog();
+        const validActorIds = new Set(actors.map((actor) => actor.id));
+        if (validActorIds.size === 0) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '未找到可用人物资源。' }));
+          return;
+        }
+
+        const registry = await getTyxtAgentsRegistryPayload();
+        const validAgentIds = new Set(registry.agents.map((agent) => agent.agent_id));
+        const requestedAssignments = normalizeAgentActorAssignments(body.assignments, validActorIds);
+        const assignments: Record<string, string> = {};
+        for (const [agentId, actorId] of Object.entries(requestedAssignments)) {
+          if (validAgentIds.has(agentId)) {
+            assignments[agentId] = actorId;
+          }
+        }
+
+        await writeTyxtAgentActorAssignments(assignments);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify({
+          ok: true,
+          actors,
+          assignments,
+          default_actor_id: actors[0]?.id ?? '',
+          config_path: TYXT_AGENT_ACTORS_PATH
+        }));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/houses/set-current') && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const houseId = safeHouseId(body.house_id || body.houseId, '');
+        if (!houseId) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: 'house_id 不能为空。' }));
+          return;
+        }
+
+        const catalog = await ensureTyxtHouseCatalogInitialized();
+        if (!catalog.houses.some((entry) => entry.id === houseId)) {
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: `未找到房屋：${houseId}` }));
+          return;
+        }
+
+        catalog.current_house_id = houseId;
+        const persisted = await persistTyxtHouseCatalog(catalog);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtHouseCatalogResponse(persisted)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/houses/scan-drop-folder') && req.method === 'POST') {
+      try {
+        const catalog = await ensureTyxtHouseCatalogInitialized();
+        const scanned = await scanTyxtHouseDropFolder(catalog);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtHouseCatalogResponse(scanned.catalog, scanned.report)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/houses/import') && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const fileName = path.basename(asString(body.file_name || body.fileName));
+        const displayName = safeHouseName(body.name || fileName, fileName || `房屋-${Date.now()}`);
+        const mimeType = asString(body.mime_type || body.mimeType).toLowerCase();
+        const dataBase64 = asString(body.data_base64 || body.base64);
+        const makeCurrent = body.make_current === true || body.makeCurrent === true || asString(body.make_current).toLowerCase() === 'true';
+
+        if (!dataBase64) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '缺少图片数据（data_base64）。' }));
+          return;
+        }
+
+        const binary = Buffer.from(dataBase64, 'base64');
+        if (binary.length <= 0 || binary.length > HOUSE_MAX_FILE_BYTES) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '图片大小不合法。请使用 0~5MB 的 PNG / WebP 文件。' }));
+          return;
+        }
+
+        const imageMeta = await readHouseImageMetaFromBuffer(binary);
+        const formatFromMime = normalizeHouseFormat(mimeType);
+        const format = imageMeta.format || formatFromMime;
+        if (!format || !HOUSE_ALLOWED_EXTENSIONS.has(`.${format}`)) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '仅支持 PNG / WebP 图片。' }));
+          return;
+        }
+        if (mimeType && !HOUSE_ALLOWED_MIME_TYPES.has(mimeType)) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '图片 MIME 类型不受支持，请使用 PNG / WebP。' }));
+          return;
+        }
+        if (imageMeta.width < HOUSE_MIN_WIDTH || imageMeta.height < HOUSE_MIN_HEIGHT) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({
+            ok: false,
+            error: `图片尺寸过小（当前 ${imageMeta.width} × ${imageMeta.height}），最低要求 ${HOUSE_MIN_WIDTH} × ${HOUSE_MIN_HEIGHT}。`
+          }));
+          return;
+        }
+
+        const catalog = await ensureTyxtHouseCatalogInitialized();
+        const baselineRatio = catalog.baseline_ratio;
+
+        const currentRatio = imageMeta.width / Math.max(1, imageMeta.height);
+        if (baselineRatio && baselineRatio > 0) {
+          const ratioDelta = Math.abs(currentRatio - baselineRatio) / baselineRatio;
+          if (ratioDelta > HOUSE_RATIO_TOLERANCE) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({
+              ok: false,
+              error: `图片比例不匹配。当前比例 ${currentRatio.toFixed(3)}，基准比例 ${baselineRatio.toFixed(3)}，偏差 ${(ratioDelta * 100).toFixed(2)}%。`
+            }));
+            return;
+          }
+        }
+
+        await fs.mkdir(TYXT_HOUSES_ROOT, { recursive: true });
+        const houseId = safeHouseId(`house-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        const outputFileName = `${houseId}.${format}`;
+        const outputAbsPath = path.join(TYXT_HOUSES_ROOT, outputFileName);
+        await fs.writeFile(outputAbsPath, binary);
+
+        const importedAt = new Date().toISOString();
+        const nextHouse: TyxtHouseIndexRow = {
+          id: houseId,
+          name: displayName,
+          file_name: outputFileName,
+          width: imageMeta.width,
+          height: imageMeta.height,
+          ratio: currentRatio,
+          format,
+          file_size: binary.length,
+          imported_at: importedAt,
+          asset_url: houseAssetUrlFromFileName(outputFileName),
+          is_default_baseline: false
+        };
+
+        const nextCatalog: TyxtHouseCatalogPayload = {
+          ...catalog,
+          houses: [...catalog.houses.filter((entry) => entry.id !== houseId), nextHouse],
+          current_house_id: makeCurrent
+            ? houseId
+            : (catalog.current_house_id || houseId),
+          baseline_house_id: catalog.baseline_house_id || houseId,
+          baseline_ratio: catalog.baseline_ratio || currentRatio,
+          ratio_tolerance: HOUSE_RATIO_TOLERANCE
+        };
+        const persisted = await persistTyxtHouseCatalog(nextCatalog);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtHouseCatalogResponse(persisted)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/houses') && req.method === 'GET') {
+      try {
+        const catalog = await ensureTyxtHouseCatalogInitialized();
+        const scanned = await scanTyxtHouseDropFolder(catalog);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtHouseCatalogResponse(scanned.catalog, scanned.report)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/furniture/catalog') && req.method === 'GET') {
+      try {
+        const rows = await readTyxtFurnitureCatalog();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtFurnitureCatalogResponse(rows)));
+      } catch (error) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+      return;
+    }
+
+    if (req.url?.startsWith('/api/tyxt/furniture/import') && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const category = normalizeFurnitureCategory(body.category);
+        const name = asString(body.name);
+        const directionsRaw = asRecord(body.directions);
+        const spriteSheetRaw = asRecord(body.sprite_sheet);
+        const spriteSheetFileName = path.basename(asString(spriteSheetRaw.file_name));
+        const spriteSheetMimeType = asString(spriteSheetRaw.mime_type).toLowerCase();
+        const spriteSheetBase64 = asString(spriteSheetRaw.data_base64);
+        const hasSpriteSheet = Boolean(spriteSheetBase64);
+        const spriteCellRaw = asRecord(body.sprite_cell);
+        const spriteCellWidth = normalizePositiveInteger(spriteCellRaw.width, 0);
+        const spriteCellHeight = normalizePositiveInteger(spriteCellRaw.height, 0);
+        if (!category) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: 'category 不合法。' }));
+          return;
+        }
+        if (!name) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: 'name 不能为空。' }));
+          return;
+        }
+        if (spriteCellWidth <= 0 || spriteCellHeight <= 0) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: 'sprite_cell 不合法，宽高需为正整数。' }));
+          return;
+        }
+
+        const parsedDirections: Partial<Record<TyxtFurnitureDirection, TyxtFurnitureDirectionAsset>> = {};
+        const assetId = safeFurnitureId(`${category}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, 'furniture');
+        const categoryDir = path.join(TYXT_FURNITURE_ROOT, category);
+        await fs.mkdir(categoryDir, { recursive: true });
+
+        if (hasSpriteSheet) {
+          if (spriteSheetMimeType && !FURNITURE_ALLOWED_MIME_TYPES.has(spriteSheetMimeType)) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ ok: false, error: '精灵图 MIME 类型不支持。' }));
+            return;
+          }
+          const binary = Buffer.from(spriteSheetBase64, 'base64');
+          if (binary.length <= 0 || binary.length > FURNITURE_MAX_FILE_BYTES) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ ok: false, error: '精灵图文件大小不合法。' }));
+            return;
+          }
+          const meta = await readFurnitureImageMetaFromBuffer(binary);
+          const ext = path.extname(spriteSheetFileName).toLowerCase();
+          const format = meta.format || normalizeFurnitureFormat(spriteSheetMimeType) || normalizeFurnitureFormat(ext);
+          if (!format || !FURNITURE_ALLOWED_EXTENSIONS.has(`.${format}`)) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ ok: false, error: '精灵图格式仅支持 PNG/WebP。' }));
+            return;
+          }
+          if (meta.width < FURNITURE_MIN_WIDTH || meta.height < FURNITURE_MIN_HEIGHT) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({ ok: false, error: '精灵图尺寸过小。' }));
+            return;
+          }
+          if (spriteCellWidth > meta.width || spriteCellHeight > meta.height) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.end(JSON.stringify({
+              ok: false,
+              error: `精灵图尺寸不足。当前 ${meta.width}×${meta.height}，至少需要 ${spriteCellWidth}×${spriteCellHeight}。`
+            }));
+            return;
+          }
+
+          const availableFrameCount = Math.max(1, Math.floor(meta.width / spriteCellWidth));
+          for (const direction of ['front', 'left', 'right', 'back'] as TyxtFurnitureDirection[]) {
+            const frameIndex = TYXT_FURNITURE_DIRECTION_FRAME_INDEX[direction] ?? 0;
+            const safeFrameIndex = Math.min(frameIndex, availableFrameCount - 1);
+            const left = safeFrameIndex * spriteCellWidth;
+            const top = 0;
+            const extracted = format === 'webp'
+              ? await sharp(binary).extract({ left, top, width: spriteCellWidth, height: spriteCellHeight }).webp().toBuffer()
+              : await sharp(binary).extract({ left, top, width: spriteCellWidth, height: spriteCellHeight }).png().toBuffer();
+            const outputFileName = `${assetId}-${direction}.${format}`;
+            const outputPath = path.join(categoryDir, outputFileName);
+            await fs.writeFile(outputPath, extracted);
+            parsedDirections[direction] = {
+              file_name: outputFileName,
+              asset_url: furnitureDirectionAssetUrl(category, outputFileName),
+              width: spriteCellWidth,
+              height: spriteCellHeight,
+              format,
+              file_size: extracted.length,
+              frame_width: spriteCellWidth,
+              frame_height: spriteCellHeight
+            };
+          }
+        } else {
+          for (const direction of ['front', 'left', 'right', 'back'] as TyxtFurnitureDirection[]) {
+            const directionRaw = asRecord(directionsRaw[direction]);
+            const fileName = path.basename(asString(directionRaw.file_name));
+            const mimeType = asString(directionRaw.mime_type).toLowerCase();
+            const dataBase64 = asString(directionRaw.data_base64);
+            if (!fileName || !dataBase64) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ ok: false, error: `缺少方向图片：${direction}` }));
+              return;
+            }
+            if (mimeType && !FURNITURE_ALLOWED_MIME_TYPES.has(mimeType)) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ ok: false, error: `${direction} MIME 类型不支持。` }));
+              return;
+            }
+            const binary = Buffer.from(dataBase64, 'base64');
+            if (binary.length <= 0 || binary.length > FURNITURE_MAX_FILE_BYTES) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ ok: false, error: `${direction} 文件大小不合法。` }));
+              return;
+            }
+            const meta = await readFurnitureImageMetaFromBuffer(binary);
+            const ext = path.extname(fileName).toLowerCase();
+            const format = meta.format || normalizeFurnitureFormat(mimeType) || normalizeFurnitureFormat(ext);
+            if (!format || !FURNITURE_ALLOWED_EXTENSIONS.has(`.${format}`)) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ ok: false, error: `${direction} 图片格式仅支持 PNG/WebP。` }));
+              return;
+            }
+            if (meta.width < FURNITURE_MIN_WIDTH || meta.height < FURNITURE_MIN_HEIGHT) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ ok: false, error: `${direction} 图片尺寸过小。` }));
+              return;
+            }
+            if (spriteCellWidth > meta.width || spriteCellHeight > meta.height) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({
+                ok: false,
+                error: `${direction} 单格尺寸 ${spriteCellWidth}×${spriteCellHeight} 超出原图 ${meta.width}×${meta.height}。`
+              }));
+              return;
+            }
+            const outputFileName = `${assetId}-${direction}.${format}`;
+            const outputPath = path.join(categoryDir, outputFileName);
+            await fs.writeFile(outputPath, binary);
+            parsedDirections[direction] = {
+              file_name: outputFileName,
+              asset_url: furnitureDirectionAssetUrl(category, outputFileName),
+              width: meta.width,
+              height: meta.height,
+              format,
+              file_size: binary.length,
+              frame_width: spriteCellWidth,
+              frame_height: spriteCellHeight
+            };
+          }
+        }
+
+        if (!parsedDirections.front || !parsedDirections.left || !parsedDirections.right || !parsedDirections.back) {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ ok: false, error: '四方向图片不完整。' }));
+          return;
+        }
+
+        const rows = await readTyxtFurnitureCatalog();
+        rows.push({
+          id: assetId,
+          name,
+          category,
+          imported_at: new Date().toISOString(),
+          directions: {
+            front: parsedDirections.front,
+            left: parsedDirections.left,
+            right: parsedDirections.right,
+            back: parsedDirections.back
+          }
+        });
+        await writeTyxtFurnitureCatalog(rows);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(JSON.stringify(buildTyxtFurnitureCatalogResponse(rows)));
       } catch (error) {
         res.statusCode = 500;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');

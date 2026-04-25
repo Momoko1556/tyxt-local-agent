@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.4.0
+﻿# TYXT Local Agent v1.5.0
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -9,23 +9,22 @@ TYXT is a local-first AI assistant system for chat, memory, tools, and LAN multi
 
 中文文档: [README_zh.md](README_zh.md)
 
-## What's New
+## What's New in v1.5.0
 
-- **Workspace + Local CC Integration**
-  - Added Workspace mode with local Claude Code invocation support.
-  - Requires standalone install: https://github.com/Momoko1556/ClaudeCode_CN
-- **Lounge Zone**
-  - Private chat and group chat are now categorized under the Lounge zone.
-- **Creative Zone**
-  - Added Creative zone with character cards and worldbook support.
-  - Memory storage is security-isolated from the Lounge zone.
-- **Visual UI**
-  - Added TYXT visual space UI.
-  - Start by double-clicking: `start-tyxt-space.bat`
-- **Agent Permission Module**
-  - Added a dedicated Agent permission module.
-- **Tool Permission by Scene**
-  - Tool access can now be constrained by scene/domain permissions.
+- **Visual Space Editing**
+  - TYXT Space now supports house, furniture, and character configuration through the visual UI.
+  - House images are managed from `third_party/tyxt-space/public/assets/houses`.
+  - Furniture assets are managed from `third_party/tyxt-space/public/assets/furnitures`.
+  - Room labels, walls, furniture placement, and interaction areas are edited in the frontend instead of the old remap tool.
+- **Movement Boundaries**
+  - Walking space is calculated from the visible house image area minus user-defined wall blocks.
+  - The old `public/assets/packs` reference-walkable workflow has been removed.
+- **Character Assets**
+  - The old capy/cat character variants were removed from the runtime chain.
+  - The default visual actor is now `tyxt-emoji`.
+- **Reserved Shop Entry**
+  - The Shop entry is kept as a reserved UI/function slot.
+  - Shop editing is not implemented in this release.
 
 ## Read This First (How to Download)
 
@@ -211,6 +210,13 @@ Inbound API key enforcement:
 ```text
 frontend/TYXT_UI.html      Frontend page
 ollama_multi_agent.py      Main backend entry
+third_party/tyxt-space/    TYXT visual space UI
+third_party/tyxt-space/public/assets/houses/
+                            Visual-space house images
+third_party/tyxt-space/public/assets/furnitures/
+                            Visual-space furniture sprites
+third_party/tyxt-space/public/data/
+                            House, furniture, scene, and actor UI data
 skills/                    Local + MCP skills
 configs/                   Config directory
 memory_db/                 Runtime DB directory
@@ -223,6 +229,7 @@ profiles/                  Runtime user profiles
 This repo is prepared for public release, but keep these local/private files out of Git:
 
 - `.env`
+- `AGENTS.md`
 - `config.json`
 - `tools/api_config.json`
 - `configs/user_profiles.json`
@@ -236,6 +243,7 @@ This repo is prepared for public release, but keep these local/private files out
 - `group_memory/*`
 - `state/*`
 - `agents/*`
+- `certs/lan/*`
 - `Ollama_agent_shared/runtime_logs/*`
 
 Release safety references:
@@ -260,8 +268,4 @@ git grep -nE "([A-Za-z]:\\\\|/Users/|/home/)"
 ## License
 
 Licensed under **AGPL-3.0**. See [LICENSE](LICENSE).
-
-## Support
-
-<img src="docs/donate-qrcode.png" alt="donate" width="320" />
 

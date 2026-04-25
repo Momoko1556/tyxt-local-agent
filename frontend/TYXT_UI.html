@@ -9382,7 +9382,7 @@
       </div>
       <div class="settings-body">
         <div class="scene-settings-intro" id="lounge-settings-intro">休闲区设置用于陪伴域控制台。仅保留私聊/群聊运行的必要配置。</div>
-        <div class="scene-settings-source-summary" id="lounge-settings-source-summary">解析规则：休闲区设置显式值 > 兼容旧配置兜底 > Agent基础设置</div>
+        <div class="scene-settings-source-summary" id="lounge-settings-source-summary">解析规则：休闲区设置显式值 > Agent管理休闲区 > Agent基础设置</div>
 
         <div class="settings-panel">
           <h4 class="scene-settings-panel-title">主聊天检索入口</h4>
@@ -10736,7 +10736,6 @@
     const LS_MOBILE_LINK_API_KEY = "tyxt_mobile_link_api_key_v1";
     const LS_CHAT_SESSIONS_PREFIX = "tyxt_chat_sessions_v1";
     const LS_THEATER_SESSIONS_PREFIX = "tyxt_theater_sessions_v1";
-    const LS_OFFICE_PROJECTS_PREFIX = "tyxt_office_projects_v1";
     const LS_OFFICE_ACTIVE_PROJECT_PREFIX = "tyxt_office_active_project_v1";
     const LS_OFFICE_RIGHT_TAB_PREFIX = "tyxt_office_right_tab_v1";
     const LS_OFFICE_MESSAGES_PREFIX = "tyxt_office_messages_v1";
@@ -11776,10 +11775,6 @@
         office_project_create_failed: "创建项目失败",
         office_project_update_failed: "更新项目失败",
         office_project_delete_failed: "删除项目失败",
-        office_project_sync_hint: "已回退到本地项目缓存",
-        office_project_migrating: "正在迁移旧项目到后端...",
-        office_project_migration_done: "旧项目已迁移到后端",
-        office_project_migration_failed: "旧项目迁移失败",
         project_main_session: "项目主会话",
         project_goal: "项目目标",
         current_stage: "当前阶段",
@@ -11926,7 +11921,7 @@
         agent_manage_workspace_note: "工作区按 Agent 仅保留：职位、职责。其他工程内容请在工作区设置中配置。",
         workspace_settings_intro: "工作区设置用于工程域控制台。本页配置可保存并用于工作区运行。",
         config_obs_rule_workspace: "解析规则：场景设置显式值 > Agent管理场景覆盖 > Agent基础设置",
-        config_obs_rule_lounge: "解析规则：休闲区设置显式值 > 兼容旧配置兜底 > Agent基础设置",
+        config_obs_rule_lounge: "解析规则：休闲区设置显式值 > Agent管理休闲区 > Agent基础设置",
         config_source_prefix: "来源：",
         config_effective_prefix: "当前生效：",
         config_source_workspace_settings: "工作区设置",
@@ -12435,10 +12430,6 @@
         office_project_create_failed: "Failed to create project",
         office_project_update_failed: "Failed to update project",
         office_project_delete_failed: "Failed to delete project",
-        office_project_sync_hint: "Fallback to local project cache",
-        office_project_migrating: "Migrating legacy projects to backend...",
-        office_project_migration_done: "Legacy projects migrated to backend",
-        office_project_migration_failed: "Legacy project migration failed",
         project_main_session: "Project Main Session",
         project_goal: "Project Goal",
         current_stage: "Current Stage",
@@ -12585,7 +12576,7 @@
         agent_manage_workspace_note: "Workspace per-Agent keeps only Role and Responsibilities. Configure other engineering fields in Workspace Settings.",
         workspace_settings_intro: "Workspace settings are the engineering control console. Values on this page are persisted and applied to workspace runtime.",
         config_obs_rule_workspace: "Resolution rule: scene explicit value > Agent management scene override > Agent basic settings",
-        config_obs_rule_lounge: "Resolution rule: lounge explicit value > legacy fallback > Agent basic settings",
+        config_obs_rule_lounge: "Resolution rule: lounge explicit value > Agent Management Lounge > Agent basic settings",
         config_source_prefix: "Source: ",
         config_effective_prefix: "Effective: ",
         config_source_workspace_settings: "Workspace Settings",
@@ -20056,12 +20047,6 @@
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
-    // 仅用于旧版本地项目的一次性迁移兼容；项目本体以后端为准。
-    function getOfficeProjectsStorageKey(){
-      const uid = String(currentUser.userId || "").trim() || "anonymous";
-      return `${LS_OFFICE_PROJECTS_PREFIX}:${uid}`;
-    }
-
     function getOfficeActiveProjectStorageKey(){
       const uid = String(currentUser.userId || "").trim() || "anonymous";
       return `${LS_OFFICE_ACTIVE_PROJECT_PREFIX}:${uid}`;
@@ -22307,10 +22292,6 @@
       officeProjects.sort((a, b)=>String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
     }
 
-    function persistOfficeProjects(){
-      // 项目本体以后端为准；本地不再作为真相来源，仅保留旧版迁移兼容。
-    }
-
     function persistActiveOfficeProject(){
       try{
         localStorage.setItem(getOfficeActiveProjectStorageKey(), String(activeOfficeProjectId || ""));
@@ -22330,20 +22311,6 @@
         return activeId;
       }
       return nextRows.length ? String(nextRows[0].id || "") : "";
-    }
-
-    function getLegacyOfficeProjectsFromStorage(){
-      let parsed = null;
-      try{
-        const raw = localStorage.getItem(getOfficeProjectsStorageKey());
-        parsed = raw ? JSON.parse(raw) : null;
-      }catch(_){
-        parsed = null;
-      }
-      const arr = Array.isArray(parsed)
-        ? parsed
-        : ((parsed && Array.isArray(parsed.projects)) ? parsed.projects : []);
-      return arr.map((row, idx)=>normalizeOfficeProjectRow(row, idx)).filter((row)=>String(row.id || "").trim());
     }
 
     async function fetchOfficeProjectsFromBackend(options = {}){
@@ -22451,53 +22418,6 @@
       }
     }
 
-    async function migrateLegacyOfficeProjectsIfNeeded(options = {}){
-      const silent = !!(options && options.silent);
-      const legacyRows = getLegacyOfficeProjectsFromStorage();
-      if(!legacyRows.length) return false;
-      if(!silent){
-        showToast(tr("office_project_migrating"), 1400);
-      }
-      let createdCount = 0;
-      for(const row of legacyRows){
-        try{
-          const payload = {
-            id: String(row.id || "").trim(),
-            name: String(row.name || "").trim(),
-            type: normalizeOfficeProjectType(row.type || ""),
-            mainAgent: String(row.mainAgent || "").trim(),
-            memberAgents: Array.isArray(row.memberAgents) ? row.memberAgents : [],
-            kbPath: String(row.kbPath || "").trim(),
-            workspacePath: String(row.workspacePath || "").trim(),
-            createdAt: String(row.createdAt || nowIso()).trim() || nowIso(),
-            updatedAt: String(row.updatedAt || nowIso()).trim() || nowIso(),
-          };
-          const resp = await apiFetch(OFFICE_PROJECTS_URL, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(payload),
-          });
-          const data = await resp.json().catch(()=>null);
-          if(resp.ok && data && data.ok){
-            createdCount += 1;
-          }
-        }catch(_){}
-      }
-      if(createdCount > 0){
-        try{
-          localStorage.removeItem(getOfficeProjectsStorageKey());
-        }catch(_){}
-        if(!silent){
-          showToast(tr("office_project_migration_done"), 1600);
-        }
-        return true;
-      }
-      if(!silent){
-        showToast(tr("office_project_migration_failed"), 2200);
-      }
-      return false;
-    }
-
     function updateOfficeProjectRuntime(projectId, patch = {}, options = {}){
       const pid = String(projectId || "").trim();
       if(!pid) return null;
@@ -22510,7 +22430,6 @@
       }
       officeProjects[idx] = normalizeOfficeProjectRow(merged, idx);
       sortOfficeProjectsInPlace();
-      persistOfficeProjects();
       if(!(options && options.silent)){
         renderOfficeProjects();
         refreshOfficeWorkspaceUi();
@@ -22621,26 +22540,15 @@
 
       const loaded = await fetchOfficeProjectsFromBackend({silent:true});
       if(loaded){
-        if(!officeProjects.length){
-          const migrated = await migrateLegacyOfficeProjectsIfNeeded({silent:true});
-          if(migrated){
-            await fetchOfficeProjectsFromBackend({silent:true});
-          }
-        }
         return;
       }
 
-      // 后端暂不可用时，回退到旧本地缓存，保证工作区不崩。
-      officeProjects = getLegacyOfficeProjectsFromStorage();
-      sortOfficeProjectsInPlace();
+      officeProjects = [];
       activeOfficeProjectId = pickOfficeActiveProjectId(officeProjects);
       persistActiveOfficeProject();
       renderOfficeProjects();
       refreshOfficeWorkspaceUi();
-      if(activeOfficeProjectId){
-        syncOfficeProjectMemoryFromBackend(activeOfficeProjectId, {silent:true}).catch(()=>{});
-      }
-      showToast(`${tr("office_projects_load_failed")} · ${tr("office_project_sync_hint")}`, 2400);
+      showToast(tr("office_projects_load_failed"), 2400);
     }
 
     async function pickFolderWithNativeDialog(initialDir = ""){
@@ -30352,14 +30260,8 @@
       streamInProgress = true;
       updateRetryButtonsState();
       btnCancel.style.display="inline-flex";
-      // 统一使用 AI 气泡内联思考占位，避免出现“双思考中”。
-      const useLegacyThinkingRow = false;
-      if(useLegacyThinkingRow){
-        addThinking();
-      }else{
-        setThinkingIndicatorVisible(false);
-      }
-      let thinkingVisible = useLegacyThinkingRow;
+      setThinkingIndicatorVisible(false);
+      let thinkingVisible = false;
       const thinkingShownAt = Date.now();
       let clearThinkingTimer = 0;
       const revealAiRow = ()=>{};

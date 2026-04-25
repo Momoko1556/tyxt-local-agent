@@ -1,4 +1,4 @@
-﻿# TYXT Local Agent v1.4.0
+﻿# TYXT Local Agent v1.5.0
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6?logo=windows&logoColor=white)
@@ -9,23 +9,22 @@ TYXT 是一个本地优先的 AI 助手系统（聊天、记忆、工具、局�
 
 English: [README.md](README.md)
 
-## 新增功能
+## v1.5.0 新增功能
 
-- **新增工作区 + 本地 CC 调用**
-  - 增加工作区（Workspace），支持本地 Claude Code 调用。
-  - 需自行下载并安装：https://github.com/Momoko1556/ClaudeCode_CN
-- **休闲区归类**
-  - 私聊与群聊统一归类为“休闲区”。
-- **新增创想区**
-  - 支持角色卡与世界书（Worldbook）。
-  - 创想区记忆库与休闲区记忆库安全隔离。
-- **新增可视化 UI**
-  - 新增 TYXT 可视化空间界面。
-  - 启动方式：双击 `start-tyxt-space.bat`
-- **新增 Agent 权限模块**
-  - 提供独立 Agent 权限管理能力。
-- **工具按场域授权**
-  - 工具模块可按场域定义权限边界。
+- **可视化空间编辑**
+  - TYXT Space 现在支持在前端 UI 中定义和编辑房屋、家具、人物。
+  - 房屋主图统一来自 `third_party/tyxt-space/public/assets/houses`。
+  - 家具素材统一来自 `third_party/tyxt-space/public/assets/furnitures`。
+  - 房屋名称、墙壁、家具摆放和交互区域都由前端编辑逻辑维护，不再使用旧 remap 工具。
+- **移动范围**
+  - 行走范围改为“主图可见范围 - 墙壁范围”。
+  - 旧的 `public/assets/packs` 与 `reference-walkable.png` 工作流已移除。
+- **人物素材**
+  - 旧的 capy/cat 人物变体已从运行链路移除。
+  - 默认可视化人物改为 `tyxt-emoji`。
+- **商店预留**
+  - 商店入口仅作为预留功能位保留。
+  - 本版本尚未实现商店编辑功能。
 
 ## 新手教程（WebUI + 手机UI）
 
@@ -208,6 +207,13 @@ start_remote_easy.bat
 ```text
 frontend/TYXT_UI.html      前端页面
 ollama_multi_agent.py      主后端入口
+third_party/tyxt-space/    TYXT 可视化空间界面
+third_party/tyxt-space/public/assets/houses/
+                            可视化空间房屋主图
+third_party/tyxt-space/public/assets/furnitures/
+                            可视化空间家具素材
+third_party/tyxt-space/public/data/
+                            房屋、家具、场景和人物 UI 数据
 skills/                    本地技能与 MCP 技能
 configs/                   配置文件目录
 memory_db/                 运行时数据库目录
@@ -220,6 +226,7 @@ profiles/                  运行时用户画像目录
 仓库已按公开发布做了清理，但以下文件仍应保持本地私有，不要上传：
 
 - `.env`
+- `AGENTS.md`
 - `config.json`
 - `tools/api_config.json`
 - `configs/user_profiles.json`
@@ -233,6 +240,7 @@ profiles/                  运行时用户画像目录
 - `group_memory/*`
 - `state/*`
 - `agents/*`
+- `certs/lan/*`
 - `Ollama_agent_shared/runtime_logs/*`
 
 发布前安全检查参考：
@@ -257,8 +265,4 @@ git grep -nE "([A-Za-z]:\\\\|/Users/|/home/)"
 ## 许可证
 
 本项目使用 **AGPL-3.0**，详见 [LICENSE](LICENSE)。
-
-## Support
-
-<img src="docs/donate-qrcode.png" alt="donate" width="320" />
 

@@ -23,7 +23,7 @@ const DEFAULT_CONFIG = {
     showThemeToggle: false
   },
   actor: {
-    defaultVariantId: 'capy-claw-emoji'
+    defaultVariantId: 'tyxt-emoji'
   },
   telemetry: {
     pollMs: 2500

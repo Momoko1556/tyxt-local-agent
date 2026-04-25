@@ -1,0 +1,41 @@
+[
+  {
+    "id": "house-1776158251100-46ah",
+    "name": "太空舱",
+    "file_name": "house-1776158251100-46ah.png",
+    "width": 1264,
+    "height": 842,
+    "ratio": 1.501187648456057,
+    "format": "png",
+    "file_size": 1186670,
+    "imported_at": "2026-04-14T09:17:31.105Z",
+    "asset_url": "assets/houses/house-1776158251100-46ah.png",
+    "is_default_baseline": false
+  },
+  {
+    "id": "house-1776477439801-44jol4",
+    "name": "太空舱",
+    "file_name": "house-1776477439801-44jol4.png",
+    "width": 1536,
+    "height": 1024,
+    "ratio": 1.5,
+    "format": "png",
+    "file_size": 2360545,
+    "imported_at": "2026-04-18T01:57:19.810Z",
+    "asset_url": "assets/houses/house-1776477439801-44jol4.png",
+    "is_default_baseline": true
+  },
+  {
+    "id": "house-1776924472576-b9o1vg",
+    "name": "scene-floor",
+    "file_name": "house-1776924472576-b9o1vg.png",
+    "width": 1264,
+    "height": 842,
+    "ratio": 1.501187648456057,
+    "format": "png",
+    "file_size": 1791474,
+    "imported_at": "2026-04-23T06:07:52.583Z",
+    "asset_url": "assets/houses/house-1776924472576-b9o1vg.png",
+    "is_default_baseline": false
+  }
+]

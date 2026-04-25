@@ -2473,12 +2473,12 @@ function buildMockSnapshot() {
         summary: '9 image assets', detail: 'latest art/prototypes', source: 'workspace/art',
         items: [
           (() => {
-            const next = item('mock-img-1', 'scene-floor.png', 'public/assets/packs/default/2026-03-09/scene-floor.png', generatedAt, 'base art');
+            const next = item('mock-img-1', 'house-1776924472576-b9o1vg.png', 'public/assets/houses/house-1776924472576-b9o1vg.png', generatedAt, 'house art');
             next.thumbnailPath = thumbnailForPath(next.path);
             return next;
           })(),
           (() => {
-            const next = item('mock-img-2', 'scene-objects.png', 'public/assets/packs/default/2026-03-09/scene-objects.png', generatedAt, 'room layer');
+            const next = item('mock-img-2', 'house-1776477439801-44jol4.png', 'public/assets/houses/house-1776477439801-44jol4.png', generatedAt, 'baseline house art');
             next.thumbnailPath = thumbnailForPath(next.path);
             return next;
           })()

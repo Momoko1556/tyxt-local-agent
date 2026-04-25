@@ -113,7 +113,7 @@ const scenarios = [
     waitAfterActionMs: 800
   },
   {
-    id: 'desktop-actor-capy-claw',
+    id: 'desktop-actor-skin',
     viewport: { width: 1000, height: 488 },
     isMobile: false,
     hasTouch: false,

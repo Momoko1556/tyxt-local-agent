@@ -1,24 +1,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const mapLogicPath = path.join(root, 'src/data/map.logic.json');
 const assetManifestPath = path.join(root, 'src/data/asset.manifest.json');
 const sceneArtPath = path.join(root, 'src/data/scene-art.manifest.json');
 const themePackPath = path.join(root, 'src/data/themes/default/theme-pack.json');
 const workOutputPath = path.join(root, 'src/data/work-output.protocol.json');
+const housesIndexPath = path.join(root, 'public/data/houses.json');
 
 const mapLogic = JSON.parse(fs.readFileSync(mapLogicPath, 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(assetManifestPath, 'utf8'));
 const sceneArt = JSON.parse(fs.readFileSync(sceneArtPath, 'utf8'));
 const themePack = JSON.parse(fs.readFileSync(themePackPath, 'utf8'));
 const workOutput = JSON.parse(fs.readFileSync(workOutputPath, 'utf8'));
+const housesIndex = fs.existsSync(housesIndexPath)
+  ? JSON.parse(fs.readFileSync(housesIndexPath, 'utf8'))
+  : {};
 
 const issues = [];
 const allowedRenderLayers = new Set(['floor', 'back_walls', 'mid_props', 'actor', 'fg_occluder', 'fx_overlay']);
 const allowedAssetLayers = new Set(['ground', 'mid', 'fg_occluder', ...allowedRenderLayers]);
 const publicRoot = path.join(root, 'public');
+const houseRows = Array.isArray(housesIndex)
+  ? housesIndex
+  : (Array.isArray(housesIndex.houses) ? housesIndex.houses : []);
 
 if (!Array.isArray(mapLogic.walkGraph?.nodes) || mapLogic.walkGraph.nodes.length < 2) {
   issues.push('walkGraph.nodes must have at least 2 nodes');
@@ -130,8 +138,22 @@ if (!Array.isArray(sceneArt.roomSlices)) {
   issues.push('scene-art manifest must define roomSlices array');
 }
 
-if ((sceneArt.roomSlices?.length ?? 0) < 1 && (sceneArt.conceptRefs?.length ?? 0) < 1) {
-  issues.push('scene-art manifest must include at least 1 room slice or 1 concept/background reference');
+if ((sceneArt.roomSlices?.length ?? 0) < 1 && (sceneArt.conceptRefs?.length ?? 0) < 1 && houseRows.length < 1) {
+  issues.push('scene-art manifest must include room slices/concept refs or public/data/houses.json must include at least 1 house');
+}
+
+for (const house of houseRows) {
+  const assetUrl = typeof house.asset_url === 'string' ? house.asset_url : '';
+  const fileName = typeof house.file_name === 'string' ? house.file_name : '';
+  const relativePath = assetUrl || (fileName ? `assets/houses/${fileName}` : '');
+  if (!relativePath) {
+    issues.push(`house ${house.id ?? '(unknown)'} must include asset_url or file_name`);
+    continue;
+  }
+  const houseAssetPath = path.join(publicRoot, relativePath.replace(/^\/+/, ''));
+  if (!fs.existsSync(houseAssetPath)) {
+    issues.push(`house ${house.id ?? '(unknown)'} asset missing: ${relativePath}`);
+  }
 }
 
 for (const slice of sceneArt.roomSlices ?? []) {

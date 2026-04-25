@@ -32,13 +32,12 @@ docs/asset-contract-v1.md
 docs/public-release-checklist.md
 docs/public-release-plan-a.md
 tmp/
+house_dropbox/*
+!house_dropbox/.gitkeep
+!house_dropbox/README.txt
 public/assets/generated/actors/**/source/
 public/assets/generated/actors/**/sheets/*-poster.png
-public/assets/generated/ll3/2026-03-07/
 public/assets/generated/skills-room-concept-v1.png
-public/assets/legacy/star-office/
-public/assets/packs/prototype-v1/
-public/assets/generated/ll3/**/actors/animated/*/*-frames/
 scripts/build-capi-claw-emoji-actor.py
 scripts/build-claw-crew-animations.py
 scripts/prepare-actor-sprite.mjs

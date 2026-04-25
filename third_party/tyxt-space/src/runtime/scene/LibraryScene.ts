@@ -15,6 +15,7 @@ import type {
   ResourceTelemetryStatus,
   SceneGlobalLayerDef,
   RoomArtSlice,
+  RoomBounds,
   RoomSliceLayerDef,
   ThemePack,
   WorkMode,
@@ -25,13 +26,29 @@ import type {
   WorkZoneType
 } from '../../core/types';
 import { pointInPolygon } from '../../core/geometry';
-import { computeRoute } from '../../core/pathfinder';
 import { computeVisibleAssetIds } from '../systems/growth';
 import { loadProtocols } from '../systems/protocolStore';
 import { configureTouch } from '../systems/touchController';
 import type { UiLocale } from '../../ui/locale';
 import { resourceLabel } from '../../ui/locale';
 import { PARTITION_COLORS } from '../../ui/palette';
+import {
+  SCENE_MAP_LOCAL_JSON_HINT,
+  buildSceneMapExportText,
+  cloneSceneMapData,
+  createSceneEntityId,
+  hasStoredSceneMapData,
+  loadSceneMapData,
+  normalizeSceneMapData,
+  saveSceneMapData,
+  type FurnitureItem,
+  type InteractionBox,
+  type InteractionPoint as SceneInteractionPoint,
+  type SceneMapData,
+  type SceneMapRect,
+  type WallBlock,
+  type WallShapeType
+} from '../data/sceneMapData';
 
 const INITIAL_GROWTH: GrowthState = {
   assetsCount: 0,
@@ -44,18 +61,33 @@ const CAMERA_CONTENT_OVERSCAN = 16;
 const CAMERA_ZOOM_MIN = 0.85;
 const CAMERA_ZOOM_MAX = 1.3;
 
-const LEGACY_BACKGROUND = {
-  textureKey: 'll3-master-layout-v1',
-  path: '/assets/generated/ll3/2026-03-07/ll3-master-layout-v1.png',
-  displaySize: { width: 1920, height: 1072 },
-  anchor: { x: 960, y: 540 }
-} as const;
-
 const PROP_SHADOW_OFFSET = { x: 4, y: 4 } as const;
 const PROP_SHADOW_ALPHA = 0.16;
 const ENABLE_PRIMARY_AGENT_POSE_FX = false;
 const ENABLE_PRIMARY_AGENT_THOUGHT_BUBBLE = false;
 const PRIMARY_AGENT_BUBBLE_GAP_PX = 18;
+const EDITOR_WALL_MIN_SIZE = 10;
+const INTERACTION_POINT_RADIUS = 16;
+const DEFAULT_FURNITURE_SIZE = { width: 92, height: 68 } as const;
+const FURNITURE_INTERACTION_TYPES = ['inspect', 'use', 'read', 'view', 'status'] as const;
+const FURNITURE_EDITOR_TOP_SLACK_RATIO = 0.5;
+const FURNITURE_RESIZE_MIN_SIZE = 16;
+const FURNITURE_RESIZE_MAX_SIZE = 1600;
+const FURNITURE_COLLISION_FADE_ALPHA = 0.48;
+const FURNITURE_NORMAL_ALPHA = 1;
+const FURNITURE_COLLISION_FADE_LERP = 0.24;
+const FURNITURE_ALPHA_OVERLAP_THRESHOLD = 24;
+const FURNITURE_ALPHA_OVERLAP_SAMPLE_STEP = 1;
+const PATROL_STUCK_DISTANCE_THRESHOLD = 2;
+const PATROL_STUCK_TIMEOUT_MS = 2800;
+const PATROL_STUCK_MAX_RECOVERY_ATTEMPTS = 3;
+const PATROL_ACTION_TARGET_MAX_OFFSET = 128;
+const PATROL_ACTION_CAPTURE_RADIUS_MIN = 56;
+const PATROL_ACTION_CAPTURE_RADIUS_MAX = 160;
+const WALL_EDITOR_DEFAULT_SIZE = { width: 120, height: 80 } as const;
+const WALL_EDITOR_HANDLE_RADIUS = 8;
+const WALL_EDITOR_ROTATE_HANDLE_OFFSET = 34;
+const WALKABLE_CELL_SAFETY_OFFSET_RATIO = 0.28;
 
 type RenderedAsset = {
   def: AssetDef;
@@ -114,8 +146,68 @@ type AgentActor = {
   facing: ActorDirection;
 };
 
+type SceneEditorTool = 'wall' | 'furniture' | 'interaction' | 'room_label';
+
+type SceneSettingsMode = 'house' | 'furniture' | 'character' | 'shop' | 'interaction' | null;
+type InteractionEditorMode = 'action_point' | 'interaction_box';
+
+type SceneToastTone = 'info' | 'success' | 'warn';
+type FurnitureFacing = 'front' | 'left' | 'right' | 'back';
+const FURNITURE_FACING_TURN_ORDER: FurnitureFacing[] = ['front', 'right', 'back', 'left'];
+type FurniturePlacementTemplate = {
+  assetId: string;
+  label: string;
+  category: string;
+  direction: FurnitureFacing;
+  width: number;
+  height: number;
+  spriteKey: string;
+  directions: Record<FurnitureFacing, string>;
+};
+type SpriteAlphaMask = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+type WallEditorHandleKind = 'move' | 'resize-nw' | 'resize-ne' | 'resize-sw' | 'resize-se' | 'rotate' | 'delete';
+type WallEditorDragState = {
+  kind: WallEditorHandleKind;
+  wallId: string;
+  startPoint: Point;
+  startWall: WallBlock;
+  startAngle?: number;
+};
+
+type InteractionPointDragState = {
+  id: string;
+  startPoint: Point;
+  startPosition: { x: number; y: number };
+};
+
+type InteractionBoxDragState = {
+  id: string;
+  startPoint: Point;
+  startRect: SceneMapRect;
+};
+
+type RoomLabelDragState = {
+  roomId: ResourcePartitionId;
+  startPoint: Point;
+  startAnchor: Point;
+  moved: boolean;
+};
+
+export type InteractionEditorSnapshot = {
+  mode: InteractionEditorMode;
+  selectedActionPointId: string | null;
+  selectedInteractionBoxId: string | null;
+  actionPoints: SceneInteractionPoint[];
+  interactionBoxes: InteractionBox[];
+};
+
 export class LibraryScene extends Phaser.Scene {
   private readonly protocols = loadProtocols();
+  private sceneMapData: SceneMapData = loadSceneMapData();
   private growthState: GrowthState = { ...INITIAL_GROWTH };
   private currentThemeIndex = 0;
 
@@ -128,10 +220,24 @@ export class LibraryScene extends Phaser.Scene {
   private agentActors: AgentActor[] = [];
 
   private roomLayer!: Phaser.GameObjects.Graphics;
+  private wallBlockLayer!: Phaser.GameObjects.Graphics;
   private zoneLayer!: Phaser.GameObjects.Graphics;
+  private furnitureSpriteLayer!: Phaser.GameObjects.Layer;
+  private furnitureLayer!: Phaser.GameObjects.Graphics;
+  private interactionPointLayer!: Phaser.GameObjects.Graphics;
+  private interactionPointLabelLayer!: Phaser.GameObjects.Layer;
+  private interactionBoxLayer!: Phaser.GameObjects.Graphics;
+  private interactionBoxLabelLayer!: Phaser.GameObjects.Layer;
+  private editorPreviewLayer!: Phaser.GameObjects.Graphics;
   private occluderLayer!: Phaser.GameObjects.Graphics;
   private hitLayer!: Phaser.GameObjects.Graphics;
-  private legacyBackgroundImage: Phaser.GameObjects.Image | null = null;
+  private editorHudText: Phaser.GameObjects.Text | null = null;
+  private editorHudOverlayVisible = false;
+  private editorHudOverlayText = '';
+  private interactionToastText: Phaser.GameObjects.Text | null = null;
+  private interactionToastUntil = 0;
+  private floorBackdropImage: Phaser.GameObjects.Image | null = null;
+  private floorBackdropFrame = { width: 1609, height: 1072 };
   private renderedGlobalLayers: RenderedGlobalLayer[] = [];
   private walkableMaskData: Uint8ClampedArray | null = null;
   private walkableMaskWidth = 0;
@@ -140,7 +246,7 @@ export class LibraryScene extends Phaser.Scene {
   private walkableGrid: Uint8Array | null = null;
   private walkableGridCols = 0;
   private walkableGridRows = 0;
-  private readonly walkableGridStep = 12;
+  private readonly walkableGridStep = 8;
   private reachableWalkableGrid: Uint8Array | null = null;
 
   private workStatusText!: Phaser.GameObjects.Text;
@@ -150,7 +256,6 @@ export class LibraryScene extends Phaser.Scene {
   private queuedTextureKeys = new Set<string>();
   private renderedAssets: RenderedAsset[] = [];
   private renderedRoomSlices: RenderedSliceLayer[] = [];
-  private ambientPropFx: Phaser.GameObjects.GameObject[] = [];
   private roomTitleBackplates = new Map<ResourcePartitionId, Phaser.GameObjects.Graphics>();
   private roomTitleLabels = new Map<ResourcePartitionId, Phaser.GameObjects.Text>();
   private zoneLabels = new Map<ResourcePartitionId, Phaser.GameObjects.Text>();
@@ -162,9 +267,15 @@ export class LibraryScene extends Phaser.Scene {
   private processedEventIds = new Set<string>();
 
   private workMode: WorkMode = 'idle';
+  private patrolCooldownUntil = 0;
+  private patrolTargetMode: ActorVariantDef['modes'][number] | null = null;
+  private currentActionMode: ActorVariantDef['modes'][number] | null = null;
+  private lastCompletedActionAnchor: Point | null = null;
+  private suppressedActionAnchor: Point | null = null;
+  private suppressedActionAnchorUntil = 0;
+  private lastMainVisualKey: string | null = null;
   private activeZoneId: ResourcePartitionId | null = null;
   private lastReachedZoneId: ResourcePartitionId | null = null;
-  private workCursor = 0;
   private outputCursor = 0;
   private pendingStateProfile: WorkStateProfile | null = null;
   private pendingRouteContext: RouteContext | null = null;
@@ -177,10 +288,54 @@ export class LibraryScene extends Phaser.Scene {
   private debugVisualsVisible = false;
   private hoveredRoomId: ResourcePartitionId | null = null;
   private actorVariantId: string | null = null;
+  private generatedActorVariantFolders: string[] = [];
+  private generatedActorVariantCache = new Map<string, ActorVariantDef>();
   private actorFacing: ActorDirection = 'down';
   private celebrationUntil = 0;
   private actorVisualCursorByContext = new Map<string, number>();
   private actorVisualSelectionByContext = new Map<string, { textureKey: string; holdUntil: number }>();
+  private hoveredFurnitureId: string | null = null;
+  private highlightedFurnitureId: string | null = null;
+  private highlightedFurnitureUntil = 0;
+  private hoveredInteractionPointId: string | null = null;
+  private hoveredInteractionBoxId: string | null = null;
+  private settingsMode: SceneSettingsMode = null;
+  private houseOverlaySuppressed = false;
+  private activeHouseBackgroundSignature: string | null = null;
+  private houseTextureKeyBySignature = new Map<string, string>();
+  private editorModeEnabled = false;
+  private editorTool: SceneEditorTool = 'wall';
+  private editorPointerPoint: Point | null = null;
+  private selectedWallBlockId: string | null = null;
+  private wallEditorShapePreset: WallShapeType = 'rectangle';
+  private wallEditorDragState: WallEditorDragState | null = null;
+  private wallEditorSessionActive = false;
+  private wallEditorDirty = false;
+  private wallEditorBaseline: WallBlock[] | null = null;
+  private selectedFurnitureId: string | null = null;
+  private furnitureDragState: { id: string; startPoint: Point; startRect: SceneMapRect } | null = null;
+  private furniturePlacementTemplate: FurniturePlacementTemplate | null = null;
+  private selectedRoomLabelId: ResourcePartitionId | null = null;
+  private roomLabelDragState: RoomLabelDragState | null = null;
+  private roomLabelEditorSessionActive = false;
+  private interactionEditorMode: InteractionEditorMode = 'action_point';
+  private interactionEditorSessionActive = false;
+  private selectedInteractionPointId: string | null = null;
+  private selectedInteractionBoxId: string | null = null;
+  private interactionPointDragState: InteractionPointDragState | null = null;
+  private interactionBoxDragState: InteractionBoxDragState | null = null;
+  private editorInteractionTypeCursor = 0;
+  private furnitureTextureByUrl = new Map<string, string>();
+  private furnitureSpriteById = new Map<string, Phaser.GameObjects.Image>();
+  private spriteAlphaMaskCache = new Map<string, SpriteAlphaMask>();
+  private inlineActionAssetHashByValue = new Map<string, string>();
+  private sceneMapProjectPersistPromise: Promise<void> | null = null;
+  private sceneMapProjectPersistPending: SceneMapData | null = null;
+  private sceneMapProjectPersistWarned = false;
+  private sceneMapRevision = 0;
+  private patrolLastProgressAt = 0;
+  private patrolLastProgressPoint: Point | null = null;
+  private patrolStuckRecoveryAttempts = 0;
 
   private lastOutput: WorkOutputEvent = {
     stateId: 'idle',
@@ -203,6 +358,9 @@ export class LibraryScene extends Phaser.Scene {
 
   create(): void {
     configureTouch(this);
+    if (typeof window !== 'undefined') {
+      (window as Window & { __tyxtSpaceScene?: LibraryScene }).__tyxtSpaceScene = this;
+    }
     this.applyStageCameraFit();
     this.cameras.main.roundPixels = true;
     this.scale.on('resize', () => this.applyStageCameraFit());
@@ -214,14 +372,38 @@ export class LibraryScene extends Phaser.Scene {
     this.roomLayer = this.add.graphics();
     this.roomLayer.setDepth(this.getRenderLayerDepth('floor'));
 
+    this.wallBlockLayer = this.add.graphics();
+    this.wallBlockLayer.setDepth(this.getRenderLayerDepth('back_walls') + 0.2);
+
     this.zoneLayer = this.add.graphics();
     this.zoneLayer.setDepth(this.getRenderLayerDepth('mid_props') + 3);
 
-    this.hitLayer = this.add.graphics();
-    this.hitLayer.setDepth(this.getRenderLayerDepth('mid_props') + 9);
+  this.hitLayer = this.add.graphics();
+  this.hitLayer.setDepth(this.getRenderLayerDepth('mid_props') + 9);
+
+  this.furnitureSpriteLayer = this.add.layer();
+  this.furnitureSpriteLayer.setDepth(this.getRenderLayerDepth('mid_props') + 8.75);
+
+  this.furnitureLayer = this.add.graphics();
+  this.furnitureLayer.setDepth(this.getRenderLayerDepth('mid_props') + 8.8);
+
+    this.interactionPointLayer = this.add.graphics();
+    this.interactionPointLayer.setDepth(this.getRenderLayerDepth('mid_props') + 8.9);
+
+    this.interactionPointLabelLayer = this.add.layer();
+    this.interactionPointLabelLayer.setDepth(this.getRenderLayerDepth('fx_overlay') + 11);
+
+    this.interactionBoxLayer = this.add.graphics();
+    this.interactionBoxLayer.setDepth(this.getRenderLayerDepth('mid_props') + 8.95);
+
+    this.interactionBoxLabelLayer = this.add.layer();
+    this.interactionBoxLabelLayer.setDepth(this.getRenderLayerDepth('fx_overlay') + 11.1);
 
     this.occluderLayer = this.add.graphics();
     this.occluderLayer.setDepth(this.getRenderLayerDepth('fg_occluder'));
+
+    this.editorPreviewLayer = this.add.graphics();
+    this.editorPreviewLayer.setDepth(this.getRenderLayerDepth('fx_overlay') + 19);
 
     this.workStatusText = this.add.text(30, 20, '', {
       color: '#d7e2ff',
@@ -246,7 +428,10 @@ export class LibraryScene extends Phaser.Scene {
     this.lobsterThoughtText.setStroke('#04100f', 3);
     this.lobsterThoughtText.setVisible(ENABLE_PRIMARY_AGENT_THOUGHT_BUBBLE);
 
+    this.initializeSceneInteractionUi();
+
     this.drawRooms();
+    this.syncWorkZonesFromInteractionPoints();
     this.spawnRoomSlices();
     this.initializeWalkableMask();
     this.spawnAssets();
@@ -256,11 +441,21 @@ export class LibraryScene extends Phaser.Scene {
     this.initializeRoomLabels();
     this.initializeWorkZones();
     this.drawOccluders();
-    this.spawnAmbientPropFx();
+    this.drawSceneMapLayers();
     this.applyDebugVisualLayerVisibility();
 
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      this.handlePointerDown(pointer.worldX, pointer.worldY);
+      this.handlePointerDown(pointer.worldX, pointer.worldY, pointer);
+    });
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      this.handlePointerUp(pointer.worldX, pointer.worldY, pointer);
+    });
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      this.handlePointerMove(pointer.worldX, pointer.worldY);
+    });
+    this.input.mouse?.disableContextMenu();
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => {
+      this.handleEditorKeyDown(event);
     });
 
     this.events.on('set-growth', (next: GrowthState) => {
@@ -276,13 +471,8 @@ export class LibraryScene extends Phaser.Scene {
       this.syncRoomLabels();
       this.drawWorkZones();
       this.drawOccluders();
+      this.drawSceneMapLayers();
       this.syncWorkStatus();
-    });
-
-    this.time.addEvent({
-      delay: 4200,
-      callback: () => this.enqueueAutoWork(),
-      loop: true
     });
 
     this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
@@ -320,7 +510,26 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private resolveStageFocusBounds(): Phaser.Geom.Rectangle {
-    const globalLayers = this.protocols.sceneArt.globalLayers ?? [];
+    if (this.floorBackdropImage) {
+      return new Phaser.Geom.Rectangle(
+        Math.max(0, this.floorBackdropImage.x - this.floorBackdropImage.displayWidth / 2 - CAMERA_CONTENT_OVERSCAN),
+        Math.max(0, this.floorBackdropImage.y - this.floorBackdropImage.displayHeight / 2 - CAMERA_CONTENT_OVERSCAN),
+        Math.max(1, this.floorBackdropImage.displayWidth + CAMERA_CONTENT_OVERSCAN * 2),
+        Math.max(1, this.floorBackdropImage.displayHeight + CAMERA_CONTENT_OVERSCAN * 2)
+      );
+    }
+
+    const floorSpec = this.resolveFloorBackdropSpec();
+    if (floorSpec) {
+      return new Phaser.Geom.Rectangle(
+        Math.max(0, floorSpec.anchor.x - floorSpec.displaySize.width / 2 - CAMERA_CONTENT_OVERSCAN),
+        Math.max(0, floorSpec.anchor.y - floorSpec.displaySize.height / 2 - CAMERA_CONTENT_OVERSCAN),
+        Math.max(1, floorSpec.displaySize.width + CAMERA_CONTENT_OVERSCAN * 2),
+        Math.max(1, floorSpec.displaySize.height + CAMERA_CONTENT_OVERSCAN * 2)
+      );
+    }
+
+    const globalLayers = this.activeSceneGlobalLayers();
     if (globalLayers.length > 0) {
       const floorLayer = globalLayers.find((layer) => layer.renderLayer === 'floor') ?? globalLayers[0];
       const left = floorLayer.anchor.x - floorLayer.displaySize.width / 2;
@@ -335,8 +544,8 @@ export class LibraryScene extends Phaser.Scene {
 
     const rooms = this.protocols.mapLogic.rooms;
     if (!rooms || rooms.length === 0) {
-      const fallbackWidth = LEGACY_BACKGROUND.displaySize.width - CAMERA_CONTENT_OVERSCAN * 2;
-      const fallbackHeight = LEGACY_BACKGROUND.displaySize.height - CAMERA_CONTENT_OVERSCAN * 2;
+      const fallbackWidth = this.sceneMapData.base_width - CAMERA_CONTENT_OVERSCAN * 2;
+      const fallbackHeight = this.sceneMapData.base_height - CAMERA_CONTENT_OVERSCAN * 2;
       return new Phaser.Geom.Rectangle(
         CAMERA_CONTENT_OVERSCAN,
         CAMERA_CONTENT_OVERSCAN,
@@ -368,10 +577,14 @@ export class LibraryScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     this.advanceLobster(delta);
+    this.monitorPatrolStuckState();
+    this.updateFurnitureCollisionFade();
     this.positionThoughtBubble();
     for (const actor of this.agentActors) {
       this.advanceAgentActor(actor, delta);
     }
+    this.tickSceneInteractionUi();
+    this.maybeProcessTelemetryQueue();
   }
 
   public getGrowthState(): GrowthState {
@@ -389,6 +602,47 @@ export class LibraryScene extends Phaser.Scene {
       interfaceTarget: `${this.lastOutput.interfaceLabel} · ${this.lastOutput.interfaceEndpoint}`,
       detail: this.lastOutput.content
     };
+  }
+
+  public getSceneMapDataSnapshot(): SceneMapData {
+    return cloneSceneMapData(this.sceneMapData);
+  }
+
+  public getSceneMapRevision(): number {
+    return this.sceneMapRevision;
+  }
+
+  public hasStoredSceneMapData(): boolean {
+    return hasStoredSceneMapData();
+  }
+
+  public applySceneMapData(
+    nextData: unknown,
+    options: { persistLocal?: boolean; silent?: boolean } = {}
+  ): void {
+    const normalized = normalizeSceneMapData(nextData);
+    this.sceneMapData = options.persistLocal === false
+      ? normalized
+      : saveSceneMapData(normalized);
+    this.sceneMapRevision += 1;
+    this.selectedFurnitureId = this.sceneMapData.furnitures.some((item) => item.id === this.selectedFurnitureId)
+      ? this.selectedFurnitureId
+      : null;
+    this.selectedInteractionPointId = this.sceneMapData.interaction_points.some((item) => item.id === this.selectedInteractionPointId)
+      ? this.selectedInteractionPointId
+      : null;
+    this.selectedInteractionBoxId = this.sceneMapData.interaction_boxes.some((item) => item.id === this.selectedInteractionBoxId)
+      ? this.selectedInteractionBoxId
+      : null;
+    this.syncWorkZonesFromInteractionPoints();
+    this.initializeWalkableMask();
+    this.drawRooms();
+    this.drawSceneMapLayers();
+    this.drawWorkZones();
+    this.resetPatrolProgressTracking();
+    if (!options.silent) {
+      this.showSceneToast('项目场景地图已加载。', 'success', 1600);
+    }
   }
 
   public applyTelemetrySnapshot(snapshot: OpenClawSnapshot): void {
@@ -712,19 +966,7 @@ export class LibraryScene extends Phaser.Scene {
       actor.activeZoneId = zone.id;
 
       const maskRoute = this.computeMaskRoute({ x: actor.container.x, y: actor.container.y }, zone.anchor);
-      if (maskRoute && maskRoute.length > 0) {
-        actor.route = maskRoute;
-      } else {
-        const route = computeRoute(
-          this.protocols.mapLogic.walkGraph,
-          { x: actor.container.x, y: actor.container.y },
-          zone.anchor,
-          this.protocols.mapLogic.collisionPolygons,
-          this.protocols.mapLogic.walkableZones ?? [],
-          (sample) => this.isWalkablePoint(sample)
-        );
-        actor.route = this.routePointsForTarget(route, zone.anchor);
-      }
+      actor.route = maskRoute ?? [];
 
       if (actor.route.length === 0) {
         actor.activeZoneId = null;
@@ -789,6 +1031,598 @@ export class LibraryScene extends Phaser.Scene {
   public setDebugVisualsVisible(visible: boolean): void {
     this.debugVisualsVisible = visible;
     this.applyDebugVisualLayerVisibility();
+    this.drawSceneMapLayers();
+  }
+
+  public applySettingsMode(nextMode: SceneSettingsMode, options: { silent?: boolean } = {}): void {
+    this.settingsMode = nextMode;
+    this.houseOverlaySuppressed = nextMode === 'house';
+    if (nextMode === 'furniture') {
+      this.setEditorMode(true, 'furniture', { silent: options.silent });
+      return;
+    }
+
+    if (nextMode === 'house') {
+      if (this.editorModeEnabled && this.editorTool === 'wall' && this.wallEditorSessionActive) {
+        this.setEditorMode(true, 'wall', { silent: true });
+        return;
+      }
+      if (this.editorModeEnabled && this.editorTool === 'room_label' && this.roomLabelEditorSessionActive) {
+        this.setEditorMode(true, 'room_label', { silent: true });
+        return;
+      }
+      if (this.wallEditorSessionActive && !this.roomLabelEditorSessionActive) {
+        this.setEditorMode(true, 'wall', { silent: true });
+        return;
+      }
+      if (this.roomLabelEditorSessionActive && !this.wallEditorSessionActive) {
+        this.setEditorMode(true, 'room_label', { silent: true });
+        return;
+      }
+    }
+
+    if (nextMode === 'interaction' && this.interactionEditorSessionActive) {
+      this.setEditorMode(true, 'interaction', { silent: true });
+      return;
+    }
+
+    // House/character/shop and null keep scene editor state off in phase-one settings flow.
+    this.setEditorMode(false, this.editorTool, { silent: options.silent });
+  }
+
+  public applyHouseBackdrop(backdrop: { houseId: string; assetUrl: string } | null): void {
+    const floorImage = this.resolveSceneFloorImage();
+    if (!floorImage) {
+      return;
+    }
+
+    if (!backdrop || !backdrop.houseId || !backdrop.assetUrl) {
+      floorImage.setTexture('__WHITE');
+      floorImage.setTint(0x0a1016);
+      floorImage.setDisplaySize(this.floorBackdropFrame.width, this.floorBackdropFrame.height);
+      this.activeHouseBackgroundSignature = null;
+      this.applyStageCameraFit();
+      this.refreshWalkableMaskAfterBackdropChange();
+      return;
+    }
+
+    const normalizedAssetUrl = this.resolveRuntimeAssetUrl(backdrop.assetUrl);
+    const signature = `${backdrop.houseId}|${normalizedAssetUrl}`;
+    const cachedTextureKey = this.houseTextureKeyBySignature.get(signature) ?? null;
+    if (cachedTextureKey && this.textures.exists(cachedTextureKey)) {
+      if (
+        this.activeHouseBackgroundSignature === signature
+        && floorImage.texture?.key === cachedTextureKey
+      ) {
+        return;
+      }
+      floorImage.setTexture(cachedTextureKey);
+      floorImage.clearTint();
+      this.fitFloorBackdropToTexture(floorImage, cachedTextureKey);
+      this.applyStageCameraFit();
+      this.activeHouseBackgroundSignature = signature;
+      this.refreshWalkableMaskAfterBackdropChange();
+      return;
+    }
+
+    const textureKey = this.textureKeyForHouseSignature(signature, backdrop.houseId);
+    if (this.textures.exists(textureKey)) {
+      floorImage.setTexture(textureKey);
+      floorImage.clearTint();
+      this.fitFloorBackdropToTexture(floorImage, textureKey);
+      this.applyStageCameraFit();
+      this.activeHouseBackgroundSignature = signature;
+      this.houseTextureKeyBySignature.set(signature, textureKey);
+      this.refreshWalkableMaskAfterBackdropChange();
+      return;
+    }
+
+    if (this.queuedTextureKeys.has(textureKey)) {
+      return;
+    }
+
+    const candidateUrls = this.resolveRuntimeAssetUrlCandidates(normalizedAssetUrl);
+    this.loadImageTextureWithFallback(textureKey, candidateUrls, {
+      onLoaded: (loadedTextureKey) => {
+        this.queuedTextureKeys.delete(textureKey);
+        if (!this.textures.exists(loadedTextureKey)) {
+          return;
+        }
+        floorImage.setTexture(loadedTextureKey);
+        floorImage.clearTint();
+        this.fitFloorBackdropToTexture(floorImage, loadedTextureKey);
+        this.applyStageCameraFit();
+        this.activeHouseBackgroundSignature = signature;
+        this.houseTextureKeyBySignature.set(signature, loadedTextureKey);
+        this.refreshWalkableMaskAfterBackdropChange();
+      },
+      onFailed: () => {
+        this.queuedTextureKeys.delete(textureKey);
+        this.showSceneToast('房屋底板加载失败，已保留当前底板。', 'warn', 1200);
+      }
+    });
+  }
+
+  private refreshWalkableMaskAfterBackdropChange(): void {
+    this.initializeWalkableMask();
+    this.drawWorkZones();
+    this.resetPatrolProgressTracking();
+  }
+
+  private resolveRuntimeAssetUrlCandidates(rawAssetUrl: string): string[] {
+    const raw = String(rawAssetUrl || '').trim();
+    if (!raw) {
+      return [];
+    }
+    if (/^(https?:\/\/|data:|blob:)/i.test(raw)) {
+      return [raw];
+    }
+
+    const normalized = raw.replace(/\\/g, '/');
+    const relative = normalized.replace(/^\/+/, '');
+    const baseUrl = String((import.meta as ImportMeta & { env?: { BASE_URL?: string } }).env?.BASE_URL || '/');
+    const basePrefix = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+    const withBase = `${basePrefix}${relative}`;
+    const rootAbsolute = `/${relative}`;
+    const dotRelative = `./${relative}`;
+
+    const candidates = [normalized, withBase, rootAbsolute, dotRelative];
+    const deduped: string[] = [];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const clean = String(candidate || '').trim();
+      if (!clean || seen.has(clean)) {
+        continue;
+      }
+      seen.add(clean);
+      deduped.push(clean);
+    }
+    return deduped;
+  }
+
+  private resolveRuntimeAssetUrl(rawAssetUrl: string): string {
+    return this.resolveRuntimeAssetUrlCandidates(rawAssetUrl)[0] || String(rawAssetUrl || '').trim();
+  }
+
+  private loadImageTextureWithFallback(
+    primaryTextureKey: string,
+    candidateUrls: string[],
+    handlers: {
+      onLoaded: (textureKey: string) => void;
+      onFailed: () => void;
+    }
+  ): void {
+    const queue = candidateUrls.filter((url) => String(url || '').trim().length > 0);
+    if (queue.length === 0) {
+      handlers.onFailed();
+      return;
+    }
+
+    const tryLoadAt = (index: number): void => {
+      if (index >= queue.length) {
+        handlers.onFailed();
+        return;
+      }
+      const url = queue[index];
+      const textureKey = index === 0 ? primaryTextureKey : `${primaryTextureKey}-alt-${index}`;
+      if (this.textures.exists(textureKey)) {
+        handlers.onLoaded(textureKey);
+        return;
+      }
+      this.queuedTextureKeys.add(textureKey);
+      const image = new Image();
+      const done = (ok: boolean): void => {
+        image.onload = null;
+        image.onerror = null;
+        this.queuedTextureKeys.delete(textureKey);
+        if (ok) {
+          if (this.textures.exists(textureKey)) {
+            this.textures.remove(textureKey);
+          }
+          const added = this.textures.addImage(textureKey, image);
+          if (added) {
+            handlers.onLoaded(textureKey);
+            return;
+          }
+        }
+        tryLoadAt(index + 1);
+      };
+      image.onload = () => done(true);
+      image.onerror = () => done(false);
+      const cacheBust = `${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+      image.src = `${url}${cacheBust}`;
+    };
+
+    tryLoadAt(0);
+  }
+
+  private fitFloorBackdropToTexture(floorImage: Phaser.GameObjects.Image, textureKey: string): void {
+    const texture = this.textures.get(textureKey);
+    const source = texture?.getSourceImage() as { width?: number; height?: number } | null;
+    const sourceWidth = Number(source?.width) || 0;
+    const sourceHeight = Number(source?.height) || 0;
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+      floorImage.setDisplaySize(this.floorBackdropFrame.width, this.floorBackdropFrame.height);
+      return;
+    }
+
+    const frameWidth = Math.max(1, this.floorBackdropFrame.width);
+    const frameHeight = Math.max(1, this.floorBackdropFrame.height);
+    const sourceRatio = sourceWidth / sourceHeight;
+    const frameRatio = frameWidth / frameHeight;
+
+    let displayWidth = frameWidth;
+    let displayHeight = frameHeight;
+    if (sourceRatio > frameRatio) {
+      displayHeight = frameWidth / sourceRatio;
+    } else {
+      displayWidth = frameHeight * sourceRatio;
+    }
+    floorImage.setDisplaySize(displayWidth, displayHeight);
+  }
+
+  public getEditorModeState(): { enabled: boolean; tool: SceneEditorTool } {
+    return {
+      enabled: this.editorModeEnabled,
+      tool: this.editorTool
+    };
+  }
+
+  public setWallEditorShapePreset(shape: WallShapeType): void {
+    this.wallEditorShapePreset = shape;
+    if (this.editorModeEnabled && this.editorTool === 'wall') {
+      this.showSceneToast(`墙壁图形：${this.wallShapeLabel(shape)}`, 'info', 900);
+    }
+  }
+
+  public enterWallEditor(options: { shape?: WallShapeType; silent?: boolean } = {}): void {
+    if (options.shape) {
+      this.wallEditorShapePreset = options.shape;
+    }
+    if (!this.wallEditorSessionActive) {
+      this.wallEditorBaseline = this.cloneWallBlocks(this.sceneMapData.wall_blocks);
+      this.wallEditorDirty = false;
+      this.wallEditorSessionActive = true;
+      this.selectedWallBlockId = null;
+    }
+    this.setEditorMode(true, 'wall', { silent: true });
+    if (!options.silent) {
+      this.showSceneToast('墙壁编辑已开启。左键选中/拖拽，右键删除。', 'success', 1500);
+    }
+  }
+
+  public saveWallEditorChanges(): void {
+    if (!this.editorModeEnabled || this.editorTool !== 'wall') {
+      return;
+    }
+    this.persistSceneMap('墙壁设置保存');
+    this.wallEditorBaseline = this.cloneWallBlocks(this.sceneMapData.wall_blocks);
+    this.wallEditorDirty = false;
+    this.showSceneToast('墙壁设置已保存。', 'success', 1300);
+  }
+
+  public exitWallEditor(options: { discardUnsaved?: boolean; silent?: boolean } = {}): void {
+    if (!this.wallEditorSessionActive && !(this.editorModeEnabled && this.editorTool === 'wall')) {
+      return;
+    }
+    const discardUnsaved = options.discardUnsaved === true;
+    if (discardUnsaved && this.wallEditorDirty && this.wallEditorBaseline) {
+      this.sceneMapData.wall_blocks = this.cloneWallBlocks(this.wallEditorBaseline);
+      this.initializeWalkableMask();
+      this.drawRooms();
+      this.drawSceneMapLayers();
+      this.drawWorkZones();
+    }
+
+    this.wallEditorSessionActive = false;
+    this.wallEditorDirty = false;
+    this.wallEditorBaseline = null;
+    this.selectedWallBlockId = null;
+    this.wallEditorDragState = null;
+    this.setEditorMode(false, 'wall', { silent: true });
+    if (!options.silent) {
+      this.showSceneToast('墙壁编辑已退出。', 'info', 1200);
+    }
+  }
+
+  public enterFurniturePlacement(options: { silent?: boolean } = {}): void {
+    this.setEditorMode(true, 'furniture', { silent: true });
+    if (!options.silent) {
+      this.showSceneToast('家具摆放已开启。左键拖拽，右键删除。', 'success', 1300);
+    }
+  }
+
+  public exitFurniturePlacement(options: { discardUnsaved?: boolean; silent?: boolean } = {}): void {
+    this.furnitureDragState = null;
+    const wasFurnitureMode = this.editorModeEnabled && this.editorTool === 'furniture';
+    if (wasFurnitureMode) {
+      this.setEditorMode(false, 'furniture', { silent: true });
+    }
+    if (!options.silent && wasFurnitureMode) {
+      this.showSceneToast('家具摆放已退出。', 'info', 1200);
+    }
+  }
+
+  public saveFurniturePlacementChanges(): void {
+    this.persistSceneMap('家具摆放保存');
+    this.showSceneToast('家具摆放已保存。', 'success', 1200);
+  }
+
+  public enterRoomLabelEditor(options: { silent?: boolean } = {}): void {
+    if (!this.roomLabelEditorSessionActive) {
+      this.roomLabelDragState = null;
+      this.selectedRoomLabelId = null;
+    }
+    this.roomLabelEditorSessionActive = true;
+    this.setEditorMode(true, 'room_label', { silent: true });
+    if (!options.silent) {
+      this.showSceneToast('房屋名编辑已开启。拖拽房屋名称即可调整位置。', 'success', 1400);
+    }
+  }
+
+  public saveRoomLabelEditorChanges(): void {
+    this.persistSceneMap('房屋名编辑保存');
+    this.showSceneToast('房屋名编辑已保存。', 'success', 1200);
+  }
+
+  public exitRoomLabelEditor(options: { silent?: boolean } = {}): void {
+    this.roomLabelDragState = null;
+    const wasRoomLabelMode = this.editorModeEnabled && this.editorTool === 'room_label';
+    this.roomLabelEditorSessionActive = false;
+    this.selectedRoomLabelId = null;
+    if (wasRoomLabelMode) {
+      this.setEditorMode(false, 'room_label', { silent: true });
+      this.syncRoomLabels();
+    }
+    if (!options.silent && wasRoomLabelMode) {
+      this.showSceneToast('房屋名编辑已退出。', 'info', 1200);
+    }
+  }
+
+  public enterInteractionEditor(options: { mode?: InteractionEditorMode; silent?: boolean } = {}): void {
+    if (options.mode) {
+      this.interactionEditorMode = options.mode;
+    }
+    this.interactionEditorSessionActive = true;
+    this.ensureInteractionSelection();
+    this.setEditorMode(true, 'interaction', { silent: true });
+    if (!options.silent) {
+      const modeLabel = this.interactionEditorMode === 'action_point' ? '动作点' : '交互框';
+      this.showSceneToast(`${modeLabel}编辑已开启。左键拖拽，右键删除。`, 'success', 1500);
+    }
+  }
+
+  public setInteractionEditorMode(nextMode: InteractionEditorMode): void {
+    if (this.interactionEditorMode === nextMode) {
+      return;
+    }
+    this.interactionEditorMode = nextMode;
+    this.ensureInteractionSelection();
+    this.drawSceneMapLayers();
+    if (this.editorModeEnabled && this.editorTool === 'interaction') {
+      const label = nextMode === 'action_point' ? '动作点' : '交互框';
+      this.showSceneToast(`交互编辑切换：${label}`, 'info', 900);
+    }
+  }
+
+  public saveInteractionEditorChanges(): void {
+    this.persistSceneMap('交互编辑保存');
+    this.showSceneToast('交互编辑已保存。', 'success', 1200);
+  }
+
+  public exitInteractionEditor(options: { discardUnsaved?: boolean; silent?: boolean } = {}): void {
+    const wasInteractionMode = this.editorModeEnabled && this.editorTool === 'interaction';
+    this.interactionEditorSessionActive = false;
+    this.interactionPointDragState = null;
+    this.interactionBoxDragState = null;
+    this.selectedInteractionPointId = null;
+    this.selectedInteractionBoxId = null;
+    if (wasInteractionMode) {
+      this.setEditorMode(false, 'interaction', { silent: true });
+    }
+    if (!options.silent && wasInteractionMode) {
+      this.showSceneToast('已退出交互编辑。', 'info', 1200);
+    }
+  }
+
+  public getInteractionEditorSnapshot(): InteractionEditorSnapshot {
+    return {
+      mode: this.interactionEditorMode,
+      selectedActionPointId: this.selectedInteractionPointId,
+      selectedInteractionBoxId: this.selectedInteractionBoxId,
+      actionPoints: this.sceneMapData.interaction_points.map((item) => ({ ...item })),
+      interactionBoxes: this.sceneMapData.interaction_boxes.map((item) => ({ ...item }))
+    };
+  }
+
+  public updateSelectedInteractionPointMeta(
+    patch: Partial<Pick<
+      SceneInteractionPoint,
+      'label' | 'interaction_type' | 'sprite_key' | 'sprite_total_frames' | 'sprite_frame_width' | 'sprite_frame_height' | 'sprite_fps'
+    >>,
+    options: { persist?: boolean } = {}
+  ): boolean {
+    if (!this.selectedInteractionPointId) {
+      return false;
+    }
+    const target = this.sceneMapData.interaction_points.find((item) => item.id === this.selectedInteractionPointId);
+    if (!target) {
+      return false;
+    }
+    if (typeof patch.label === 'string') {
+      target.label = patch.label.trim() || target.label;
+    }
+    if (typeof patch.interaction_type === 'string') {
+      target.interaction_type = patch.interaction_type.trim() || target.interaction_type;
+    }
+    if (typeof patch.sprite_key === 'string') {
+      target.sprite_key = patch.sprite_key.trim() || undefined;
+    }
+    if (typeof patch.sprite_total_frames === 'number' && Number.isFinite(patch.sprite_total_frames)) {
+      target.sprite_total_frames = Math.max(1, Math.round(patch.sprite_total_frames));
+    }
+    if (typeof patch.sprite_frame_width === 'number' && Number.isFinite(patch.sprite_frame_width)) {
+      target.sprite_frame_width = Math.max(1, Math.round(patch.sprite_frame_width));
+    }
+    if (typeof patch.sprite_frame_height === 'number' && Number.isFinite(patch.sprite_frame_height)) {
+      target.sprite_frame_height = Math.max(1, Math.round(patch.sprite_frame_height));
+    }
+    if (typeof patch.sprite_fps === 'number' && Number.isFinite(patch.sprite_fps)) {
+      target.sprite_fps = Math.max(1, patch.sprite_fps);
+    }
+    if (options.persist) {
+      this.persistSceneMap(`更新动作点 ${target.id}`);
+    } else {
+      this.drawSceneMapLayers();
+    }
+    return true;
+  }
+
+  private ensureInteractionSelection(): void {
+    if (this.interactionEditorMode === 'action_point') {
+      const exists = this.selectedInteractionPointId
+        ? this.sceneMapData.interaction_points.some((item) => item.id === this.selectedInteractionPointId)
+        : false;
+      if (!exists) {
+        this.selectedInteractionPointId = this.sceneMapData.interaction_points[0]?.id ?? null;
+      }
+      this.selectedInteractionBoxId = null;
+      this.hoveredInteractionBoxId = null;
+      return;
+    }
+
+    const exists = this.selectedInteractionBoxId
+      ? this.sceneMapData.interaction_boxes.some((item) => item.id === this.selectedInteractionBoxId)
+      : false;
+    if (!exists) {
+      this.selectedInteractionBoxId = this.sceneMapData.interaction_boxes[0]?.id ?? null;
+    }
+    this.selectedInteractionPointId = null;
+    this.hoveredInteractionPointId = null;
+  }
+
+  public updateSelectedInteractionBoxMeta(
+    patch: Partial<Pick<
+      InteractionBox,
+      'label' | 'interaction_name' | 'interaction_type' | 'sprite_key' | 'sprite_total_frames' | 'sprite_frame_width' | 'sprite_frame_height' | 'sprite_fps'
+    >>,
+    options: { persist?: boolean } = {}
+  ): boolean {
+    if (!this.selectedInteractionBoxId) {
+      return false;
+    }
+    const target = this.sceneMapData.interaction_boxes.find((item) => item.id === this.selectedInteractionBoxId);
+    if (!target) {
+      return false;
+    }
+    if (typeof patch.label === 'string') {
+      target.label = patch.label.trim() || target.label;
+    }
+    if (typeof patch.interaction_name === 'string') {
+      target.interaction_name = patch.interaction_name.trim() || target.interaction_name;
+    }
+    if (typeof patch.interaction_type === 'string') {
+      target.interaction_type = patch.interaction_type.trim() || target.interaction_type;
+    }
+    if (typeof patch.sprite_key === 'string') {
+      target.sprite_key = patch.sprite_key.trim() || undefined;
+    }
+    if (typeof patch.sprite_total_frames === 'number' && Number.isFinite(patch.sprite_total_frames)) {
+      target.sprite_total_frames = Math.max(1, Math.round(patch.sprite_total_frames));
+    }
+    if (typeof patch.sprite_frame_width === 'number' && Number.isFinite(patch.sprite_frame_width)) {
+      target.sprite_frame_width = Math.max(1, Math.round(patch.sprite_frame_width));
+    }
+    if (typeof patch.sprite_frame_height === 'number' && Number.isFinite(patch.sprite_frame_height)) {
+      target.sprite_frame_height = Math.max(1, Math.round(patch.sprite_frame_height));
+    }
+    if (typeof patch.sprite_fps === 'number' && Number.isFinite(patch.sprite_fps)) {
+      target.sprite_fps = Math.max(1, patch.sprite_fps);
+    }
+    if (options.persist) {
+      this.persistSceneMap(`更新交互框 ${target.id}`);
+    } else {
+      this.drawSceneMapLayers();
+    }
+    return true;
+  }
+
+  public setFurniturePlacementTemplate(template: FurniturePlacementTemplate | null): void {
+    this.furniturePlacementTemplate = template;
+    if (template && this.editorModeEnabled && this.editorTool === 'furniture') {
+      this.showSceneToast(`摆放模板：${template.label}（${template.direction}）`, 'info', 700);
+    }
+  }
+
+  public rotateSelectedFurnitureFacing(step: number): boolean {
+    if (!(this.editorModeEnabled && this.editorTool === 'furniture')) {
+      return false;
+    }
+    if (!this.selectedFurnitureId) {
+      return false;
+    }
+    const selectedFurniture = this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId) ?? null;
+    if (!selectedFurniture) {
+      return false;
+    }
+    const current = this.normalizeFurnitureFacing(selectedFurniture.direction);
+    const next = this.shiftFurnitureFacing(current, step);
+    if (next === current && !selectedFurniture.sprite_directions) {
+      return false;
+    }
+    selectedFurniture.direction = next;
+    const nextSprite = this.resolveFurnitureSpriteForFacing(selectedFurniture, next);
+    if (nextSprite) {
+      selectedFurniture.sprite_key = nextSprite;
+    }
+    this.persistSceneMap(`切换家具朝向 ${selectedFurniture.id} -> ${next}`);
+    return true;
+  }
+
+  public scaleSelectedFurnitureSize(factor: number): boolean {
+    if (!(this.editorModeEnabled && this.editorTool === 'furniture')) {
+      return false;
+    }
+    if (!Number.isFinite(factor) || factor <= 0) {
+      return false;
+    }
+    if (!this.selectedFurnitureId) {
+      return false;
+    }
+    const selectedFurniture = this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId) ?? null;
+    if (!selectedFurniture) {
+      return false;
+    }
+    const currentWidth = Math.max(8, Math.round(selectedFurniture.width));
+    const currentHeight = Math.max(8, Math.round(selectedFurniture.height));
+    const maxWidth = Math.max(
+      FURNITURE_RESIZE_MIN_SIZE,
+      Math.min(FURNITURE_RESIZE_MAX_SIZE, Math.round(this.sceneMapData.base_width))
+    );
+    const maxHeight = Math.max(
+      FURNITURE_RESIZE_MIN_SIZE,
+      Math.min(FURNITURE_RESIZE_MAX_SIZE, Math.round(this.sceneMapData.base_height))
+    );
+    const nextWidth = Math.round(Phaser.Math.Clamp(currentWidth * factor, FURNITURE_RESIZE_MIN_SIZE, maxWidth));
+    const nextHeight = Math.round(Phaser.Math.Clamp(currentHeight * factor, FURNITURE_RESIZE_MIN_SIZE, maxHeight));
+    if (nextWidth === currentWidth && nextHeight === currentHeight) {
+      return false;
+    }
+    const centerX = selectedFurniture.x + (currentWidth / 2);
+    const centerY = selectedFurniture.y + (currentHeight / 2);
+    const clamped = this.clampFurniturePosition(
+      Math.round(centerX - nextWidth / 2),
+      Math.round(centerY - nextHeight / 2),
+      nextWidth,
+      nextHeight
+    );
+    selectedFurniture.width = nextWidth;
+    selectedFurniture.height = nextHeight;
+    selectedFurniture.x = clamped.x;
+    selectedFurniture.y = clamped.y;
+    selectedFurniture.z_index = selectedFurniture.y + selectedFurniture.height;
+    this.persistSceneMap(`调整家具尺寸 ${selectedFurniture.id} -> ${nextWidth}×${nextHeight}`);
+    return true;
   }
 
   public getActorVariants(): Array<{ id: string; label: string }> {
@@ -806,6 +1640,22 @@ export class LibraryScene extends Phaser.Scene {
     return this.resolveActorVariant()?.label ?? 'Actor';
   }
 
+  public setGeneratedActorVariantFolders(folderIds: string[]): void {
+    const nextFolders = Array.from(new Set(
+      folderIds
+        .map((folderId) => this.normalizeGeneratedActorFolderId(folderId))
+        .filter((folderId): folderId is string => Boolean(folderId))
+    ));
+    if (
+      nextFolders.length === this.generatedActorVariantFolders.length
+      && nextFolders.every((folderId, index) => folderId === this.generatedActorVariantFolders[index])
+    ) {
+      return;
+    }
+    this.generatedActorVariantFolders = nextFolders;
+    this.generatedActorVariantCache.clear();
+  }
+
   public setActorVariant(nextVariantId: string): void {
     const variant = this.resolveActorVariants().find((entry) => entry.id === nextVariantId);
     if (!variant) {
@@ -814,17 +1664,13 @@ export class LibraryScene extends Phaser.Scene {
     if (this.actorVariantId === variant.id) {
       return;
     }
-    this.actorVariantId = variant.id;
-    this.actorVisualSelectionByContext.clear();
-    this.updateLobsterVisual(this.currentActorVisualMode());
+    this.ensureActorVariantTexturesReady(variant, () => {
+      this.applyActorVariant(variant);
+    });
   }
 
   private preloadSceneArt(): void {
-    if ((this.protocols.sceneArt.globalLayers?.length ?? 0) === 0) {
-      this.loadTextureAsset(LEGACY_BACKGROUND);
-    }
-
-    for (const layer of this.protocols.sceneArt.globalLayers ?? []) {
+    for (const layer of this.activeSceneGlobalLayers()) {
       this.loadTextureAsset(layer);
     }
 
@@ -884,36 +1730,29 @@ export class LibraryScene extends Phaser.Scene {
     this.load.image(asset.textureKey, asset.path);
   }
 
-  private spawnLegacyBackground(): void {
-    if (!this.textures.exists(LEGACY_BACKGROUND.textureKey)) {
-      return;
-    }
-
-    this.legacyBackgroundImage = this.add.image(
-      LEGACY_BACKGROUND.anchor.x,
-      LEGACY_BACKGROUND.anchor.y,
-      LEGACY_BACKGROUND.textureKey
-    );
-    this.legacyBackgroundImage.setDisplaySize(
-      LEGACY_BACKGROUND.displaySize.width,
-      LEGACY_BACKGROUND.displaySize.height
-    );
-    this.legacyBackgroundImage.setDepth(0);
-  }
-
   private spawnSceneBaseArt(): void {
-    this.legacyBackgroundImage = null;
+    this.floorBackdropImage?.destroy();
+    this.floorBackdropImage = null;
     for (const rendered of this.renderedGlobalLayers) {
       rendered.shadowImage?.destroy();
       rendered.image.destroy();
     }
     this.renderedGlobalLayers = [];
 
-    const globalLayers = this.protocols.sceneArt.globalLayers ?? [];
-    if (globalLayers.length === 0) {
-      this.spawnLegacyBackground();
-      return;
+    const floorSpec = this.resolveFloorBackdropSpec();
+    if (floorSpec) {
+      this.floorBackdropFrame = {
+        width: Math.max(1, floorSpec.displaySize.width),
+        height: Math.max(1, floorSpec.displaySize.height)
+      };
+      this.floorBackdropImage = this.add.image(floorSpec.anchor.x, floorSpec.anchor.y, '__WHITE');
+      this.floorBackdropImage.setDisplaySize(this.floorBackdropFrame.width, this.floorBackdropFrame.height);
+      this.floorBackdropImage.setTint(0x0a1016);
+      this.floorBackdropImage.setAlpha(1);
+      this.floorBackdropImage.setDepth(this.layerToDepth('floor', floorSpec.anchor.y) - 0.5);
     }
+
+    const globalLayers = this.activeSceneGlobalLayers();
 
     for (const layer of globalLayers) {
       const baseDepth = this.layerToDepth(layer.renderLayer, layer.anchor.y) - (layer.renderLayer === 'floor' ? 0.5 : 0.1);
@@ -940,7 +1779,57 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private hasSceneBaseArt(): boolean {
-    return Boolean(this.legacyBackgroundImage) || this.renderedGlobalLayers.length > 0;
+    return Boolean(this.floorBackdropImage) || this.renderedGlobalLayers.length > 0;
+  }
+
+  private activeSceneGlobalLayers(): SceneGlobalLayerDef[] {
+    const layers = this.protocols.sceneArt.globalLayers ?? [];
+    return layers.filter((layer) => layer.renderLayer !== 'floor');
+  }
+
+  private resolveFloorBackdropSpec(): { anchor: Point; displaySize: { width: number; height: number } } | null {
+    const globalLayers = this.protocols.sceneArt.globalLayers ?? [];
+    const floorLayer = globalLayers.find((layer) => layer.renderLayer === 'floor') ?? null;
+    if (floorLayer?.anchor && floorLayer?.displaySize) {
+      return {
+        anchor: {
+          x: Number(floorLayer.anchor.x) || (this.sceneMapData.base_width / 2),
+          y: Number(floorLayer.anchor.y) || (this.sceneMapData.base_height / 2)
+        },
+        displaySize: {
+          width: Math.max(1, Number(floorLayer.displaySize.width) || this.sceneMapData.base_width),
+          height: Math.max(1, Number(floorLayer.displaySize.height) || this.sceneMapData.base_height)
+        }
+      };
+    }
+    return {
+      anchor: {
+        x: this.sceneMapData.base_width / 2,
+        y: this.sceneMapData.base_height / 2
+      },
+      displaySize: {
+        width: this.sceneMapData.base_width,
+        height: this.sceneMapData.base_height
+      }
+    };
+  }
+
+  private resolveSceneFloorImage(): Phaser.GameObjects.Image | null {
+    return this.floorBackdropImage;
+  }
+
+  private textureKeyForHouseSignature(signature: string, houseId: string): string {
+    const safeHouseId = houseId
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 36) || 'house';
+    let hash = 0;
+    for (let i = 0; i < signature.length; i += 1) {
+      hash = ((hash * 31) + signature.charCodeAt(i)) >>> 0;
+    }
+    return `tyxt-house-floor-${safeHouseId}-${hash.toString(16)}`;
   }
 
   private cssColor(color: number, alpha: number): string {
@@ -949,22 +1838,11 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private initializeWalkableMask(): void {
-    const walkableRef = (this.protocols.sceneArt.conceptRefs ?? []).find((ref) => ref.id.includes('walkable-ref'));
-    if (!walkableRef || !this.textures.exists(walkableRef.id)) {
-      this.walkableMaskData = null;
-      this.walkableMaskWidth = 0;
-      this.walkableMaskHeight = 0;
-      this.walkableMaskColorMode = 'red';
-      this.walkableGrid = null;
-      this.walkableGridCols = 0;
-      this.walkableGridRows = 0;
-      return;
-    }
-
-    const sourceImage = this.textures.get(walkableRef.id).getSourceImage() as CanvasImageSource & { width: number; height: number };
+    const sourceWidth = Math.max(1, Math.round(this.sceneMapData.base_width));
+    const sourceHeight = Math.max(1, Math.round(this.sceneMapData.base_height));
     const canvas = document.createElement('canvas');
-    canvas.width = sourceImage.width;
-    canvas.height = sourceImage.height;
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
     const context = canvas.getContext('2d');
     if (!context) {
       this.walkableMaskData = null;
@@ -974,7 +1852,19 @@ export class LibraryScene extends Phaser.Scene {
       return;
     }
 
-    context.drawImage(sourceImage, 0, 0);
+    context.clearRect(0, 0, sourceWidth, sourceHeight);
+    context.fillStyle = '#ff0000';
+    this.fillWalkableMainBackdropOnCanvas(context);
+
+    context.globalCompositeOperation = 'destination-out';
+    context.fillStyle = '#000000';
+    for (const wallBlock of this.sceneMapData.wall_blocks) {
+      this.fillWallBlockOnCanvas(context, wallBlock);
+    }
+    // Furniture no longer blocks primary-agent movement.
+    // This avoids oversized transparent sprite bounds causing false path obstruction.
+    context.globalCompositeOperation = 'source-over';
+
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
     this.walkableMaskData = imageData.data;
     this.walkableMaskWidth = canvas.width;
@@ -982,6 +1872,208 @@ export class LibraryScene extends Phaser.Scene {
     this.detectWalkableMaskColorMode();
     this.initializeWalkableGrid();
     this.snapRuntimeAnchorsToWalkable();
+  }
+
+  private fillWalkableMainBackdropOnCanvas(context: CanvasRenderingContext2D): void {
+    const rect = this.resolveWalkableMainBackdropRect();
+    context.beginPath();
+    context.rect(rect.x, rect.y, rect.width, rect.height);
+    context.closePath();
+    context.fill();
+  }
+
+  private resolveWalkableMainBackdropRect(): SceneMapRect {
+    if (this.floorBackdropImage) {
+      const width = Number(this.floorBackdropImage.displayWidth) || 0;
+      const height = Number(this.floorBackdropImage.displayHeight) || 0;
+      if (width > 0 && height > 0) {
+        return {
+          x: this.floorBackdropImage.x - width / 2,
+          y: this.floorBackdropImage.y - height / 2,
+          width,
+          height
+        };
+      }
+    }
+
+    const floorSpec = this.resolveFloorBackdropSpec();
+    if (floorSpec) {
+      return {
+        x: floorSpec.anchor.x - floorSpec.displaySize.width / 2,
+        y: floorSpec.anchor.y - floorSpec.displaySize.height / 2,
+        width: floorSpec.displaySize.width,
+        height: floorSpec.displaySize.height
+      };
+    }
+
+    return {
+      x: 0,
+      y: 0,
+      width: this.sceneMapData.base_width,
+      height: this.sceneMapData.base_height
+    };
+  }
+
+  private cloneWallBlocks(blocks: WallBlock[]): WallBlock[] {
+    return blocks.map((block) => ({
+      ...block,
+      shape: block.shape || 'rectangle',
+      rotation: Number(block.rotation) || 0
+    }));
+  }
+
+  private wallShapeLabel(shape: WallShapeType): string {
+    if (shape === 'square') return '正方形';
+    if (shape === 'rectangle') return '长方形';
+    if (shape === 'triangle') return '三角形';
+    if (shape === 'circle') return '圆形';
+    return '梯形';
+  }
+
+  private wallBlockCenter(block: WallBlock): Point {
+    return {
+      x: block.x + block.width / 2,
+      y: block.y + block.height / 2
+    };
+  }
+
+  private wallBlockShapeSize(block: WallBlock): { width: number; height: number } {
+    if (block.shape === 'square') {
+      const side = Math.max(block.width, block.height);
+      return { width: side, height: side };
+    }
+    return {
+      width: Math.max(EDITOR_WALL_MIN_SIZE, block.width),
+      height: Math.max(EDITOR_WALL_MIN_SIZE, block.height)
+    };
+  }
+
+  private rotateLocalPoint(point: Point, rad: number): Point {
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    return {
+      x: point.x * cos - point.y * sin,
+      y: point.x * sin + point.y * cos
+    };
+  }
+
+  private wallBlockLocalPolygon(block: WallBlock): Point[] {
+    const size = this.wallBlockShapeSize(block);
+    const halfW = size.width / 2;
+    const halfH = size.height / 2;
+
+    if (block.shape === 'triangle') {
+      return [
+        { x: 0, y: -halfH },
+        { x: halfW, y: halfH },
+        { x: -halfW, y: halfH }
+      ];
+    }
+
+    if (block.shape === 'trapezoid') {
+      const topHalfW = halfW * 0.6;
+      return [
+        { x: -topHalfW, y: -halfH },
+        { x: topHalfW, y: -halfH },
+        { x: halfW, y: halfH },
+        { x: -halfW, y: halfH }
+      ];
+    }
+
+    if (block.shape === 'circle') {
+      const points: Point[] = [];
+      const segments = 28;
+      for (let i = 0; i < segments; i += 1) {
+        const t = (Math.PI * 2 * i) / segments;
+        points.push({
+          x: Math.cos(t) * halfW,
+          y: Math.sin(t) * halfH
+        });
+      }
+      return points;
+    }
+
+    return [
+      { x: -halfW, y: -halfH },
+      { x: halfW, y: -halfH },
+      { x: halfW, y: halfH },
+      { x: -halfW, y: halfH }
+    ];
+  }
+
+  private wallBlockPolygon(block: WallBlock): Point[] {
+    const center = this.wallBlockCenter(block);
+    const localPoints = this.wallBlockLocalPolygon(block);
+    const rad = Phaser.Math.DegToRad(Number(block.rotation) || 0);
+    return localPoints.map((point) => {
+      const rotated = this.rotateLocalPoint(point, rad);
+      return {
+        x: center.x + rotated.x,
+        y: center.y + rotated.y
+      };
+    });
+  }
+
+  private wallBlockBounds(block: WallBlock): SceneMapRect {
+    const polygon = this.wallBlockPolygon(block);
+    if (polygon.length === 0) {
+      return {
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height
+      };
+    }
+    let minX = polygon[0].x;
+    let maxX = polygon[0].x;
+    let minY = polygon[0].y;
+    let maxY = polygon[0].y;
+    for (const point of polygon) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+      minY = Math.min(minY, point.y);
+      maxY = Math.max(maxY, point.y);
+    }
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY)
+    };
+  }
+
+  private pointInWallBlock(point: Point, block: WallBlock): boolean {
+    const polygon = this.wallBlockPolygon(block);
+    return polygon.length >= 3 ? pointInPolygon(point, polygon) : false;
+  }
+
+  private fillWallBlockOnCanvas(context: CanvasRenderingContext2D, block: WallBlock): void {
+    const polygon = this.wallBlockPolygon(block);
+    if (polygon.length < 3) {
+      return;
+    }
+    context.beginPath();
+    context.moveTo(polygon[0].x, polygon[0].y);
+    for (let i = 1; i < polygon.length; i += 1) {
+      context.lineTo(polygon[i].x, polygon[i].y);
+    }
+    context.closePath();
+    context.fill();
+  }
+
+  private drawWallBlockOnGraphics(
+    graphics: Phaser.GameObjects.Graphics,
+    block: WallBlock,
+    options: { fillColor: number; fillAlpha: number; strokeColor?: number; strokeAlpha?: number; strokeWidth?: number }
+  ): void {
+    const polygon = this.wallBlockPolygon(block);
+    if (polygon.length < 3) {
+      return;
+    }
+    graphics.fillStyle(options.fillColor, options.fillAlpha);
+    graphics.fillPoints(polygon, true);
+    graphics.lineStyle(options.strokeWidth ?? 1.2, options.strokeColor ?? 0xf2fbff, options.strokeAlpha ?? 0.8);
+    graphics.strokePoints(polygon, true, true);
   }
 
   private detectWalkableMaskColorMode(): void {
@@ -1044,8 +2136,8 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private initializeWalkableGrid(): void {
-    const baseWidth = this.protocols.mapLogic.meta.baseResolution.width;
-    const baseHeight = this.protocols.mapLogic.meta.baseResolution.height;
+    const baseWidth = this.sceneMapData.base_width;
+    const baseHeight = this.sceneMapData.base_height;
     this.walkableGridCols = Math.ceil(baseWidth / this.walkableGridStep);
     this.walkableGridRows = Math.ceil(baseHeight / this.walkableGridStep);
     this.walkableGrid = new Uint8Array(this.walkableGridCols * this.walkableGridRows);
@@ -1056,7 +2148,7 @@ export class LibraryScene extends Phaser.Scene {
           x: Math.min(baseWidth - 1, col * this.walkableGridStep + this.walkableGridStep / 2),
           y: Math.min(baseHeight - 1, row * this.walkableGridStep + this.walkableGridStep / 2)
         };
-        if (this.isWalkableByMask(samplePoint)) {
+        if (this.isWalkableGridSample(samplePoint)) {
           this.walkableGrid[row * this.walkableGridCols + col] = 1;
         }
       }
@@ -1064,20 +2156,45 @@ export class LibraryScene extends Phaser.Scene {
     this.reachableWalkableGrid = null;
   }
 
+  private isWalkableGridSample(center: Point): boolean {
+    const baseWidth = this.sceneMapData.base_width;
+    const baseHeight = this.sceneMapData.base_height;
+    const offset = this.walkableGridStep * WALKABLE_CELL_SAFETY_OFFSET_RATIO;
+    const sample = (delta: Point): boolean => {
+      const point = {
+        x: Phaser.Math.Clamp(center.x + delta.x, 0, Math.max(0, baseWidth - 1)),
+        y: Phaser.Math.Clamp(center.y + delta.y, 0, Math.max(0, baseHeight - 1))
+      };
+      return Boolean(this.isWalkableByMask(point));
+    };
+
+    // Center must be walkable; cardinal samples are tolerant so narrow corridors do not get over-pruned.
+    if (!sample({ x: 0, y: 0 })) {
+      return false;
+    }
+    const cardinals: Point[] = [
+      { x: offset, y: 0 },
+      { x: -offset, y: 0 },
+      { x: 0, y: offset },
+      { x: 0, y: -offset }
+    ];
+    let walkableCount = 0;
+    for (const delta of cardinals) {
+      if (sample(delta)) {
+        walkableCount += 1;
+      }
+    }
+    return walkableCount >= 3;
+  }
+
   private scenePointToBaseArtPixel(point: Point): { x: number; y: number } | null {
-    const baseLayer = this.renderedGlobalLayers[0];
-    const displayWidth = baseLayer?.image.displayWidth ?? this.legacyBackgroundImage?.displayWidth ?? 0;
-    const displayHeight = baseLayer?.image.displayHeight ?? this.legacyBackgroundImage?.displayHeight ?? 0;
-    const centerX = baseLayer?.image.x ?? this.legacyBackgroundImage?.x ?? 0;
-    const centerY = baseLayer?.image.y ?? this.legacyBackgroundImage?.y ?? 0;
-    if (!displayWidth || !displayHeight || !this.walkableMaskWidth || !this.walkableMaskHeight) {
+    const baseWidth = Math.max(1, this.sceneMapData.base_width);
+    const baseHeight = Math.max(1, this.sceneMapData.base_height);
+    if (!this.walkableMaskWidth || !this.walkableMaskHeight) {
       return null;
     }
-
-    const left = centerX - displayWidth / 2;
-    const top = centerY - displayHeight / 2;
-    const normalizedX = (point.x - left) / displayWidth;
-    const normalizedY = (point.y - top) / displayHeight;
+    const normalizedX = point.x / baseWidth;
+    const normalizedY = point.y / baseHeight;
     if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) {
       return null;
     }
@@ -1089,19 +2206,14 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private baseArtPixelToScenePoint(pixel: { x: number; y: number }): Point | null {
-    const baseLayer = this.renderedGlobalLayers[0];
-    const displayWidth = baseLayer?.image.displayWidth ?? this.legacyBackgroundImage?.displayWidth ?? 0;
-    const displayHeight = baseLayer?.image.displayHeight ?? this.legacyBackgroundImage?.displayHeight ?? 0;
-    const centerX = baseLayer?.image.x ?? this.legacyBackgroundImage?.x ?? 0;
-    const centerY = baseLayer?.image.y ?? this.legacyBackgroundImage?.y ?? 0;
-    if (!displayWidth || !displayHeight || !this.walkableMaskWidth || !this.walkableMaskHeight) {
+    const baseWidth = Math.max(1, this.sceneMapData.base_width);
+    const baseHeight = Math.max(1, this.sceneMapData.base_height);
+    if (!this.walkableMaskWidth || !this.walkableMaskHeight) {
       return null;
     }
-    const left = centerX - displayWidth / 2;
-    const top = centerY - displayHeight / 2;
     return {
-      x: left + (pixel.x / (this.walkableMaskWidth - 1)) * displayWidth,
-      y: top + (pixel.y / (this.walkableMaskHeight - 1)) * displayHeight
+      x: (pixel.x / Math.max(1, this.walkableMaskWidth - 1)) * baseWidth,
+      y: (pixel.y / Math.max(1, this.walkableMaskHeight - 1)) * baseHeight
     };
   }
 
@@ -1130,12 +2242,8 @@ export class LibraryScene extends Phaser.Scene {
       return null;
     }
 
-    const baseLayer = this.renderedGlobalLayers[0];
-    const displayWidth = baseLayer?.image.displayWidth ?? this.legacyBackgroundImage?.displayWidth ?? 0;
-    if (!displayWidth) {
-      return null;
-    }
-    const scale = this.walkableMaskWidth / displayWidth;
+    const baseWidth = Math.max(1, this.sceneMapData.base_width);
+    const scale = this.walkableMaskWidth / baseWidth;
     const maxRadius = Math.max(6, Math.round(maxSceneRadius * scale));
     let best: { x: number; y: number; dist: number } | null = null;
 
@@ -1179,6 +2287,46 @@ export class LibraryScene extends Phaser.Scene {
     return distance <= snapRadius ? snapped : null;
   }
 
+  private syncWorkZonesFromInteractionPoints(options: { refreshWorkZoneLayer?: boolean } = {}): void {
+    const interactionPointByRoomId = new Map<string, SceneInteractionPoint>();
+    for (const point of this.sceneMapData.interaction_points) {
+      const roomId = String(point.room_id || '').trim();
+      if (!roomId) {
+        continue;
+      }
+      const existing = interactionPointByRoomId.get(roomId);
+      if (!existing) {
+        interactionPointByRoomId.set(roomId, point);
+        continue;
+      }
+      const existingIsWorkZone = String(existing.type || '').trim().toLowerCase() === 'work_zone';
+      const nextIsWorkZone = String(point.type || '').trim().toLowerCase() === 'work_zone';
+      if (!existingIsWorkZone && nextIsWorkZone) {
+        interactionPointByRoomId.set(roomId, point);
+      }
+    }
+
+    let changed = false;
+    for (const zone of this.protocols.mapLogic.workZones) {
+      const point = interactionPointByRoomId.get(zone.id);
+      if (!point) {
+        continue;
+      }
+      const nextAnchor = {
+        x: Math.round(point.anchor_x ?? point.x),
+        y: Math.round(point.anchor_y ?? point.y)
+      };
+      if (zone.anchor.x !== nextAnchor.x || zone.anchor.y !== nextAnchor.y) {
+        zone.anchor = nextAnchor;
+        changed = true;
+      }
+    }
+
+    if (changed && options.refreshWorkZoneLayer) {
+      this.drawWorkZones();
+    }
+  }
+
   private snapRuntimeAnchorsToWalkable(): void {
     for (const node of this.protocols.mapLogic.walkGraph.nodes) {
       const snapped = this.findNearestWalkablePoint({ x: node.x, y: node.y }, 120);
@@ -1194,19 +2342,17 @@ export class LibraryScene extends Phaser.Scene {
         zone.anchor = { x: Math.round(snapped.x), y: Math.round(snapped.y) };
       }
     }
-  }
 
-  private routePointsForTarget(routeNodes: Point[], target: Point): Point[] {
-    const route = routeNodes.map((node) => ({ x: node.x, y: node.y }));
-    const tail = route.at(-1);
-    if (!tail) {
-      return route;
+    for (const interactionPoint of this.sceneMapData.interaction_points) {
+      const snapped = this.findNearestWalkablePoint(
+        { x: interactionPoint.anchor_x ?? interactionPoint.x, y: interactionPoint.anchor_y ?? interactionPoint.y },
+        120
+      );
+      if (snapped) {
+        interactionPoint.anchor_x = Math.round(snapped.x);
+        interactionPoint.anchor_y = Math.round(snapped.y);
+      }
     }
-    const alreadyAtTarget = Math.hypot(tail.x - target.x, tail.y - target.y) < 2;
-    if (!alreadyAtTarget && this.isWalkablePoint(target)) {
-      route.push({ x: target.x, y: target.y });
-    }
-    return route;
   }
 
   private gridIndex(col: number, row: number): number {
@@ -1258,10 +2404,82 @@ export class LibraryScene extends Phaser.Scene {
     return best ? { col: best.col, row: best.row } : null;
   }
 
+  private findNearestExistingWalkableCell(point: Point): { col: number; row: number } | null {
+    if (!this.walkableGrid || this.walkableGridCols <= 0 || this.walkableGridRows <= 0) {
+      return null;
+    }
+    const origin = this.scenePointToGrid(point);
+    let best: { col: number; row: number; dist: number } | null = null;
+    for (let row = 0; row < this.walkableGridRows; row += 1) {
+      for (let col = 0; col < this.walkableGridCols; col += 1) {
+        if (this.walkableGrid[this.gridIndex(col, row)] !== 1) {
+          continue;
+        }
+        const dx = col - origin.col;
+        const dy = row - origin.row;
+        const dist = dx * dx + dy * dy;
+        if (best && dist >= best.dist) {
+          continue;
+        }
+        best = { col, row, dist };
+      }
+    }
+    return best ? { col: best.col, row: best.row } : null;
+  }
+
+  private resolvePatrolWalkableOrigin(origin: Point): Point | null {
+    const direct = this.resolveRequestedWalkTarget(origin, 360);
+    if (direct) {
+      return direct;
+    }
+    const nearestCell = this.findNearestWalkableCell(origin, Math.max(this.sceneMapData.base_width, this.sceneMapData.base_height))
+      ?? this.findNearestExistingWalkableCell(origin);
+    if (nearestCell) {
+      return this.gridToScenePoint(nearestCell.col, nearestCell.row);
+    }
+    return this.findNearestWalkablePoint(origin, Math.max(this.sceneMapData.base_width, this.sceneMapData.base_height));
+  }
+
+  private pickRandomWalkablePatrolTarget(origin: Point, minDistance = 140): Point | null {
+    if (!this.walkableGrid || this.walkableGridCols <= 0 || this.walkableGridRows <= 0) {
+      return this.resolvePatrolWalkableOrigin(origin);
+    }
+
+    const total = this.walkableGrid.length;
+    let fallback: { point: Point; distance: number } | null = null;
+    for (let attempt = 0; attempt < 220; attempt += 1) {
+      const index = Phaser.Math.Between(0, total - 1);
+      if (this.walkableGrid[index] !== 1) {
+        continue;
+      }
+      const col = index % this.walkableGridCols;
+      const row = Math.floor(index / this.walkableGridCols);
+      const point = this.gridToScenePoint(col, row);
+      const distance = Phaser.Math.Distance.Between(origin.x, origin.y, point.x, point.y);
+      if (!fallback || distance > fallback.distance) {
+        fallback = { point, distance };
+      }
+      if (distance < minDistance) {
+        continue;
+      }
+      if (this.lastCompletedActionAnchor && this.sameAnchorPoint(point, this.lastCompletedActionAnchor, 64)) {
+        continue;
+      }
+      return point;
+    }
+
+    if (fallback && fallback.distance >= 36) {
+      if (!this.lastCompletedActionAnchor || !this.sameAnchorPoint(fallback.point, this.lastCompletedActionAnchor, 64)) {
+        return fallback.point;
+      }
+    }
+    return this.resolvePatrolWalkableOrigin(origin);
+  }
+
   private gridToScenePoint(col: number, row: number): Point {
     return {
-      x: Math.min(this.protocols.mapLogic.meta.baseResolution.width - 1, col * this.walkableGridStep + this.walkableGridStep / 2),
-      y: Math.min(this.protocols.mapLogic.meta.baseResolution.height - 1, row * this.walkableGridStep + this.walkableGridStep / 2)
+      x: Math.min(this.sceneMapData.base_width - 1, col * this.walkableGridStep + this.walkableGridStep / 2),
+      y: Math.min(this.sceneMapData.base_height - 1, row * this.walkableGridStep + this.walkableGridStep / 2)
     };
   }
 
@@ -1271,13 +2489,18 @@ export class LibraryScene extends Phaser.Scene {
       return;
     }
     this.reachableWalkableGrid = new Uint8Array(this.walkableGrid.length);
-    const startPoint = this.resolveRequestedWalkTarget(origin, 140) ?? origin;
-    const start = this.scenePointToGrid(startPoint);
-    const queue: Array<{ col: number; row: number }> = [];
-    if (this.isWalkableCell(start.col, start.row)) {
-      this.reachableWalkableGrid[this.gridIndex(start.col, start.row)] = 1;
-      queue.push(start);
+    const startPoint = this.resolvePatrolWalkableOrigin(origin);
+    if (!startPoint) {
+      return;
     }
+    const start = this.findNearestWalkableCell(startPoint, Math.max(this.walkableGridStep * 2, 48))
+      ?? this.findNearestExistingWalkableCell(startPoint);
+    if (!start) {
+      return;
+    }
+    const queue: Array<{ col: number; row: number }> = [];
+    this.reachableWalkableGrid[this.gridIndex(start.col, start.row)] = 1;
+    queue.push(start);
 
     const neighbors = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -1344,43 +2567,6 @@ export class LibraryScene extends Phaser.Scene {
     return simplified;
   }
 
-  private segmentWalkableOnMask(from: Point, to: Point): boolean {
-    const samples = Math.max(8, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / 12));
-    for (let index = 0; index <= samples; index += 1) {
-      const t = index / samples;
-      const point = {
-        x: from.x + (to.x - from.x) * t,
-        y: from.y + (to.y - from.y) * t
-      };
-      if (!this.isWalkablePoint(point)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private simplifyRouteBySight(points: Point[]): Point[] {
-    if (points.length <= 2) {
-      return points;
-    }
-    const simplified: Point[] = [points[0]];
-    let anchorIndex = 0;
-
-    while (anchorIndex < points.length - 1) {
-      let nextIndex = points.length - 1;
-      while (nextIndex > anchorIndex + 1) {
-        if (this.segmentWalkableOnMask(points[anchorIndex], points[nextIndex])) {
-          break;
-        }
-        nextIndex -= 1;
-      }
-      simplified.push(points[nextIndex]);
-      anchorIndex = nextIndex;
-    }
-
-    return simplified;
-  }
-
   private computeMaskRoute(from: Point, to: Point): Point[] | null {
     if (!this.walkableGrid || this.walkableGridCols === 0 || this.walkableGridRows === 0) {
       return null;
@@ -1425,7 +2611,7 @@ export class LibraryScene extends Phaser.Scene {
           cursor = cameFrom.get(cursor);
         }
         reversed.push(startPoint);
-        return this.simplifyRouteBySight(this.simplifyRoute(reversed.reverse()));
+        return this.simplifyRoute(reversed.reverse());
       }
 
       const current = parseKey(currentKey);
@@ -1524,21 +2710,35 @@ export class LibraryScene extends Phaser.Scene {
       }
     }
 
-    if (this.protocols.mapLogic.walkableZones?.length) {
-      this.roomLayer.lineStyle(2, 0xffffff, 0.06);
-      this.roomLayer.fillStyle(0xffffff, 0.02);
-      for (const zone of this.protocols.mapLogic.walkableZones) {
-        if (zone.points.length < 3) {
+    if (this.sceneMapData.floor_regions.length > 0) {
+      this.roomLayer.lineStyle(1, 0xffffff, this.debugVisualsVisible ? 0.16 : 0.05);
+      this.roomLayer.fillStyle(0xffffff, this.debugVisualsVisible ? 0.05 : 0.015);
+      for (const floorRegion of this.sceneMapData.floor_regions) {
+        if (floorRegion.polygon && floorRegion.polygon.length >= 3) {
+          this.roomLayer.beginPath();
+          this.roomLayer.moveTo(floorRegion.polygon[0].x, floorRegion.polygon[0].y);
+          for (let index = 1; index < floorRegion.polygon.length; index += 1) {
+            this.roomLayer.lineTo(floorRegion.polygon[index].x, floorRegion.polygon[index].y);
+          }
+          this.roomLayer.closePath();
+          this.roomLayer.fillPath();
+          this.roomLayer.strokePath();
           continue;
         }
-        this.roomLayer.beginPath();
-        this.roomLayer.moveTo(zone.points[0].x, zone.points[0].y);
-        for (let index = 1; index < zone.points.length; index += 1) {
-          this.roomLayer.lineTo(zone.points[index].x, zone.points[index].y);
+        if (floorRegion.rect) {
+          this.roomLayer.fillRect(
+            floorRegion.rect.x,
+            floorRegion.rect.y,
+            floorRegion.rect.width,
+            floorRegion.rect.height
+          );
+          this.roomLayer.strokeRect(
+            floorRegion.rect.x,
+            floorRegion.rect.y,
+            floorRegion.rect.width,
+            floorRegion.rect.height
+          );
         }
-        this.roomLayer.closePath();
-        this.roomLayer.fillPath();
-        this.roomLayer.strokePath();
       }
     }
     this.applyDebugVisualLayerVisibility();
@@ -1549,9 +2749,9 @@ export class LibraryScene extends Phaser.Scene {
       if (this.hiddenRoomLabelIds.has(room.id)) {
         continue;
       }
-      const [x, y, width] = room.bounds;
-      const titleX = room.labelAnchor?.x ?? x + width / 2;
-      const titleY = room.labelAnchor?.y ?? y + 18;
+      const anchor = this.resolveRoomLabelAnchor(room);
+      const titleX = anchor.x;
+      const titleY = anchor.y;
       const labelColor = this.cssColor(PARTITION_COLORS[room.id], 1);
       const backplate = this.add.graphics();
       backplate.setDepth(this.getRenderLayerDepth('mid_props') + 3.5);
@@ -1580,9 +2780,21 @@ export class LibraryScene extends Phaser.Scene {
           this.syncRoomLabels();
         }
       });
-      title.on('pointerdown', (_pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
+      title.on('pointerdown', (pointer: Phaser.Input.Pointer, _localX: number, _localY: number, event: Phaser.Types.Input.EventData) => {
         event.stopPropagation();
-        this.emitResourceSelection(room.id, { x: titleX, y: titleY + title.displayHeight / 2 });
+        if (this.editorModeEnabled && this.editorTool === 'room_label') {
+          const startAnchor = this.resolveRoomLabelAnchor(room);
+          this.selectedRoomLabelId = room.id;
+          this.roomLabelDragState = {
+            roomId: room.id,
+            startPoint: { x: pointer.worldX, y: pointer.worldY },
+            startAnchor,
+            moved: false
+          };
+          this.syncRoomLabels();
+          return;
+        }
+        this.emitResourceSelection(room.id, { x: title.x, y: title.y + title.displayHeight / 2 });
       });
       this.roomTitleLabels.set(room.id, title);
     }
@@ -1599,7 +2811,10 @@ export class LibraryScene extends Phaser.Scene {
       const isFocus = this.focusResourceId === room.id;
 
       if (title) {
+        const anchor = this.resolveRoomLabelAnchor(room);
         const isHovered = this.hoveredRoomId === room.id;
+        const isSelected = this.editorModeEnabled && this.editorTool === 'room_label' && this.selectedRoomLabelId === room.id;
+        title.setPosition(anchor.x, anchor.y);
         title.setText(resourceLabel(room.id, this.locale));
         title.setFontFamily(this.displayFontFamily());
         title.setColor(
@@ -1613,18 +2828,29 @@ export class LibraryScene extends Phaser.Scene {
                 ? '#ffffff'
                 : this.cssColor(PARTITION_COLORS[room.id], 1)
         );
-        title.setScale(isHovered ? 1.045 : 1);
-        title.setDepth(this.getRenderLayerDepth('mid_props') + (isHovered ? 5 : 4));
-        title.setShadow(0, 0, isHovered ? this.cssColor(PARTITION_COLORS[room.id], 0.72) : '#010403', isHovered ? 8 : 4, false, true);
+        title.setScale((isHovered || isSelected) ? 1.045 : 1);
+        title.setDepth(this.getRenderLayerDepth('mid_props') + ((isHovered || isSelected) ? 5 : 4));
+        title.setShadow(
+          0,
+          0,
+          (isHovered || isSelected) ? this.cssColor(PARTITION_COLORS[room.id], 0.72) : '#010403',
+          (isHovered || isSelected) ? 8 : 4,
+          false,
+          true
+        );
         if (backplate) {
-          const fillColor = isHovered
+          const fillColor = isSelected
+            ? PARTITION_COLORS[room.id]
+            : isHovered
             ? PARTITION_COLORS[room.id]
             : telemetry?.status === 'alert'
               ? 0x4e191f
               : isFocus
                 ? PARTITION_COLORS[room.id]
                 : 0x102622;
-          const fillAlpha = isHovered
+          const fillAlpha = isSelected
+            ? 0.44
+            : isHovered
             ? 0.34
             : telemetry?.status === 'alert'
               ? 0.62
@@ -1656,6 +2882,42 @@ export class LibraryScene extends Phaser.Scene {
     backplate.setDepth(title.depth - 0.1);
     backplate.setAlpha(1);
     backplate.setVisible(true);
+  }
+
+  private resolveRoomLabelAnchor(room: RoomBounds): Point {
+    const storedAnchor = this.getSceneMapRoomLabelAnchor(room.id);
+    if (storedAnchor) {
+      return this.clampRoomLabelAnchor(storedAnchor);
+    }
+    const [x, y, width] = room.bounds;
+    return this.clampRoomLabelAnchor(room.labelAnchor ?? { x: x + width / 2, y: y + 18 });
+  }
+
+  private getSceneMapRoomLabelAnchor(roomId: ResourcePartitionId): Point | null {
+    const stored = this.sceneMapData.room_label_anchors[roomId];
+    if (!stored) {
+      return null;
+    }
+    const x = Number(stored.x);
+    const y = Number(stored.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return null;
+    }
+    return { x, y };
+  }
+
+  private setSceneMapRoomLabelAnchor(roomId: ResourcePartitionId, anchor: Point): void {
+    const nextAnchor = this.clampRoomLabelAnchor(anchor);
+    this.sceneMapData.room_label_anchors[roomId] = nextAnchor;
+  }
+
+  private clampRoomLabelAnchor(anchor: Point): Point {
+    const maxX = Math.max(0, this.sceneMapData.base_width);
+    const maxY = Math.max(0, this.sceneMapData.base_height);
+    return {
+      x: Math.round(Phaser.Math.Clamp(anchor.x, 0, maxX)),
+      y: Math.round(Phaser.Math.Clamp(anchor.y, 0, maxY))
+    };
   }
 
   private emitResourceSelection(resourceId: ResourcePartitionId, anchor?: Point): void {
@@ -1809,9 +3071,617 @@ export class LibraryScene extends Phaser.Scene {
   }
 
   private applyDebugVisualLayerVisibility(): void {
+    const wallEditorActive = this.editorModeEnabled && this.editorTool === 'wall';
+    const overlaySuppressed = wallEditorActive || this.houseOverlaySuppressed;
     this.roomLayer.setVisible(this.debugVisualsVisible);
+    this.wallBlockLayer.setVisible(true);
     this.zoneLayer.setVisible(this.debugVisualsVisible);
+    this.furnitureSpriteLayer.setVisible(!overlaySuppressed);
+    this.furnitureLayer.setVisible(!overlaySuppressed);
+    this.interactionPointLayer.setVisible(!overlaySuppressed);
+    this.interactionPointLabelLayer.setVisible(!overlaySuppressed);
+    this.interactionBoxLayer.setVisible(!overlaySuppressed);
+    this.interactionBoxLabelLayer.setVisible(!overlaySuppressed);
     this.occluderLayer.setVisible(this.debugVisualsVisible);
+    this.editorPreviewLayer.setVisible(this.editorModeEnabled);
+  }
+
+  private initializeSceneInteractionUi(): void {
+    this.editorHudText = this.add.text(14, 14, '', {
+      color: '#d9f0ff',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+      fontSize: '16px',
+      lineSpacing: 4,
+      backgroundColor: 'rgba(8, 17, 28, 0.68)',
+      padding: { left: 10, right: 10, top: 8, bottom: 8 }
+    });
+    this.editorHudText.setOrigin(0, 1);
+    this.editorHudText.setScrollFactor(0);
+    this.editorHudText.setDepth(this.getRenderLayerDepth('fx_overlay') + 22);
+    this.editorHudText.setVisible(false);
+    this.positionEditorHudText();
+
+    this.interactionToastText = this.add.text(14, 92, '', {
+      color: '#f8fcff',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+      fontSize: '12px',
+      lineSpacing: 2,
+      backgroundColor: 'rgba(15, 28, 18, 0.76)',
+      padding: { left: 8, right: 8, top: 5, bottom: 5 }
+    });
+    this.interactionToastText.setScrollFactor(0);
+    this.interactionToastText.setDepth(this.getRenderLayerDepth('fx_overlay') + 23);
+    this.interactionToastText.setVisible(false);
+  }
+
+  private positionEditorHudText(): void {
+    if (!this.editorHudText) {
+      return;
+    }
+    const camera = this.cameras.main;
+    const zoom = Math.max(0.001, camera.zoom || 1);
+    const margin = 6 / zoom;
+    const bottomY = (camera.height / zoom) - margin;
+    const leftX = 10 / zoom;
+    this.editorHudText.setPosition(leftX, Math.max(80, bottomY));
+  }
+
+  private tickSceneInteractionUi(): void {
+    const now = Date.now();
+    if (this.highlightedFurnitureId && now >= this.highlightedFurnitureUntil) {
+      this.highlightedFurnitureId = null;
+      this.drawFurnitureLayer();
+    }
+
+    if (this.interactionToastText && this.interactionToastText.visible && now >= this.interactionToastUntil) {
+      this.interactionToastText.setVisible(false);
+    }
+
+    this.syncEditorHudText();
+    this.renderEditorWallPreview();
+  }
+
+  private syncEditorHudText(): void {
+    if (!this.editorModeEnabled) {
+      if (this.editorHudText) {
+        this.editorHudText.setVisible(false);
+      }
+      this.emitEditorHudOverlay(false, '');
+      return;
+    }
+
+    const selectedFurniture = this.selectedFurnitureId
+      ? this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId) ?? null
+      : null;
+    const selectedWall = this.selectedWallBlockId
+      ? this.sceneMapData.wall_blocks.find((item) => item.id === this.selectedWallBlockId) ?? null
+      : null;
+    const selectedRoomLabel = this.selectedRoomLabelId
+      ? this.protocols.mapLogic.rooms.find((item) => item.id === this.selectedRoomLabelId) ?? null
+      : null;
+    const toolText = this.editorTool === 'wall'
+      ? '墙壁编辑'
+      : this.editorTool === 'furniture'
+        ? '家具编辑'
+        : this.editorTool === 'interaction'
+          ? '互动点编辑'
+          : '房屋名编辑';
+    const currentSelectionHint = this.editorTool === 'wall'
+      ? selectedWall
+        ? '当前：已选中墙体，可直接拖拽或调节点。'
+        : `当前：未选中墙体，待放置形状=${this.wallShapeLabel(this.wallEditorShapePreset)}。`
+      : this.editorTool === 'furniture'
+        ? selectedFurniture
+          ? `当前：已选中家具（${selectedFurniture.label}）。`
+          : '当前：未选中家具，左键可放置新家具。'
+        : this.editorTool === 'interaction'
+          ? '当前：互动点模式，左键新增、右键删除。'
+          : selectedRoomLabel
+            ? `当前：已选中房屋名（${resourceLabel(selectedRoomLabel.id, this.locale)}）。`
+            : '当前：请点住房屋名并拖拽移动。';
+    const toolHint = this.editorTool === 'wall'
+      ? '左键选中/拖拽/缩放/旋转，右键删除，Delete删除选中，S保存并退出'
+      : this.editorTool === 'furniture'
+        ? '左键放置/拖拽家具，右键删除，Delete删除选中；底部按钮可放大/缩小'
+        : this.editorTool === 'interaction'
+          ? '左键放置互动点，右键删除互动点'
+          : '拖拽房屋名称文字调整位置，松开后自动保存';
+    const abilityHint = this.editorTool === 'furniture'
+      ? '快捷键：B切换阻挡，I切换可互动，T切换互动类型'
+      : this.editorTool === 'wall'
+        ? '在底部菜单切换墙体形状（正方/长方/三角/圆/梯形）'
+        : this.editorTool === 'interaction'
+          ? '使用 Shift+E 可快速退出编辑模式'
+          : '可从房屋子菜单切换回“房屋导入”或“墙壁设置”';
+
+    const nextHudText = [
+      `编辑模式: ${toolText}`,
+      '模式切换：1墙体 2家具 3互动点 4房屋名 | Shift+E退出',
+      toolHint,
+      abilityHint,
+      currentSelectionHint
+    ].join('\n');
+    if (this.editorHudText) {
+      this.editorHudText.setVisible(false);
+      this.editorHudText.setText(nextHudText);
+    }
+    this.emitEditorHudOverlay(true, nextHudText);
+  }
+
+  private emitEditorHudOverlay(visible: boolean, text: string): void {
+    const nextText = visible ? text : '';
+    if (this.editorHudOverlayVisible === visible && this.editorHudOverlayText === nextText) {
+      return;
+    }
+    this.editorHudOverlayVisible = visible;
+    this.editorHudOverlayText = nextText;
+    this.events.emit('scene-editor-hud-changed', {
+      visible,
+      text: nextText
+    });
+  }
+
+  private showSceneToast(message: string, tone: SceneToastTone = 'info', durationMs = 2200): void {
+    if (!this.interactionToastText) {
+      return;
+    }
+    const color = tone === 'success'
+      ? '#d8ffe5'
+      : tone === 'warn'
+        ? '#ffe2d6'
+        : '#f8fcff';
+    const backgroundColor = tone === 'success'
+      ? 'rgba(16, 46, 24, 0.82)'
+      : tone === 'warn'
+        ? 'rgba(56, 24, 11, 0.84)'
+        : 'rgba(15, 28, 18, 0.76)';
+    this.interactionToastText.setStyle({ color, backgroundColor });
+    this.interactionToastText.setText(message);
+    this.interactionToastText.setVisible(true);
+    this.interactionToastUntil = Date.now() + durationMs;
+  }
+
+  private drawSceneMapLayers(): void {
+    this.drawWallBlockLayer();
+    this.drawFurnitureLayer();
+    this.drawInteractionPointLayer();
+    this.drawInteractionBoxLayer();
+    this.renderEditorWallPreview();
+    this.syncEditorHudText();
+  }
+
+  private drawWallBlockLayer(): void {
+    this.wallBlockLayer.clear();
+    const isWallEditor = this.editorModeEnabled && this.editorTool === 'wall';
+    const isHighVisibility = isWallEditor || this.debugVisualsVisible;
+    if (!isHighVisibility) {
+      return;
+    }
+
+    for (const wallBlock of this.sceneMapData.wall_blocks) {
+      const color = this.resolveSceneMapRoomColor(wallBlock.room_id);
+      const isSelected = this.selectedWallBlockId === wallBlock.id;
+      this.drawWallBlockOnGraphics(this.wallBlockLayer, wallBlock, {
+        fillColor: color,
+        fillAlpha: isSelected ? 0.42 : 0.26,
+        strokeColor: isSelected ? 0xfff0c8 : 0xf2fbff,
+        strokeAlpha: isSelected ? 0.98 : 0.8,
+        strokeWidth: isSelected ? 2 : 1.2
+      });
+    }
+
+    if (isWallEditor && this.selectedWallBlockId) {
+      const selected = this.sceneMapData.wall_blocks.find((item) => item.id === this.selectedWallBlockId) ?? null;
+      if (selected) {
+        this.drawWallBlockEditorHandles(selected);
+      }
+    }
+  }
+
+  private wallEditorHandlesForBlock(block: WallBlock): Array<{ kind: WallEditorHandleKind; x: number; y: number; radius: number }> {
+    const bounds = this.wallBlockBounds(block);
+    const centerX = bounds.x + bounds.width / 2;
+    const right = bounds.x + bounds.width;
+    const bottom = bounds.y + bounds.height;
+    const top = bounds.y;
+    const left = bounds.x;
+
+    return [
+      { kind: 'resize-nw', x: left, y: top, radius: WALL_EDITOR_HANDLE_RADIUS },
+      { kind: 'resize-ne', x: right, y: top, radius: WALL_EDITOR_HANDLE_RADIUS },
+      { kind: 'resize-sw', x: left, y: bottom, radius: WALL_EDITOR_HANDLE_RADIUS },
+      { kind: 'resize-se', x: right, y: bottom, radius: WALL_EDITOR_HANDLE_RADIUS },
+      { kind: 'rotate', x: centerX, y: top - WALL_EDITOR_ROTATE_HANDLE_OFFSET, radius: WALL_EDITOR_HANDLE_RADIUS },
+      { kind: 'delete', x: right + 16, y: top - 10, radius: WALL_EDITOR_HANDLE_RADIUS }
+    ];
+  }
+
+  private drawWallBlockEditorHandles(block: WallBlock): void {
+    const bounds = this.wallBlockBounds(block);
+    this.wallBlockLayer.lineStyle(1, 0xf8e6a9, 0.9);
+    this.wallBlockLayer.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    const handles = this.wallEditorHandlesForBlock(block);
+    for (const handle of handles) {
+      const isDelete = handle.kind === 'delete';
+      const isRotate = handle.kind === 'rotate';
+      const fillColor = isDelete ? 0xff7d7d : isRotate ? 0xffcf7a : 0x8fd5ff;
+      this.wallBlockLayer.fillStyle(fillColor, 0.95);
+      this.wallBlockLayer.fillCircle(handle.x, handle.y, handle.radius);
+      this.wallBlockLayer.lineStyle(1, 0x0b1520, 0.85);
+      this.wallBlockLayer.strokeCircle(handle.x, handle.y, handle.radius);
+    }
+  }
+
+  private findWallEditorHandleByPoint(point: Point, block: WallBlock): { kind: WallEditorHandleKind; x: number; y: number; radius: number } | null {
+    const handles = this.wallEditorHandlesForBlock(block);
+    for (const handle of handles) {
+      const dx = point.x - handle.x;
+      const dy = point.y - handle.y;
+      if ((dx * dx) + (dy * dy) <= (handle.radius + 3) * (handle.radius + 3)) {
+        return handle;
+      }
+    }
+    return null;
+  }
+
+  private drawFurnitureLayer(): void {
+    this.furnitureLayer.clear();
+    if ((this.editorModeEnabled && this.editorTool === 'wall') || this.houseOverlaySuppressed) {
+      this.furnitureSpriteLayer.removeAll(true);
+      this.furnitureSpriteById.clear();
+      return;
+    }
+    const sortedFurnitures = [...this.sceneMapData.furnitures].sort((left, right) => {
+      if (left.z_index !== right.z_index) {
+        return left.z_index - right.z_index;
+      }
+      return left.id.localeCompare(right.id);
+    });
+
+    this.syncFurnitureSpriteLayer(sortedFurnitures);
+    // 外框改为不渲染，仅保留家具贴图本体，避免出现“外面那个方框”。
+  }
+
+  private syncFurnitureSpriteLayer(sortedFurnitures: FurnitureItem[]): void {
+    this.furnitureSpriteLayer.removeAll(true);
+    this.furnitureSpriteById.clear();
+    for (const furniture of sortedFurnitures) {
+      const spriteUrl = this.resolveRuntimeAssetUrl(String(furniture.sprite_key || '').trim());
+      if (!spriteUrl) {
+        continue;
+      }
+      const textureKey = this.ensureFurnitureTexture(spriteUrl);
+      if (!textureKey || !this.textures.exists(textureKey)) {
+        continue;
+      }
+      const image = this.add.image(furniture.x + furniture.width / 2, furniture.y + furniture.height / 2, textureKey);
+      image.setDisplaySize(Math.max(8, furniture.width), Math.max(8, furniture.height));
+      image.setDepth(this.layerToDepth('mid_props', furniture.y + furniture.height) + 0.02);
+      image.setAlpha(FURNITURE_NORMAL_ALPHA);
+      this.furnitureSpriteLayer.add(image);
+      this.furnitureSpriteById.set(furniture.id, image);
+    }
+    this.updateFurnitureCollisionFade();
+  }
+
+  private updateFurnitureCollisionFade(): void {
+    if (this.furnitureSpriteById.size === 0) {
+      return;
+    }
+
+    const shouldHideByCollision = Boolean(this.lobster)
+      && !this.houseOverlaySuppressed
+      && !(this.editorModeEnabled && this.editorTool === 'wall');
+
+    if (!shouldHideByCollision) {
+      for (const sprite of this.furnitureSpriteById.values()) {
+        if (!sprite.active) {
+          continue;
+        }
+        if (Math.abs(sprite.alpha - FURNITURE_NORMAL_ALPHA) <= 0.01) {
+          sprite.setAlpha(FURNITURE_NORMAL_ALPHA);
+        } else {
+          sprite.setAlpha(Phaser.Math.Linear(sprite.alpha, FURNITURE_NORMAL_ALPHA, FURNITURE_COLLISION_FADE_LERP));
+        }
+      }
+      return;
+    }
+
+    const actorSprite = this.lobsterBody instanceof Phaser.GameObjects.Sprite ? this.lobsterBody : null;
+    if (!actorSprite?.active) {
+      for (const sprite of this.furnitureSpriteById.values()) {
+        sprite.setAlpha(FURNITURE_NORMAL_ALPHA);
+      }
+      return;
+    }
+
+    for (const sprite of this.furnitureSpriteById.values()) {
+      if (!sprite.active) {
+        continue;
+      }
+      const isTouching = this.spritesHaveOpaquePixelOverlap(actorSprite, sprite);
+      const targetAlpha = isTouching ? FURNITURE_COLLISION_FADE_ALPHA : FURNITURE_NORMAL_ALPHA;
+      if (Math.abs(sprite.alpha - targetAlpha) <= 0.01) {
+        sprite.setAlpha(targetAlpha);
+      } else {
+        sprite.setAlpha(Phaser.Math.Linear(sprite.alpha, targetAlpha, FURNITURE_COLLISION_FADE_LERP));
+      }
+    }
+  }
+
+  private spritesHaveOpaquePixelOverlap(
+    actorSprite: Phaser.GameObjects.Sprite,
+    furnitureSprite: Phaser.GameObjects.Image
+  ): boolean {
+    const actorMask = this.getAlphaMaskForSprite(actorSprite);
+    const furnitureMask = this.getAlphaMaskForSprite(furnitureSprite);
+    if (!actorMask || !furnitureMask) {
+      return Phaser.Geom.Intersects.RectangleToRectangle(actorSprite.getBounds(), furnitureSprite.getBounds());
+    }
+
+    const actorBounds = actorSprite.getBounds();
+    const furnitureBounds = furnitureSprite.getBounds();
+    const left = Math.max(actorBounds.x, furnitureBounds.x);
+    const top = Math.max(actorBounds.y, furnitureBounds.y);
+    const right = Math.min(actorBounds.x + actorBounds.width, furnitureBounds.x + furnitureBounds.width);
+    const bottom = Math.min(actorBounds.y + actorBounds.height, furnitureBounds.y + furnitureBounds.height);
+    if (right <= left || bottom <= top) {
+      return false;
+    }
+
+    const centerX = (left + right) / 2;
+    const centerY = (top + bottom) / 2;
+    if (
+      this.isSpriteOpaqueAtWorldPoint(actorSprite, actorMask, centerX, centerY)
+      && this.isSpriteOpaqueAtWorldPoint(furnitureSprite, furnitureMask, centerX, centerY)
+    ) {
+      return true;
+    }
+
+    const overlapWidth = right - left;
+    const overlapHeight = bottom - top;
+    const step = Math.max(
+      1,
+      Math.min(
+        FURNITURE_ALPHA_OVERLAP_SAMPLE_STEP,
+        Math.floor(Math.min(overlapWidth, overlapHeight) / 2) || 1
+      )
+    );
+    const startX = left + Math.min(step / 2, overlapWidth / 2);
+    const startY = top + Math.min(step / 2, overlapHeight / 2);
+    for (let y = startY; y <= bottom; y += step) {
+      for (let x = startX; x <= right; x += step) {
+        if (
+          this.isSpriteOpaqueAtWorldPoint(actorSprite, actorMask, x, y)
+          && this.isSpriteOpaqueAtWorldPoint(furnitureSprite, furnitureMask, x, y)
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private getAlphaMaskForSprite(target: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite): SpriteAlphaMask | null {
+    const frame = target.frame;
+    const sourceImage = frame?.source?.image as CanvasImageSource | undefined;
+    const width = Math.max(1, Math.round(frame?.cutWidth || frame?.width || target.width || 1));
+    const height = Math.max(1, Math.round(frame?.cutHeight || frame?.height || target.height || 1));
+    if (!frame || !sourceImage) {
+      return null;
+    }
+
+    const cacheKey = [
+      target.texture.key,
+      String(frame.name),
+      Math.round(frame.cutX),
+      Math.round(frame.cutY),
+      width,
+      height
+    ].join(':');
+    const cached = this.spriteAlphaMaskCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        return null;
+      }
+      context.clearRect(0, 0, width, height);
+      context.drawImage(
+        sourceImage,
+        frame.cutX,
+        frame.cutY,
+        width,
+        height,
+        0,
+        0,
+        width,
+        height
+      );
+      const mask = {
+        width,
+        height,
+        data: context.getImageData(0, 0, width, height).data
+      };
+      this.spriteAlphaMaskCache.set(cacheKey, mask);
+      return mask;
+    } catch {
+      return null;
+    }
+  }
+
+  private isSpriteOpaqueAtWorldPoint(
+    target: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite,
+    mask: SpriteAlphaMask,
+    worldX: number,
+    worldY: number
+  ): boolean {
+    const bounds = target.getBounds();
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return false;
+    }
+
+    const normalizedX = (worldX - bounds.x) / bounds.width;
+    const normalizedY = (worldY - bounds.y) / bounds.height;
+    if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) {
+      return false;
+    }
+
+    const flippedX = Boolean((target as { flipX?: boolean }).flipX);
+    const flippedY = Boolean((target as { flipY?: boolean }).flipY);
+    const maskX = Phaser.Math.Clamp(
+      Math.floor((flippedX ? 1 - normalizedX : normalizedX) * mask.width),
+      0,
+      mask.width - 1
+    );
+    const maskY = Phaser.Math.Clamp(
+      Math.floor((flippedY ? 1 - normalizedY : normalizedY) * mask.height),
+      0,
+      mask.height - 1
+    );
+    const alphaIndex = ((maskY * mask.width) + maskX) * 4 + 3;
+    return (mask.data[alphaIndex] ?? 0) > FURNITURE_ALPHA_OVERLAP_THRESHOLD;
+  }
+
+  private ensureFurnitureTexture(assetUrl: string): string | null {
+    const url = String(assetUrl || '').trim();
+    if (!url) {
+      return null;
+    }
+    const cached = this.furnitureTextureByUrl.get(url);
+    if (cached && this.textures.exists(cached)) {
+      return cached;
+    }
+    const textureKey = cached || `furniture-asset-${this.furnitureTextureByUrl.size + 1}`;
+    this.furnitureTextureByUrl.set(url, textureKey);
+    if (this.textures.exists(textureKey) || this.queuedTextureKeys.has(textureKey)) {
+      return textureKey;
+    }
+    this.queuedTextureKeys.add(textureKey);
+    const onFileComplete = (): void => {
+      this.load.off(`filecomplete-image-${textureKey}`, onFileComplete);
+      this.load.off('loaderror', onLoadError);
+      this.queuedTextureKeys.delete(textureKey);
+      this.drawSceneMapLayers();
+    };
+    const onLoadError = (file: Phaser.Loader.File): void => {
+      if (file.key !== textureKey) {
+        return;
+      }
+      this.load.off(`filecomplete-image-${textureKey}`, onFileComplete);
+      this.load.off('loaderror', onLoadError);
+      this.queuedTextureKeys.delete(textureKey);
+    };
+    this.load.on(`filecomplete-image-${textureKey}`, onFileComplete);
+    this.load.on('loaderror', onLoadError);
+    this.load.image(textureKey, url);
+    if (!this.load.isLoading()) {
+      this.load.start();
+    }
+    return textureKey;
+  }
+
+  private drawInteractionPointLayer(): void {
+    this.interactionPointLayer.clear();
+    this.interactionPointLabelLayer.removeAll(true);
+    if ((this.editorModeEnabled && this.editorTool === 'wall') || this.houseOverlaySuppressed) {
+      return;
+    }
+    const actionPointMode = this.editorModeEnabled && this.editorTool === 'interaction' && this.interactionEditorMode === 'action_point';
+    const shouldRender = actionPointMode || this.debugVisualsVisible;
+    if (!shouldRender) {
+      return;
+    }
+    for (const point of this.sceneMapData.interaction_points) {
+      const isHovered = this.hoveredInteractionPointId === point.id || (actionPointMode && this.selectedInteractionPointId === point.id);
+      const color = this.resolveSceneMapRoomColor(point.room_id);
+      const radius = isHovered ? INTERACTION_POINT_RADIUS + 4 : actionPointMode ? INTERACTION_POINT_RADIUS + 2 : INTERACTION_POINT_RADIUS;
+      const fillAlpha = isHovered ? 0.62 : actionPointMode ? 0.38 : 0.24;
+      const strokeAlpha = isHovered ? 0.98 : actionPointMode ? 0.88 : 0.74;
+      this.interactionPointLayer.fillStyle(color, fillAlpha);
+      this.interactionPointLayer.fillCircle(point.x, point.y, radius);
+      this.interactionPointLayer.lineStyle(1.5, 0xf3fbff, strokeAlpha);
+      this.interactionPointLayer.strokeCircle(point.x, point.y, radius);
+      if (actionPointMode) {
+        this.interactionPointLayer.lineStyle(1, 0x0a1218, 0.85);
+        this.interactionPointLayer.strokeCircle(point.x, point.y, Math.max(4, radius - 6));
+      }
+    }
+    if (actionPointMode) {
+      for (const point of this.sceneMapData.interaction_points) {
+        const text = this.add.text(point.x, point.y - (INTERACTION_POINT_RADIUS + 18), point.label, {
+          color: '#e6f2ff',
+          fontFamily: this.sansFontFamily(),
+          fontSize: '12px',
+          backgroundColor: 'rgba(8, 14, 22, 0.72)',
+          padding: { left: 5, right: 5, top: 2, bottom: 2 }
+        });
+        text.setOrigin(0.5, 1);
+        this.interactionPointLabelLayer.add(text);
+      }
+    }
+  }
+
+  private drawInteractionBoxLayer(): void {
+    this.interactionBoxLayer.clear();
+    this.interactionBoxLabelLayer.removeAll(true);
+    if ((this.editorModeEnabled && this.editorTool === 'wall') || this.houseOverlaySuppressed) {
+      return;
+    }
+    const boxMode = this.editorModeEnabled && this.editorTool === 'interaction' && this.interactionEditorMode === 'interaction_box';
+    if (!boxMode) {
+      return;
+    }
+    for (const interactionBox of this.sceneMapData.interaction_boxes) {
+      const isSelected = this.selectedInteractionBoxId === interactionBox.id;
+      const isHovered = this.hoveredInteractionBoxId === interactionBox.id;
+      const color = this.resolveSceneMapRoomColor(interactionBox.room_id);
+      this.interactionBoxLayer.fillStyle(color, isSelected ? 0.26 : isHovered ? 0.2 : 0.15);
+      this.interactionBoxLayer.fillRect(interactionBox.x, interactionBox.y, interactionBox.width, interactionBox.height);
+      this.interactionBoxLayer.lineStyle(isSelected ? 2 : 1.2, isSelected ? 0xf8e6a9 : 0xf3fbff, isSelected ? 0.95 : 0.75);
+      this.interactionBoxLayer.strokeRect(interactionBox.x, interactionBox.y, interactionBox.width, interactionBox.height);
+      const label = this.add.text(interactionBox.x + 6, interactionBox.y - 4, interactionBox.label, {
+        color: '#e6f2ff',
+        fontFamily: this.sansFontFamily(),
+        fontSize: '12px',
+        backgroundColor: 'rgba(8, 14, 22, 0.72)',
+        padding: { left: 5, right: 5, top: 2, bottom: 2 }
+      });
+      label.setOrigin(0, 1);
+      this.interactionBoxLabelLayer.add(label);
+    }
+  }
+
+  private resolveSceneMapRoomColor(roomId: string): number {
+    return PARTITION_COLORS[roomId as ResourcePartitionId] ?? 0x6b879d;
+  }
+
+  private renderEditorWallPreview(): void {
+    this.editorPreviewLayer.clear();
+    if (!this.editorModeEnabled || this.editorTool !== 'wall' || !this.editorPointerPoint || this.wallEditorDragState) {
+      return;
+    }
+
+    const hitExisting = this.findWallBlockByPoint(this.editorPointerPoint);
+    if (hitExisting) {
+      return;
+    }
+
+    const preview = this.buildWallBlockFromShapePreset(this.editorPointerPoint, this.wallEditorShapePreset);
+    this.drawWallBlockOnGraphics(this.editorPreviewLayer, preview, {
+      fillColor: 0xffb77a,
+      fillAlpha: 0.16,
+      strokeColor: 0xffd6b2,
+      strokeAlpha: 0.9,
+      strokeWidth: 1.5
+    });
   }
 
   private spawnAssets(): void {
@@ -1843,6 +3713,15 @@ export class LibraryScene extends Phaser.Scene {
     const firstNode =
       this.protocols.mapLogic.walkGraph.nodes.find((node) => node.id === 'BR1')
       ?? this.protocols.mapLogic.walkGraph.nodes[0];
+    const spawnIdleMode = this.resolveSpawnIdleMode();
+    const spawnAnchor = spawnIdleMode?.triggerAnchor
+      ? { x: Math.round(spawnIdleMode.triggerAnchor.x), y: Math.round(spawnIdleMode.triggerAnchor.y) }
+      : null;
+    const fallbackSpawnPoint = this.resolveRequestedWalkTarget({ x: firstNode.x, y: firstNode.y }, 240)
+      ?? { x: firstNode.x, y: firstNode.y };
+    const spawnPoint = spawnAnchor
+      ? (this.resolveRequestedWalkTarget(spawnAnchor, 260) ?? spawnAnchor)
+      : fallbackSpawnPoint;
     const children: Phaser.GameObjects.GameObject[] = [];
     const actor = this.protocols.sceneArt.actor;
     const variant = this.resolveActorVariant();
@@ -1852,8 +3731,8 @@ export class LibraryScene extends Phaser.Scene {
       children.push(shadow);
     }
 
-    const idleVisual = this.resolveActorMode('idle', {
-      position: { x: firstNode.x, y: firstNode.y },
+    const idleVisual = spawnIdleMode ?? this.resolveActorMode('idle', {
+      position: spawnPoint,
       direction: this.actorFacing
     });
     if (actor && variant && idleVisual) {
@@ -1869,12 +3748,21 @@ export class LibraryScene extends Phaser.Scene {
       this.lobsterBody = fallback;
     }
 
-    this.lobster = this.add.container(firstNode.x, firstNode.y, children);
-    this.lobster.setDepth(this.layerToDepth('actor', firstNode.y));
-    this.lastReachedZoneId = firstNode.roomId;
-    this.updateLobsterVisual('idle');
+    this.lobster = this.add.container(spawnPoint.x, spawnPoint.y, children);
+    this.lobster.setDepth(this.layerToDepth('actor', spawnPoint.y));
+    this.lastReachedZoneId = this.findRoomByPoint(spawnPoint)?.id ?? firstNode.roomId;
+    this.currentActionMode = spawnIdleMode ?? null;
+    this.lastCompletedActionAnchor = spawnIdleMode?.triggerAnchor
+      ? { x: Math.round(spawnIdleMode.triggerAnchor.x), y: Math.round(spawnIdleMode.triggerAnchor.y) }
+      : null;
+    this.suppressedActionAnchor = null;
+    this.suppressedActionAnchorUntil = 0;
+    this.lastMainVisualKey = null;
+    this.resetPatrolProgressTracking();
+    this.patrolCooldownUntil = Date.now() + 1800;
+    this.updateLobsterVisual('idle', spawnIdleMode ?? undefined);
 
-    this.lobsterNameTag = this.add.text(firstNode.x, firstNode.y - 36, '默认Agent', {
+    this.lobsterNameTag = this.add.text(spawnPoint.x, spawnPoint.y - 36, '默认Agent', {
       color: '#ffe4a0',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
       fontSize: '13px',
@@ -1890,85 +3778,45 @@ export class LibraryScene extends Phaser.Scene {
     this.drawContextBar(1); // starts full/green
   }
 
-  private spawnAmbientPropFx(): void {
-    const alarmPositions = [
-      { x: 1625, y: 88 },
-      { x: 1712, y: 92 },
-      { x: 1794, y: 104 },
-      { x: 1848, y: 142 }
-    ];
-    alarmPositions.forEach((position, index) => {
-      const glow = this.add.circle(position.x, position.y, 12, 0xff4b5f, 0.12);
-      glow.setDepth(this.layerToDepth('mid_props', position.y) + 1.6);
-      glow.setBlendMode(Phaser.BlendModes.ADD);
-      this.tweens.add({
-        targets: glow,
-        alpha: { from: 0.08, to: 0.3 },
-        scaleX: { from: 0.9, to: 1.5 },
-        scaleY: { from: 0.9, to: 1.5 },
-        duration: 760,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.InOut',
-        delay: index * 120
-      });
-      this.ambientPropFx.push(glow);
-    });
-
-    const steamOffsets = [0, 24, 48];
-    steamOffsets.forEach((offset, index) => {
-      const puff = this.add.ellipse(1655 + offset, 751, 18, 28, 0xcfe7df, 0.22);
-      puff.setDepth(this.layerToDepth('mid_props', 751) + 1.4);
-      this.tweens.add({
-        targets: puff,
-        y: puff.y - 28,
-        x: puff.x + (index % 2 === 0 ? -8 : 8),
-        alpha: { from: 0.26, to: 0 },
-        scaleX: { from: 0.9, to: 1.26 },
-        scaleY: { from: 0.9, to: 1.38 },
-        duration: 2100,
-        repeat: -1,
-        delay: index * 520,
-        ease: 'Sine.Out'
-      });
-      this.ambientPropFx.push(puff);
-    });
-
-    const ledPositions = [
-      { x: 1008, y: 176, color: 0x7dff8a },
-      { x: 1008, y: 198, color: 0x8efff3 },
-      { x: 1096, y: 176, color: 0x7dff8a },
-      { x: 1096, y: 198, color: 0xffcf63 },
-      { x: 1710, y: 482, color: 0x7dff8a },
-      { x: 1710, y: 506, color: 0xffcf63 }
-    ];
-    ledPositions.forEach((position, index) => {
-      const led = this.add.rectangle(position.x, position.y, 8, 5, position.color, 0.3);
-      led.setDepth(this.layerToDepth('mid_props', position.y) + 1.3);
-      this.tweens.add({
-        targets: led,
-        alpha: { from: 0.14, to: 0.88 },
-        duration: 420 + index * 20,
-        yoyo: true,
-        repeat: -1,
-        ease: 'Sine.InOut',
-        delay: index * 140
-      });
-      this.ambientPropFx.push(led);
-    });
-  }
-
-  private handlePointerDown(x: number, y: number): void {
+  private handlePointerDown(x: number, y: number, pointer?: Phaser.Input.Pointer): void {
     const point = { x, y };
-    const hitAsset = this.findHitAsset(point);
+    this.editorPointerPoint = point;
 
+    if (this.editorModeEnabled) {
+      this.handleEditorPointerDown(point, pointer);
+      return;
+    }
+
+    const furniture = this.findFurnitureByPoint(point);
+    if (furniture) {
+      this.handleFurnitureClick(furniture);
+      return;
+    }
+
+    const interactionPoint = this.findInteractionPointByPoint(point);
+    if (interactionPoint) {
+      this.handleInteractionPointClick(interactionPoint);
+      return;
+    }
+
+    // 地面点击优先触发移动，避免旧的 hitAsset / workZone 拦截导致“点地不走”。
+    const moved = this.movePrimaryAgentTo(point);
+    this.hitLayer.clear();
+    const hitRoom = this.findRoomByPoint(point);
+    if (moved && hitRoom) {
+      this.emitResourceSelection(hitRoom.id, this.resolveRoomLabelAnchor(hitRoom));
+      return;
+    }
+    if (moved) {
+      return;
+    }
+
+    const hitAsset = this.findHitAsset(point);
     if (hitAsset) {
       this.emitResourceSelection(hitAsset.roomId, point);
       this.drawHitOverlay(hitAsset);
       return;
     }
-
-    this.hitLayer.clear();
 
     const hitZone = this.findWorkZone(point);
     if (hitZone) {
@@ -1976,16 +3824,1158 @@ export class LibraryScene extends Phaser.Scene {
       return;
     }
 
-    const hitRoom = this.findRoomByPoint(point);
     if (hitRoom) {
-      this.emitResourceSelection(hitRoom.id, hitRoom.labelAnchor ?? point);
+      this.emitResourceSelection(hitRoom.id, this.resolveRoomLabelAnchor(hitRoom));
+      return;
     }
+
+    this.showSceneToast('该位置不可达，已保持原地。', 'warn', 1300);
+  }
+
+  private handlePointerUp(x: number, y: number, pointer?: Phaser.Input.Pointer): void {
+    const point = { x, y };
+    this.editorPointerPoint = point;
+    if (!this.editorModeEnabled) {
+      return;
+    }
+    this.handleEditorPointerUp(point, pointer);
+  }
+
+  private handlePointerMove(x: number, y: number): void {
+    const point = { x, y };
+    this.editorPointerPoint = point;
+
+    if (this.editorModeEnabled && this.editorTool === 'wall') {
+      this.handleWallEditorPointerMove(point);
+      return;
+    }
+
+    if (this.editorModeEnabled && this.editorTool === 'furniture' && this.furnitureDragState) {
+      const furniture = this.sceneMapData.furnitures.find((item) => item.id === this.furnitureDragState?.id);
+      if (!furniture) {
+        this.furnitureDragState = null;
+        return;
+      }
+      const dx = point.x - this.furnitureDragState.startPoint.x;
+      const dy = point.y - this.furnitureDragState.startPoint.y;
+      const clamped = this.clampFurniturePosition(
+        this.furnitureDragState.startRect.x + dx,
+        this.furnitureDragState.startRect.y + dy,
+        furniture.width,
+        furniture.height
+      );
+      furniture.x = clamped.x;
+      furniture.y = clamped.y;
+      furniture.z_index = furniture.y + furniture.height;
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    if (this.editorModeEnabled && this.editorTool === 'room_label') {
+      if (this.roomLabelDragState) {
+        const room = this.protocols.mapLogic.rooms.find((item) => item.id === this.roomLabelDragState?.roomId) ?? null;
+        if (!room) {
+          this.roomLabelDragState = null;
+          this.selectedRoomLabelId = null;
+          return;
+        }
+        const dx = point.x - this.roomLabelDragState.startPoint.x;
+        const dy = point.y - this.roomLabelDragState.startPoint.y;
+        const nextAnchor = this.clampRoomLabelAnchor({
+          x: this.roomLabelDragState.startAnchor.x + dx,
+          y: this.roomLabelDragState.startAnchor.y + dy
+        });
+        const currentAnchor = this.resolveRoomLabelAnchor(room);
+        if (nextAnchor.x !== currentAnchor.x || nextAnchor.y !== currentAnchor.y) {
+          this.roomLabelDragState.moved = true;
+          this.setSceneMapRoomLabelAnchor(room.id, nextAnchor);
+          this.syncRoomLabels();
+        }
+      }
+      return;
+    }
+
+    if (this.editorModeEnabled && this.editorTool === 'interaction') {
+      if (this.interactionEditorMode === 'action_point' && this.interactionPointDragState) {
+        const actionPoint = this.sceneMapData.interaction_points.find((item) => item.id === this.interactionPointDragState?.id);
+        if (!actionPoint) {
+          this.interactionPointDragState = null;
+          return;
+        }
+        const dx = point.x - this.interactionPointDragState.startPoint.x;
+        const dy = point.y - this.interactionPointDragState.startPoint.y;
+        const nextX = Math.round(Phaser.Math.Clamp(this.interactionPointDragState.startPosition.x + dx, 0, this.sceneMapData.base_width));
+        const nextY = Math.round(Phaser.Math.Clamp(this.interactionPointDragState.startPosition.y + dy, 0, this.sceneMapData.base_height));
+        actionPoint.x = nextX;
+        actionPoint.y = nextY;
+        actionPoint.anchor_x = nextX;
+        actionPoint.anchor_y = nextY;
+        this.syncWorkZonesFromInteractionPoints({ refreshWorkZoneLayer: true });
+        this.drawSceneMapLayers();
+        return;
+      }
+      if (this.interactionEditorMode === 'interaction_box' && this.interactionBoxDragState) {
+        const interactionBox = this.sceneMapData.interaction_boxes.find((item) => item.id === this.interactionBoxDragState?.id);
+        if (!interactionBox) {
+          this.interactionBoxDragState = null;
+          return;
+        }
+        const dx = point.x - this.interactionBoxDragState.startPoint.x;
+        const dy = point.y - this.interactionBoxDragState.startPoint.y;
+        const nextX = Math.round(this.interactionBoxDragState.startRect.x + dx);
+        const nextY = Math.round(this.interactionBoxDragState.startRect.y + dy);
+        interactionBox.x = Phaser.Math.Clamp(nextX, 0, Math.max(0, this.sceneMapData.base_width - interactionBox.width));
+        interactionBox.y = Phaser.Math.Clamp(nextY, 0, Math.max(0, this.sceneMapData.base_height - interactionBox.height));
+        this.drawSceneMapLayers();
+        return;
+      }
+      if (this.interactionEditorMode === 'action_point') {
+        const hoveredActionPoint = this.findInteractionPointByPoint(point);
+        const nextActionPointId = hoveredActionPoint?.id ?? null;
+        if (nextActionPointId !== this.hoveredInteractionPointId) {
+          this.hoveredInteractionPointId = nextActionPointId;
+          this.drawInteractionPointLayer();
+        }
+      } else {
+        const hoveredInteractionBox = this.findInteractionBoxByPoint(point);
+        const nextBoxId = hoveredInteractionBox?.id ?? null;
+        if (nextBoxId !== this.hoveredInteractionBoxId) {
+          this.hoveredInteractionBoxId = nextBoxId;
+          this.drawInteractionBoxLayer();
+        }
+      }
+      return;
+    }
+
+    const hoveredFurniture = this.findFurnitureByPoint(point);
+    const hoveredInteractionPoint = this.findInteractionPointByPoint(point);
+    const nextFurnitureId = hoveredFurniture?.id ?? null;
+    const nextInteractionPointId = hoveredInteractionPoint?.id ?? null;
+    if (nextFurnitureId !== this.hoveredFurnitureId || nextInteractionPointId !== this.hoveredInteractionPointId) {
+      this.hoveredFurnitureId = nextFurnitureId;
+      this.hoveredInteractionPointId = nextInteractionPointId;
+      this.drawFurnitureLayer();
+      this.drawInteractionPointLayer();
+    }
+  }
+
+  private handleEditorKeyDown(event: KeyboardEvent): void {
+    if (event.shiftKey && event.code === 'KeyE') {
+      event.preventDefault();
+      this.toggleEditorMode();
+      return;
+    }
+
+    if (!this.editorModeEnabled) {
+      return;
+    }
+
+    if (event.code === 'Digit1') {
+      this.settingsMode = null;
+      this.setEditorMode(true, 'wall');
+      return;
+    }
+    if (event.code === 'Digit2') {
+      this.settingsMode = 'furniture';
+      this.setEditorMode(true, 'furniture');
+      return;
+    }
+    if (event.code === 'Digit3') {
+      this.settingsMode = null;
+      this.setEditorMode(true, 'interaction');
+      return;
+    }
+    if (event.code === 'Digit4') {
+      this.settingsMode = 'house';
+      this.roomLabelEditorSessionActive = true;
+      this.setEditorMode(true, 'room_label');
+      return;
+    }
+
+    if (event.code === 'KeyS') {
+      event.preventDefault();
+      if (this.editorTool === 'wall') {
+        this.saveWallEditorChanges();
+      } else {
+        this.persistSceneMap('手动保存场景地图');
+      }
+      return;
+    }
+
+    if (event.code === 'KeyE' && !event.shiftKey) {
+      event.preventDefault();
+      this.exportSceneMapJson();
+      return;
+    }
+
+    if (event.code === 'Escape') {
+      this.wallEditorDragState = null;
+      this.editorPreviewLayer.clear();
+      this.showSceneToast('已取消当前编辑操作', 'info', 800);
+      return;
+    }
+
+    if (event.code === 'Delete' || event.code === 'Backspace') {
+      if (this.editorTool === 'wall' && this.selectedWallBlockId) {
+        event.preventDefault();
+        this.deleteWallBlockById(this.selectedWallBlockId);
+        return;
+      }
+      if (this.editorTool === 'furniture' && this.selectedFurnitureId) {
+        event.preventDefault();
+        this.deleteFurnitureById(this.selectedFurnitureId);
+      }
+      return;
+    }
+
+    if (event.code === 'KeyB') {
+      this.toggleSelectedFurnitureBlocking();
+      return;
+    }
+    if (event.code === 'KeyI') {
+      this.toggleSelectedFurnitureInteractive();
+      return;
+    }
+    if (event.code === 'KeyT') {
+      this.cycleSelectedFurnitureInteractionType();
+      return;
+    }
+  }
+
+  private toggleEditorMode(): void {
+    this.setEditorMode(!this.editorModeEnabled, this.editorTool);
+  }
+
+  private setEditorMode(
+    enabled: boolean,
+    nextTool: SceneEditorTool,
+    options: { silent?: boolean } = {}
+  ): void {
+    const previousEnabled = this.editorModeEnabled;
+    const previousTool = this.editorTool;
+
+    this.editorModeEnabled = enabled;
+    this.editorTool = nextTool;
+
+    if (enabled && nextTool === 'wall' && !this.wallEditorSessionActive) {
+      this.wallEditorBaseline = this.cloneWallBlocks(this.sceneMapData.wall_blocks);
+      this.wallEditorDirty = false;
+      this.wallEditorSessionActive = true;
+      this.selectedWallBlockId = null;
+    }
+    if (enabled && nextTool === 'room_label') {
+      this.roomLabelEditorSessionActive = true;
+    }
+
+    if (!enabled) {
+      this.wallEditorDragState = null;
+      this.selectedWallBlockId = null;
+      this.interactionPointDragState = null;
+      this.interactionBoxDragState = null;
+      this.roomLabelDragState = null;
+      this.selectedRoomLabelId = null;
+      this.editorPreviewLayer.clear();
+      if (this.settingsMode === 'furniture' || this.settingsMode === 'interaction') {
+        this.settingsMode = null;
+      }
+      if (previousTool === 'wall') {
+        if (this.wallEditorDirty) {
+          this.persistSceneMap('墙壁设置自动保存');
+        }
+        this.wallEditorSessionActive = false;
+        this.wallEditorDirty = false;
+        this.wallEditorBaseline = null;
+      }
+      if (previousTool === 'interaction') {
+        this.interactionEditorSessionActive = false;
+      }
+      if (previousTool === 'room_label') {
+        this.roomLabelEditorSessionActive = false;
+      }
+    }
+
+    if (previousTool !== nextTool) {
+      if (previousTool === 'room_label') {
+        this.roomLabelDragState = null;
+        this.selectedRoomLabelId = null;
+        this.roomLabelEditorSessionActive = false;
+        this.syncRoomLabels();
+      }
+      if (nextTool !== 'room_label') {
+        this.roomLabelDragState = null;
+      }
+    }
+
+    this.drawSceneMapLayers();
+
+    if (!options.silent) {
+      if (previousEnabled !== enabled) {
+        this.showSceneToast(
+          enabled
+            ? `编辑模式已开启（数据持久化键: ${SCENE_MAP_LOCAL_JSON_HINT}）`
+            : '编辑模式已关闭',
+          enabled ? 'success' : 'info',
+          1800
+        );
+      } else if (previousTool !== nextTool) {
+        const label = nextTool === 'wall'
+          ? '墙壁'
+          : nextTool === 'furniture'
+            ? '家具'
+            : nextTool === 'interaction'
+              ? '互动点'
+              : '房屋名';
+        this.showSceneToast(`编辑工具切换: ${label}`, 'info', 1000);
+      }
+    }
+
+    if (previousEnabled !== enabled || previousTool !== nextTool) {
+      this.emitEditorModeChanged();
+    }
+  }
+
+  private emitEditorModeChanged(): void {
+    const suggestedSettingsMode: SceneSettingsMode =
+      this.editorModeEnabled
+        ? this.editorTool === 'furniture'
+            ? 'furniture'
+            : this.editorTool === 'interaction'
+              ? 'interaction'
+              : this.editorTool === 'room_label'
+                ? 'house'
+              : null
+        : null;
+    this.events.emit('scene-editor-mode-changed', {
+      enabled: this.editorModeEnabled,
+      tool: this.editorTool,
+      suggestedSettingsMode
+    });
+  }
+
+  private handleEditorPointerDown(point: Point, pointer?: Phaser.Input.Pointer): void {
+    const isRightClick = Boolean(pointer?.rightButtonDown());
+
+    if (this.editorTool === 'wall') {
+      this.handleWallEditorPointerDown(point, isRightClick);
+      return;
+    }
+
+    if (this.editorTool === 'furniture') {
+      if (isRightClick) {
+        const removed = this.deleteFurnitureAt(point);
+        if (!removed) {
+          this.showSceneToast('未命中可删除的家具', 'warn', 900);
+        }
+        return;
+      }
+
+      const existed = this.findFurnitureByPoint(point);
+      if (existed) {
+        this.selectedFurnitureId = existed.id;
+        this.highlightFurniture(existed.id);
+        this.furnitureDragState = {
+          id: existed.id,
+          startPoint: point,
+          startRect: { x: existed.x, y: existed.y, width: existed.width, height: existed.height }
+        };
+        this.showSceneToast(`选中家具: ${existed.label}`, 'info', 700);
+        this.drawSceneMapLayers();
+        return;
+      }
+
+      if (!this.furniturePlacementTemplate) {
+        this.showSceneToast('请先在分类面板中选择具体家具。', 'warn', 1100);
+        return;
+      }
+      this.placeFurnitureAt(point);
+      return;
+    }
+
+    if (this.editorTool === 'room_label') {
+      return;
+    }
+
+    if (this.interactionEditorMode === 'action_point') {
+      if (isRightClick) {
+        const removed = this.deleteInteractionPointAt(point, { persist: false });
+        if (!removed) {
+          this.showSceneToast('未命中可删除的动作点', 'warn', 900);
+        }
+        return;
+      }
+      const existed = this.findInteractionPointByPoint(point);
+      if (existed) {
+        this.selectedInteractionPointId = existed.id;
+        this.selectedInteractionBoxId = null;
+        this.interactionPointDragState = {
+          id: existed.id,
+          startPoint: point,
+          startPosition: { x: existed.x, y: existed.y }
+        };
+        this.drawSceneMapLayers();
+        return;
+      }
+      this.placeInteractionPointAt(point, { persist: false });
+      const created = this.findInteractionPointByPoint(point);
+      if (created) {
+        this.selectedInteractionPointId = created.id;
+        this.selectedInteractionBoxId = null;
+      }
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    if (isRightClick) {
+      const removed = this.deleteInteractionBoxAt(point, { persist: false });
+      if (!removed) {
+        this.showSceneToast('未命中可删除的交互框', 'warn', 900);
+      }
+      return;
+    }
+
+    const hitBox = this.findInteractionBoxByPoint(point);
+    if (hitBox) {
+      this.selectedInteractionBoxId = hitBox.id;
+      this.selectedInteractionPointId = null;
+      this.interactionBoxDragState = {
+        id: hitBox.id,
+        startPoint: point,
+        startRect: { x: hitBox.x, y: hitBox.y, width: hitBox.width, height: hitBox.height }
+      };
+      this.drawSceneMapLayers();
+      return;
+    }
+    this.placeInteractionBoxAt(point, { persist: false });
+    const created = this.findInteractionBoxByPoint(point);
+    if (created) {
+      this.selectedInteractionBoxId = created.id;
+      this.selectedInteractionPointId = null;
+      this.drawSceneMapLayers();
+    }
+  }
+
+  private handleEditorPointerUp(point: Point, _pointer?: Phaser.Input.Pointer): void {
+    if (this.editorTool === 'furniture') {
+      if (this.furnitureDragState) {
+        this.furnitureDragState = null;
+        this.persistSceneMap('拖拽家具位置');
+      }
+      return;
+    }
+    if (this.editorTool === 'room_label') {
+      if (this.roomLabelDragState) {
+        const shouldPersist = this.roomLabelDragState.moved;
+        this.roomLabelDragState = null;
+        if (shouldPersist) {
+          this.persistSceneMap('拖拽房屋名位置');
+        }
+      }
+      return;
+    }
+    if (this.editorTool === 'interaction') {
+      if (this.interactionPointDragState || this.interactionBoxDragState) {
+        this.interactionPointDragState = null;
+        this.interactionBoxDragState = null;
+      }
+      return;
+    }
+    if (this.editorTool !== 'wall') {
+      return;
+    }
+    this.handleWallEditorPointerUp(point);
+  }
+
+  private handleWallEditorPointerDown(point: Point, isRightClick: boolean): void {
+    if (isRightClick) {
+      const hitWall = this.findWallBlockByPoint(point);
+      if (!hitWall) {
+        this.showSceneToast('未命中可删除的墙壁模块', 'warn', 900);
+        return;
+      }
+      this.deleteWallBlockById(hitWall.id);
+      return;
+    }
+
+    const selectedWall = this.selectedWallBlockId
+      ? this.sceneMapData.wall_blocks.find((item) => item.id === this.selectedWallBlockId) ?? null
+      : null;
+    if (selectedWall) {
+      const handle = this.findWallEditorHandleByPoint(point, selectedWall);
+      if (handle) {
+        if (handle.kind === 'delete') {
+          this.deleteWallBlockById(selectedWall.id);
+          return;
+        }
+        const center = this.wallBlockCenter(selectedWall);
+        this.wallEditorDragState = {
+          kind: handle.kind,
+          wallId: selectedWall.id,
+          startPoint: point,
+          startWall: { ...selectedWall },
+          startAngle: Math.atan2(point.y - center.y, point.x - center.x)
+        };
+        return;
+      }
+    }
+
+    const hitWall = this.findWallBlockByPoint(point);
+    if (hitWall) {
+      this.selectedWallBlockId = hitWall.id;
+      this.wallEditorDragState = {
+        kind: 'move',
+        wallId: hitWall.id,
+        startPoint: point,
+        startWall: { ...hitWall }
+      };
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    const nextWall = this.buildWallBlockFromShapePreset(point, this.wallEditorShapePreset);
+    this.sceneMapData.wall_blocks.push(nextWall);
+    this.selectedWallBlockId = nextWall.id;
+    this.markWallEditorDirty(`新增墙壁 ${nextWall.id}`, true);
+  }
+
+  private handleWallEditorPointerMove(point: Point): void {
+    if (!this.wallEditorDragState) {
+      this.renderEditorWallPreview();
+      return;
+    }
+    const index = this.sceneMapData.wall_blocks.findIndex((item) => item.id === this.wallEditorDragState?.wallId);
+    if (index === -1) {
+      this.wallEditorDragState = null;
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    const drag = this.wallEditorDragState;
+    const wall = this.sceneMapData.wall_blocks[index];
+    const dx = point.x - drag.startPoint.x;
+    const dy = point.y - drag.startPoint.y;
+
+    if (drag.kind === 'move') {
+      wall.x = Math.round(drag.startWall.x + dx);
+      wall.y = Math.round(drag.startWall.y + dy);
+      this.clampWallBlockInBounds(wall);
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    if (drag.kind === 'rotate') {
+      const center = this.wallBlockCenter(drag.startWall);
+      const startAngle = drag.startAngle ?? 0;
+      const currentAngle = Math.atan2(point.y - center.y, point.x - center.x);
+      wall.rotation = Math.round((Number(drag.startWall.rotation) || 0) + Phaser.Math.RadToDeg(currentAngle - startAngle));
+      this.drawSceneMapLayers();
+      return;
+    }
+
+    const startLeft = drag.startWall.x;
+    const startTop = drag.startWall.y;
+    const startRight = drag.startWall.x + drag.startWall.width;
+    const startBottom = drag.startWall.y + drag.startWall.height;
+
+    let nextLeft = startLeft;
+    let nextTop = startTop;
+    let nextRight = startRight;
+    let nextBottom = startBottom;
+
+    if (drag.kind === 'resize-nw') {
+      nextLeft += dx;
+      nextTop += dy;
+    } else if (drag.kind === 'resize-ne') {
+      nextRight += dx;
+      nextTop += dy;
+    } else if (drag.kind === 'resize-sw') {
+      nextLeft += dx;
+      nextBottom += dy;
+    } else if (drag.kind === 'resize-se') {
+      nextRight += dx;
+      nextBottom += dy;
+    }
+
+    const minSize = EDITOR_WALL_MIN_SIZE;
+    if (nextRight - nextLeft < minSize) {
+      if (drag.kind === 'resize-nw' || drag.kind === 'resize-sw') {
+        nextLeft = nextRight - minSize;
+      } else {
+        nextRight = nextLeft + minSize;
+      }
+    }
+    if (nextBottom - nextTop < minSize) {
+      if (drag.kind === 'resize-nw' || drag.kind === 'resize-ne') {
+        nextTop = nextBottom - minSize;
+      } else {
+        nextBottom = nextTop + minSize;
+      }
+    }
+
+    wall.x = Math.round(nextLeft);
+    wall.y = Math.round(nextTop);
+    wall.width = Math.max(minSize, Math.round(nextRight - nextLeft));
+    wall.height = Math.max(minSize, Math.round(nextBottom - nextTop));
+    if (wall.shape === 'square' || wall.shape === 'circle') {
+      const side = Math.max(wall.width, wall.height);
+      wall.width = side;
+      wall.height = side;
+    }
+    this.clampWallBlockInBounds(wall);
+    this.drawSceneMapLayers();
+  }
+
+  private handleWallEditorPointerUp(_point: Point): void {
+    if (!this.wallEditorDragState) {
+      return;
+    }
+    this.wallEditorDragState = null;
+    this.markWallEditorDirty('墙壁已调整', false);
+  }
+
+  private movePrimaryAgentTo(targetPoint: Point): boolean {
+    if (!this.lobster) {
+      return false;
+    }
+    const resolvedTarget = this.resolveRequestedWalkTarget(targetPoint, 260);
+    if (!resolvedTarget) {
+      return false;
+    }
+
+    const route = this.computeMaskRoute({ x: this.lobster.x, y: this.lobster.y }, resolvedTarget);
+    if (!route || route.length === 0) {
+      return false;
+    }
+
+    this.clearZoneStates();
+    this.drawWorkZones();
+    this.activeZoneId = null;
+    this.pendingStateProfile = null;
+    this.pendingRouteContext = null;
+    this.patrolTargetMode = null;
+    this.workMode = 'moving';
+    this.currentActionMode = null;
+    this.lobsterRoute = route;
+    this.notePatrolProgress();
+    this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
+      resourceId: this.focusResourceId,
+      detailOverride: 'manual ground move'
+    });
+    this.updateLobsterVisual('moving');
+    this.syncWorkStatus();
+    return true;
+  }
+
+  private handleFurnitureClick(furniture: FurnitureItem): void {
+    this.selectedFurnitureId = furniture.id;
+    this.highlightFurniture(furniture.id);
+    const baseMessage = `家具: ${furniture.label} (${furniture.interaction_type})`;
+    if (!furniture.interactive) {
+      this.showSceneToast(`${baseMessage} [仅选中]`, 'info', 1400);
+      return;
+    }
+
+    this.showSceneToast(`${baseMessage} 互动已触发`, 'success', 1500);
+    console.info('[TYXT][FurnitureInteraction]', {
+      id: furniture.id,
+      interactionType: furniture.interaction_type,
+      roomId: furniture.room_id
+    });
+    this.events.emit('scene-furniture-interaction', {
+      id: furniture.id,
+      roomId: furniture.room_id,
+      interactionType: furniture.interaction_type
+    });
+  }
+
+  private handleInteractionPointClick(interactionPoint: SceneInteractionPoint): void {
+    this.showSceneToast(`互动点触发: ${interactionPoint.label} (${interactionPoint.interaction_type})`, 'success', 1500);
+    console.info('[TYXT][InteractionPoint]', {
+      id: interactionPoint.id,
+      interactionType: interactionPoint.interaction_type,
+      roomId: interactionPoint.room_id
+    });
+    this.events.emit('scene-interaction-point', {
+      id: interactionPoint.id,
+      roomId: interactionPoint.room_id,
+      interactionType: interactionPoint.interaction_type
+    });
+
+    const resourceId = this.asResourcePartitionId(interactionPoint.room_id);
+    this.emitResourceSelection(resourceId, {
+      x: interactionPoint.anchor_x ?? interactionPoint.x,
+      y: interactionPoint.anchor_y ?? interactionPoint.y
+    });
+  }
+
+  private asResourcePartitionId(roomId: string): ResourcePartitionId {
+    const matchedRoom = this.protocols.mapLogic.rooms.find((room) => room.id === roomId);
+    return matchedRoom?.id ?? 'gateway';
+  }
+
+  private highlightFurniture(furnitureId: string): void {
+    this.highlightedFurnitureId = furnitureId;
+    this.highlightedFurnitureUntil = Date.now() + 900;
+    this.drawFurnitureLayer();
+  }
+
+  private persistSceneMap(reason: string): void {
+    this.sceneMapData = saveSceneMapData(this.sceneMapData);
+    this.sceneMapRevision += 1;
+    this.persistSceneMapToProjectFile();
+    this.syncWorkZonesFromInteractionPoints();
+    this.initializeWalkableMask();
+    this.drawRooms();
+    this.drawSceneMapLayers();
+    this.drawWorkZones();
+    this.showSceneToast(`${reason}，已保存。`, 'success', 1400);
+  }
+
+  private persistSceneMapToProjectFile(): void {
+    this.sceneMapProjectPersistPending = cloneSceneMapData(this.sceneMapData);
+    if (this.sceneMapProjectPersistPromise) {
+      return;
+    }
+
+    const flush = async (): Promise<void> => {
+      while (this.sceneMapProjectPersistPending) {
+        const payload = this.sceneMapProjectPersistPending;
+        this.sceneMapProjectPersistPending = null;
+        const response = await fetch('/api/tyxt/scene-map', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ scene_map: payload })
+        });
+        if (!response.ok) {
+          throw new Error(`scene-map ${response.status}`);
+        }
+      }
+    };
+
+    this.sceneMapProjectPersistPromise = flush()
+      .then(() => {
+        this.sceneMapProjectPersistWarned = false;
+      })
+      .catch((error) => {
+        console.warn('[TYXT] Failed to persist scene map project file:', error);
+        if (!this.sceneMapProjectPersistWarned) {
+          this.showSceneToast('项目场景文件保存失败，已保留浏览器缓存。', 'warn', 2600);
+        }
+        this.sceneMapProjectPersistWarned = true;
+      })
+      .finally(() => {
+        this.sceneMapProjectPersistPromise = null;
+        if (this.sceneMapProjectPersistPending) {
+          this.persistSceneMapToProjectFile();
+        }
+      });
+  }
+
+  private exportSceneMapJson(): void {
+    const exportText = buildSceneMapExportText(this.sceneMapData);
+    const blob = new Blob([exportText], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `scene-map.local.${new Date().toISOString().slice(0, 19).replaceAll(':', '-')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    this.showSceneToast(`已导出 JSON（建议覆盖 ${SCENE_MAP_LOCAL_JSON_HINT}）`, 'success', 2600);
+  }
+
+  private findWallBlockByPoint(point: Point): WallBlock | null {
+    for (let index = this.sceneMapData.wall_blocks.length - 1; index >= 0; index -= 1) {
+      const block = this.sceneMapData.wall_blocks[index];
+      if (this.pointInWallBlock(point, block)) {
+        return block;
+      }
+    }
+    return null;
+  }
+
+  private markWallEditorDirty(reason: string, showToast: boolean): void {
+    this.wallEditorDirty = true;
+    this.initializeWalkableMask();
+    this.drawRooms();
+    this.drawSceneMapLayers();
+    this.drawWorkZones();
+    if (showToast) {
+      this.showSceneToast(`${reason}（未保存）`, 'info', 1200);
+    }
+  }
+
+  private clampWallBlockInBounds(block: WallBlock): void {
+    const maxWidth = this.sceneMapData.base_width;
+    const maxHeight = this.sceneMapData.base_height;
+    block.width = Math.max(EDITOR_WALL_MIN_SIZE, Math.min(maxWidth, block.width));
+    block.height = Math.max(EDITOR_WALL_MIN_SIZE, Math.min(maxHeight, block.height));
+    block.x = Math.max(0, Math.min(maxWidth - block.width, block.x));
+    block.y = Math.max(0, Math.min(maxHeight - block.height, block.y));
+  }
+
+  private buildWallBlockFromShapePreset(point: Point, shape: WallShapeType): WallBlock {
+    const nextId = createSceneEntityId('wall', this.sceneMapData.wall_blocks.map((item) => item.id));
+    let width = Number(WALL_EDITOR_DEFAULT_SIZE.width);
+    let height = Number(WALL_EDITOR_DEFAULT_SIZE.height);
+    if (shape === 'square' || shape === 'circle') {
+      width = 96;
+      height = 96;
+    } else if (shape === 'triangle' || shape === 'trapezoid') {
+      width = 126;
+      height = 96;
+    }
+    const x = Math.round(point.x - width / 2);
+    const y = Math.round(point.y - height / 2);
+    const roomId = this.findRoomByPoint(point)?.id ?? 'gateway';
+    const block: WallBlock = {
+      id: nextId,
+      x,
+      y,
+      width,
+      height,
+      room_id: roomId,
+      shape,
+      rotation: 0
+    };
+    this.clampWallBlockInBounds(block);
+    return block;
+  }
+
+  private deleteWallBlockById(wallId: string): boolean {
+    const index = this.sceneMapData.wall_blocks.findIndex((wallBlock) => wallBlock.id === wallId);
+    if (index === -1) {
+      return false;
+    }
+    const [removed] = this.sceneMapData.wall_blocks.splice(index, 1);
+    if (this.selectedWallBlockId === removed.id) {
+      this.selectedWallBlockId = null;
+    }
+    this.markWallEditorDirty(`删除墙壁 ${removed.id}`, true);
+    return true;
+  }
+
+  private deleteFurnitureAt(point: Point): boolean {
+    const furniture = this.findFurnitureByPoint(point);
+    if (!furniture) {
+      return false;
+    }
+    return this.deleteFurnitureById(furniture.id);
+  }
+
+  private deleteFurnitureById(furnitureId: string): boolean {
+    const index = this.sceneMapData.furnitures.findIndex((item) => item.id === furnitureId);
+    if (index === -1) {
+      return false;
+    }
+    const [removed] = this.sceneMapData.furnitures.splice(index, 1);
+    if (this.selectedFurnitureId === removed.id) {
+      this.selectedFurnitureId = null;
+    }
+    this.persistSceneMap(`删除家具 ${removed.id}`);
+    return true;
+  }
+
+  private deleteInteractionPointAt(point: Point, options: { persist?: boolean } = {}): boolean {
+    const index = this.sceneMapData.interaction_points.findIndex((interactionPoint) => {
+      const dx = interactionPoint.x - point.x;
+      const dy = interactionPoint.y - point.y;
+      return dx * dx + dy * dy <= (INTERACTION_POINT_RADIUS + 6) * (INTERACTION_POINT_RADIUS + 6);
+    });
+    if (index === -1) {
+      return false;
+    }
+    const [removed] = this.sceneMapData.interaction_points.splice(index, 1);
+    this.selectedInteractionPointId = this.selectedInteractionPointId === removed.id ? null : this.selectedInteractionPointId;
+    this.ensureInteractionSelection();
+    if (options.persist === false) {
+      this.syncWorkZonesFromInteractionPoints({ refreshWorkZoneLayer: true });
+      this.drawSceneMapLayers();
+    } else {
+      this.persistSceneMap(`删除互动点 ${removed.id}`);
+    }
+    return true;
+  }
+
+  private deleteInteractionBoxAt(point: Point, options: { persist?: boolean } = {}): boolean {
+    const hitBox = this.findInteractionBoxByPoint(point);
+    if (!hitBox) {
+      return false;
+    }
+    const index = this.sceneMapData.interaction_boxes.findIndex((item) => item.id === hitBox.id);
+    if (index === -1) {
+      return false;
+    }
+    const [removed] = this.sceneMapData.interaction_boxes.splice(index, 1);
+    if (this.selectedInteractionBoxId === removed.id) {
+      this.selectedInteractionBoxId = null;
+    }
+    this.ensureInteractionSelection();
+    if (options.persist === false) {
+      this.drawSceneMapLayers();
+    } else {
+      this.persistSceneMap(`删除交互框 ${removed.id}`);
+    }
+    return true;
+  }
+
+  private placeFurnitureAt(point: Point): void {
+    const nextId = createSceneEntityId('furniture', this.sceneMapData.furnitures.map((item) => item.id));
+    const roomId = this.findRoomByPoint(point)?.id ?? 'gateway';
+    const template = this.furniturePlacementTemplate;
+    const width = Math.max(24, Math.round(template?.width ?? DEFAULT_FURNITURE_SIZE.width));
+    const height = Math.max(24, Math.round(template?.height ?? DEFAULT_FURNITURE_SIZE.height));
+    const clamped = this.clampFurniturePosition(
+      Math.round(point.x - width / 2),
+      Math.round(point.y - height / 2),
+      width,
+      height
+    );
+    const x = clamped.x;
+    const y = clamped.y;
+    const interactionType = FURNITURE_INTERACTION_TYPES[this.editorInteractionTypeCursor % FURNITURE_INTERACTION_TYPES.length];
+    const spriteDirections = template?.directions
+      ? {
+        front: template.directions.front,
+        left: template.directions.left,
+        right: template.directions.right,
+        back: template.directions.back
+      }
+      : undefined;
+    const furniture: FurnitureItem = {
+      id: nextId,
+      type: template?.category || 'custom',
+      label: template?.label || nextId,
+      room_id: roomId,
+      x,
+      y,
+      width,
+      height,
+      sprite_key: template?.spriteKey || '',
+      blocking: true,
+      interactive: true,
+      interaction_type: interactionType,
+      z_index: y + height,
+      direction: template?.direction || 'front',
+      sprite_directions: spriteDirections,
+      asset_id: template?.assetId || '',
+      category: template?.category || ''
+    };
+    this.sceneMapData.furnitures.push(furniture);
+    this.selectedFurnitureId = furniture.id;
+    this.persistSceneMap(`新增家具 ${nextId}`);
+  }
+
+  private clampFurniturePosition(rawX: number, rawY: number, width: number, height: number): { x: number; y: number } {
+    const maxX = this.sceneMapData.base_width - width;
+    const maxY = this.sceneMapData.base_height - height;
+    const minY = -Math.round(height * FURNITURE_EDITOR_TOP_SLACK_RATIO);
+    const x = Math.round(Math.max(0, Math.min(maxX, rawX)));
+    const y = Math.round(Math.max(minY, Math.min(maxY, rawY)));
+    return { x, y };
+  }
+
+  private placeInteractionPointAt(point: Point, options: { persist?: boolean } = {}): void {
+    const nextId = createSceneEntityId('interaction', this.sceneMapData.interaction_points.map((item) => item.id));
+    const roomId = this.findRoomByPoint(point)?.id ?? 'gateway';
+    const interactionPoint: SceneInteractionPoint = {
+      id: nextId,
+      type: 'custom',
+      label: nextId,
+      room_id: roomId,
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+      anchor_x: Math.round(point.x),
+      anchor_y: Math.round(point.y),
+      interaction_type: 'inspect'
+    };
+    this.sceneMapData.interaction_points.push(interactionPoint);
+    this.selectedInteractionPointId = interactionPoint.id;
+    this.selectedInteractionBoxId = null;
+    if (options.persist === false) {
+      this.syncWorkZonesFromInteractionPoints({ refreshWorkZoneLayer: true });
+      this.drawSceneMapLayers();
+    } else {
+      this.persistSceneMap(`新增互动点 ${nextId}`);
+    }
+  }
+
+  private placeInteractionBoxAt(point: Point, options: { persist?: boolean } = {}): void {
+    const nextId = createSceneEntityId('interaction-box', this.sceneMapData.interaction_boxes.map((item) => item.id));
+    const width = 132;
+    const height = 82;
+    const roomId = this.findRoomByPoint(point)?.id ?? 'gateway';
+    const x = Phaser.Math.Clamp(Math.round(point.x - width / 2), 0, Math.max(0, this.sceneMapData.base_width - width));
+    const y = Phaser.Math.Clamp(Math.round(point.y - height / 2), 0, Math.max(0, this.sceneMapData.base_height - height));
+    const interactionBox: InteractionBox = {
+      id: nextId,
+      label: nextId,
+      room_id: roomId,
+      x,
+      y,
+      width,
+      height,
+      interaction_name: '默认交互',
+      interaction_type: 'inspect'
+    };
+    this.sceneMapData.interaction_boxes.push(interactionBox);
+    this.selectedInteractionBoxId = interactionBox.id;
+    this.selectedInteractionPointId = null;
+    if (options.persist === false) {
+      this.drawSceneMapLayers();
+    } else {
+      this.persistSceneMap(`新增交互框 ${nextId}`);
+    }
+  }
+
+  private toggleSelectedFurnitureBlocking(): void {
+    if (!this.selectedFurnitureId) {
+      return;
+    }
+    const selectedFurniture = this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId);
+    if (!selectedFurniture) {
+      return;
+    }
+    selectedFurniture.blocking = !selectedFurniture.blocking;
+    this.persistSceneMap(`${selectedFurniture.id} blocking=${selectedFurniture.blocking}`);
+  }
+
+  private toggleSelectedFurnitureInteractive(): void {
+    if (!this.selectedFurnitureId) {
+      return;
+    }
+    const selectedFurniture = this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId);
+    if (!selectedFurniture) {
+      return;
+    }
+    selectedFurniture.interactive = !selectedFurniture.interactive;
+    this.persistSceneMap(`${selectedFurniture.id} interactive=${selectedFurniture.interactive}`);
+  }
+
+  private cycleSelectedFurnitureInteractionType(): void {
+    if (!this.selectedFurnitureId) {
+      return;
+    }
+    const selectedFurniture = this.sceneMapData.furnitures.find((item) => item.id === this.selectedFurnitureId);
+    if (!selectedFurniture) {
+      return;
+    }
+    const pool = [...FURNITURE_INTERACTION_TYPES];
+    const currentIndex = pool.findIndex((entry) => entry === selectedFurniture.interaction_type);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % pool.length;
+    selectedFurniture.interaction_type = pool[nextIndex];
+    this.editorInteractionTypeCursor = nextIndex;
+    this.persistSceneMap(`${selectedFurniture.id} interaction_type=${selectedFurniture.interaction_type}`);
+  }
+
+  private normalizeFurnitureFacing(value: unknown): FurnitureFacing {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'front' || normalized === 'left' || normalized === 'right' || normalized === 'back') {
+      return normalized;
+    }
+    return 'front';
+  }
+
+  private shiftFurnitureFacing(current: FurnitureFacing, step: number): FurnitureFacing {
+    const signedStep = step < 0 ? -1 : step > 0 ? 1 : 0;
+    if (signedStep === 0) {
+      return current;
+    }
+    const currentIndex = FURNITURE_FACING_TURN_ORDER.indexOf(current);
+    const baseIndex = currentIndex === -1 ? 0 : currentIndex;
+    const nextIndex = (baseIndex + signedStep + FURNITURE_FACING_TURN_ORDER.length) % FURNITURE_FACING_TURN_ORDER.length;
+    return FURNITURE_FACING_TURN_ORDER[nextIndex];
+  }
+
+  private resolveFurnitureSpriteForFacing(furniture: FurnitureItem, facing: FurnitureFacing): string | null {
+    const pool = furniture.sprite_directions;
+    if (!pool) {
+      return null;
+    }
+    const direct = String(pool[facing] || '').trim();
+    if (direct) {
+      return direct;
+    }
+    const front = String(pool.front || '').trim();
+    return front || null;
+  }
+
+  private findFurnitureByPoint(point: Point): FurnitureItem | null {
+    const sorted = [...this.sceneMapData.furnitures].sort((left, right) => {
+      if (left.z_index !== right.z_index) {
+        return right.z_index - left.z_index;
+      }
+      return right.id.localeCompare(left.id);
+    });
+    for (const furniture of sorted) {
+      if (this.pointInRect(point, furniture)) {
+        return furniture;
+      }
+    }
+    return null;
+  }
+
+  private findInteractionPointByPoint(point: Point): SceneInteractionPoint | null {
+    const maxDistance = INTERACTION_POINT_RADIUS + 6;
+    for (const interactionPoint of this.sceneMapData.interaction_points) {
+      const dx = interactionPoint.x - point.x;
+      const dy = interactionPoint.y - point.y;
+      if (dx * dx + dy * dy <= maxDistance * maxDistance) {
+        return interactionPoint;
+      }
+    }
+    return null;
+  }
+
+  private findInteractionBoxByPoint(point: Point): InteractionBox | null {
+    for (let index = this.sceneMapData.interaction_boxes.length - 1; index >= 0; index -= 1) {
+      const interactionBox = this.sceneMapData.interaction_boxes[index];
+      if (this.pointInRect(point, interactionBox)) {
+        return interactionBox;
+      }
+    }
+    return null;
+  }
+
+  private pointInRect(point: Point, rect: SceneMapRect): boolean {
+    return point.x >= rect.x
+      && point.x <= rect.x + rect.width
+      && point.y >= rect.y
+      && point.y <= rect.y + rect.height;
   }
 
   private advanceLobster(deltaMs: number): void {
     if (this.lobsterRoute.length === 0) {
+      this.resetPatrolProgressTracking();
       this.updateLobsterVisual(this.workMode === 'working' ? 'working' : 'idle');
       return;
+    }
+
+    if (this.workMode === 'moving') {
+      const capturePoint = this.mainActorTriggerCenterPoint();
+      if (this.suppressedActionAnchor) {
+        const awayDistance = Phaser.Math.Distance.Between(
+          capturePoint.x,
+          capturePoint.y,
+          this.suppressedActionAnchor.x,
+          this.suppressedActionAnchor.y
+        );
+        if (awayDistance >= 104 || Date.now() >= this.suppressedActionAnchorUntil) {
+          this.suppressedActionAnchor = null;
+          this.suppressedActionAnchorUntil = 0;
+        }
+      }
+      const targetedCaptureMode = this.patrolTargetMode?.triggerAnchor && this.isModeCaptureReachable(capturePoint, this.patrolTargetMode)
+        ? this.patrolTargetMode
+        : null;
+      const captureMode = targetedCaptureMode ?? (!this.patrolTargetMode
+        ? this.findCapturableActionMode(capturePoint, this.resolvePatrolActionModes())
+        : null);
+      if (captureMode?.triggerAnchor) {
+        this.patrolTargetMode = captureMode;
+        this.lobsterRoute = [];
+        const zoneId = this.resolvePatrolRoomId(captureMode) ?? this.focusResourceId;
+        this.startWorking(zoneId);
+        return;
+      }
     }
 
     const target = this.lobsterRoute[0];
@@ -2011,12 +5001,101 @@ export class LibraryScene extends Phaser.Scene {
       this.lobster.x = Math.round(target.x);
       this.lobster.y = Math.round(target.y);
       this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+      this.notePatrolProgress();
       this.lobsterRoute.shift();
 
-      if (this.lobsterRoute.length === 0 && this.activeZoneId && this.workMode === 'moving') {
-        this.startWorking(this.activeZoneId);
+      if (this.lobsterRoute.length === 0 && this.workMode === 'moving') {
+        if (this.patrolTargetMode?.triggerAnchor) {
+          const capturePoint = this.mainActorTriggerCenterPoint();
+          if (this.isModeCaptureReachable(capturePoint, this.patrolTargetMode)) {
+            this.snapContainerToModeAnchor(
+              this.lobster,
+              this.lobsterBody instanceof Phaser.GameObjects.Sprite ? this.lobsterBody : null,
+              this.patrolTargetMode
+            );
+            this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+            const zoneId = this.resolvePatrolRoomId(this.patrolTargetMode) ?? this.focusResourceId;
+            this.startWorking(zoneId);
+          } else {
+            const nearbyMode = this.findCapturableActionMode(capturePoint, this.resolvePatrolActionModes());
+            if (nearbyMode?.triggerAnchor) {
+              this.patrolTargetMode = nearbyMode;
+              this.snapContainerToModeAnchor(
+                this.lobster,
+                this.lobsterBody instanceof Phaser.GameObjects.Sprite ? this.lobsterBody : null,
+                nearbyMode
+              );
+              this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+              const zoneId = this.resolvePatrolRoomId(nearbyMode) ?? this.focusResourceId;
+              this.startWorking(zoneId);
+              return;
+            }
+            const fallbackDistance = Phaser.Math.Distance.Between(
+              capturePoint.x,
+              capturePoint.y,
+              this.patrolTargetMode.triggerAnchor.x,
+              this.patrolTargetMode.triggerAnchor.y
+            );
+            if (fallbackDistance <= PATROL_ACTION_TARGET_MAX_OFFSET + 40) {
+              this.snapContainerToModeAnchor(
+                this.lobster,
+                this.lobsterBody instanceof Phaser.GameObjects.Sprite ? this.lobsterBody : null,
+                this.patrolTargetMode
+              );
+              this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+              const zoneId = this.resolvePatrolRoomId(this.patrolTargetMode) ?? this.focusResourceId;
+              this.startWorking(zoneId);
+              return;
+            }
+            this.suppressedActionAnchor = {
+              x: Math.round(this.patrolTargetMode.triggerAnchor.x),
+              y: Math.round(this.patrolTargetMode.triggerAnchor.y)
+            };
+            this.suppressedActionAnchorUntil = Date.now() + 2600;
+            this.workMode = 'idle';
+            this.activeZoneId = null;
+            this.pendingStateProfile = null;
+            this.pendingRouteContext = null;
+            this.patrolTargetMode = null;
+            this.currentActionMode = null;
+            this.clearZoneStates();
+            this.drawWorkZones();
+            this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
+              resourceId: this.focusResourceId,
+              detailOverride: 'patrol reroute: target anchor not capturable'
+            });
+            this.updateLobsterVisual('idle');
+            this.syncWorkStatus();
+            this.maybeProcessTelemetryQueue();
+          }
+        } else {
+          const capturePoint = this.mainActorTriggerCenterPoint();
+          const captureMode = this.findCapturableActionMode(capturePoint, this.resolvePatrolActionModes());
+          if (captureMode?.triggerAnchor) {
+            this.patrolTargetMode = captureMode;
+            const zoneId = this.resolvePatrolRoomId(captureMode) ?? this.focusResourceId;
+            this.startWorking(zoneId);
+            return;
+          }
+          this.workMode = 'idle';
+          this.activeZoneId = null;
+          this.pendingStateProfile = null;
+          this.pendingRouteContext = null;
+          this.patrolTargetMode = null;
+          this.currentActionMode = null;
+          this.clearZoneStates();
+          this.drawWorkZones();
+          this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
+            resourceId: this.focusResourceId,
+            detailOverride: 'patrol segment completed'
+          });
+          this.updateLobsterVisual('idle');
+          this.syncWorkStatus();
+          this.maybeProcessTelemetryQueue();
+        }
       } else if (this.lobsterRoute.length === 0 && !this.activeZoneId) {
         this.workMode = 'idle';
+        this.currentActionMode = null;
         this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
           resourceId: this.focusResourceId,
           detailOverride: 'manual route completed'
@@ -2031,92 +5110,49 @@ export class LibraryScene extends Phaser.Scene {
     this.lobster.x = Math.round(this.lobster.x + (dx / distance) * step);
     this.lobster.y = Math.round(this.lobster.y + (dy / distance) * step);
     this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+    this.notePatrolProgress();
     this.updateLobsterVisual('moving');
-  }
-
-  private beginWorkRoute(zone: WorkZone, routeContext?: RouteContext): void {
-    this.clearZoneStates();
-    this.zoneState.set(zone.id, 'moving');
-    this.drawWorkZones();
-
-    this.activeZoneId = zone.id;
-    this.workMode = 'moving';
-    this.pendingStateProfile = this.pickStateProfile(zone.type);
-    this.pendingRouteContext = routeContext ?? {
-      resourceId: zone.id,
-      detail: `routing into ${zone.label.toLowerCase()}`
-    };
-
-    this.lastOutput = this.materializeOutput(this.pendingStateProfile, {
-      resourceId: this.pendingRouteContext.resourceId,
-      detailOverride: `moving to ${zone.label} · ${this.pendingRouteContext.detail}`
-    });
-
-    const maskRoute = this.computeMaskRoute({ x: this.lobster.x, y: this.lobster.y }, zone.anchor);
-    if (maskRoute && maskRoute.length > 0) {
-      this.lobsterRoute = maskRoute;
-    } else {
-      const route = computeRoute(
-        this.protocols.mapLogic.walkGraph,
-        { x: this.lobster.x, y: this.lobster.y },
-        zone.anchor,
-        this.protocols.mapLogic.collisionPolygons,
-        this.protocols.mapLogic.walkableZones ?? [],
-        (sample) => this.isWalkablePoint(sample)
-      );
-      this.lobsterRoute = this.routePointsForTarget(route, zone.anchor);
-    }
-    this.updateLobsterVisual('moving');
-
-    if (this.lobsterRoute.length === 0) {
-      this.startWorking(zone.id);
-    }
-
-    this.syncWorkStatus();
   }
 
   private startWorking(zoneId: ResourcePartitionId): void {
-    const hotspotMode = this.resolveActorMode('working', {
-      position: this.mainActorTriggerPoint(),
-      positionCenter: this.mainActorTriggerCenterPoint(),
-      direction: this.actorFacing
-    });
-    if (!hotspotMode?.triggerAnchor) {
-      // No hotspot match: do not fall back to idle working visuals; keep moving.
-      this.clearZoneStates();
-      this.zoneState.set(zoneId, 'moving');
-      this.drawWorkZones();
+    const targetMode = this.patrolTargetMode;
+    if (!targetMode?.triggerAnchor) {
       this.workMode = 'idle';
       this.activeZoneId = null;
       this.pendingStateProfile = null;
       this.pendingRouteContext = null;
       this.syncWorkStatus();
       this.maybeProcessTelemetryQueue();
-      if (this.workMode === 'idle' && this.lobsterRoute.length === 0) {
-        this.enqueueAutoWork();
-      }
       return;
     }
 
+    const mappedZoneId = this.resolvePatrolRoomId(targetMode) ?? zoneId;
+
     this.clearZoneStates();
-    this.zoneState.set(zoneId, 'working');
+    this.zoneState.set(mappedZoneId, 'working');
     this.drawWorkZones();
+    this.resetPatrolProgressTracking();
 
     this.workMode = 'working';
-    this.lastReachedZoneId = zoneId;
+    this.activeZoneId = mappedZoneId;
+    this.lastReachedZoneId = mappedZoneId;
+    this.currentActionMode = targetMode;
 
-    const zone = this.protocols.mapLogic.workZones.find((item) => item.id === zoneId);
+    const zone = this.protocols.mapLogic.workZones.find((item) => item.id === mappedZoneId);
     const profile = zone ? this.pendingStateProfile ?? this.pickStateProfile(zone.type) : this.resolveStateProfile('executing');
     const routeContext = this.pendingRouteContext ?? {
-      resourceId: zoneId,
-      detail: zone ? `accessing ${zone.label.toLowerCase()}` : 'running task'
+      resourceId: mappedZoneId,
+      detail: zone ? `accessing ${zone.label.toLowerCase()}` : 'running action'
     };
 
     this.lastOutput = this.materializeOutput(profile, {
       resourceId: routeContext.resourceId,
       detailOverride: routeContext.detail
     });
-    this.updateLobsterVisual('working');
+    this.updateLobsterVisual('working', targetMode);
+    // Final correction: snap once after switching visual mode to guarantee exact anchor lock.
+    this.snapContainerToModeAnchor(this.lobster, this.lobsterBody instanceof Phaser.GameObjects.Sprite ? this.lobsterBody : null, targetMode);
+    this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
     this.updateResourceAnimations();
     this.syncWorkStatus();
     this.resetPrimaryAgentPoseFx();
@@ -2134,7 +5170,7 @@ export class LibraryScene extends Phaser.Scene {
           scaleY: { from: 1, to: 1.08 },
           yoyo: true,
           duration: 260,
-          repeat: zoneId === 'break_room' ? 5 : 3,
+          repeat: mappedZoneId === 'break_room' ? 5 : 3,
           ease: 'Sine.InOut'
         });
       }
@@ -2151,30 +5187,28 @@ export class LibraryScene extends Phaser.Scene {
       }
     }
 
-    this.time.delayedCall(zoneId === 'break_room' ? 2100 : 1500, () => this.finishWorking(zoneId));
+    this.time.delayedCall(mappedZoneId === 'break_room' ? 2100 : 1500, () => this.finishWorking(mappedZoneId));
   }
 
   private finishWorking(zoneId: ResourcePartitionId): void {
     this.clearZoneStates();
     this.zoneState.set(zoneId, 'done');
     this.drawWorkZones();
+    this.resetPatrolProgressTracking();
 
     this.activeZoneId = null;
     this.pendingStateProfile = null;
     this.pendingRouteContext = null;
-    this.workMode = 'idle';
-
-    if (zoneId === 'break_room') {
-      this.lastOutput = this.materializeOutput(this.resolveStateProfile('resting'), {
-        resourceId: 'break_room',
-        detailOverride: this.focusDetail || 'synchronizing notes at the message wall'
-      });
-      this.updateLobsterVisual('idle');
-      this.updateResourceAnimations();
-      this.syncWorkStatus();
-      this.resetPrimaryAgentPoseFx();
-      return;
+    if (this.currentActionMode?.triggerAnchor) {
+      this.lastCompletedActionAnchor = {
+        x: Math.round(this.currentActionMode.triggerAnchor.x),
+        y: Math.round(this.currentActionMode.triggerAnchor.y)
+      };
+      this.suppressedActionAnchor = { ...this.lastCompletedActionAnchor };
+      this.suppressedActionAnchorUntil = Date.now() + 4200;
     }
+    this.patrolTargetMode = null;
+    this.workMode = 'idle';
 
     const zone = this.protocols.mapLogic.workZones.find((item) => item.id === zoneId);
     const completionProfile = zone ? this.pickStateProfile(zone.type) : this.resolveStateProfile('documenting');
@@ -2212,82 +5246,402 @@ export class LibraryScene extends Phaser.Scene {
     });
   }
 
-  private maybeProcessTelemetryQueue(): void {
-    if (this.workMode === 'working' || this.lobsterRoute.length > 0 || this.activeZoneId) {
+  private notePatrolProgress(): void {
+    if (!this.lobster) {
       return;
     }
-
-    const nextEvent = this.telemetryQueue.shift();
-    if (nextEvent) {
-      const zone = this.protocols.mapLogic.workZones.find((item) => item.id === nextEvent.resourceId);
-      if (zone) {
-        this.beginWorkRoute(zone, {
-          resourceId: nextEvent.resourceId,
-          detail: nextEvent.detail,
-          source: nextEvent.source,
-          status: nextEvent.status
-        });
-      }
-      return;
-    }
-
-    if (this.liveMode !== 'live') {
-      return;
-    }
-
-    if (this.focusResourceId === 'break_room') {
-      if (this.lastReachedZoneId !== 'break_room') {
-        const breakZone = this.protocols.mapLogic.workZones.find((item) => item.id === 'break_room');
-        if (breakZone) {
-          this.beginWorkRoute(breakZone, {
-            resourceId: 'break_room',
-            detail: this.focusDetail || 'system quiet, message wall standby'
-          });
-        }
-        return;
-      }
-
-      if (this.lastOutput.stateId !== 'resting') {
-        this.clearZoneStates();
-        this.drawWorkZones();
-        this.lastOutput = this.materializeOutput(this.resolveStateProfile('resting'), {
-          resourceId: 'break_room',
-          detailOverride: this.focusDetail || 'system quiet, message wall standby'
-        });
-        this.updateLobsterVisual('idle');
-        this.updateResourceAnimations();
-        this.syncWorkStatus();
-      }
-      return;
-    }
-
-    if (this.focusResourceId !== this.lastReachedZoneId) {
-      const zone = this.protocols.mapLogic.workZones.find((item) => item.id === this.focusResourceId);
-      if (zone) {
-        this.beginWorkRoute(zone, {
-          resourceId: this.focusResourceId,
-          detail: this.focusDetail
-        });
-      }
-    }
+    this.patrolLastProgressPoint = { x: Math.round(this.lobster.x), y: Math.round(this.lobster.y) };
+    this.patrolLastProgressAt = Date.now();
   }
 
-  private enqueueAutoWork(): void {
-    if (this.liveMode === 'live' || this.workMode === 'working' || this.lobsterRoute.length > 0) {
+  private resetPatrolProgressTracking(): void {
+    this.patrolLastProgressPoint = null;
+    this.patrolLastProgressAt = 0;
+    this.patrolStuckRecoveryAttempts = 0;
+  }
+
+  private isModeCaptureReachable(capturePoint: Point, mode: ActorVariantDef['modes'][number]): boolean {
+    if (!mode.triggerAnchor) {
+      return false;
+    }
+    const baseRadius = Math.max(32, mode.triggerRadius ?? 76);
+    const captureRadius = Phaser.Math.Clamp(
+      baseRadius + 30,
+      PATROL_ACTION_CAPTURE_RADIUS_MIN,
+      PATROL_ACTION_CAPTURE_RADIUS_MAX
+    );
+    const distance = Phaser.Math.Distance.Between(
+      capturePoint.x,
+      capturePoint.y,
+      mode.triggerAnchor.x,
+      mode.triggerAnchor.y
+    );
+    return distance <= captureRadius;
+  }
+
+  private monitorPatrolStuckState(): void {
+    if (!this.lobster || this.workMode !== 'moving' || this.lobsterRoute.length === 0) {
+      this.resetPatrolProgressTracking();
       return;
     }
 
-    const zones = this.protocols.mapLogic.workZones;
-    if (zones.length === 0) {
+    const now = Date.now();
+    const current = { x: Math.round(this.lobster.x), y: Math.round(this.lobster.y) };
+    if (!this.patrolLastProgressPoint) {
+      this.patrolLastProgressPoint = current;
+      this.patrolLastProgressAt = now;
+      return;
+    }
+    const movedDistance = Phaser.Math.Distance.Between(
+      current.x,
+      current.y,
+      this.patrolLastProgressPoint.x,
+      this.patrolLastProgressPoint.y
+    );
+    if (movedDistance >= PATROL_STUCK_DISTANCE_THRESHOLD) {
+      this.patrolLastProgressPoint = current;
+      this.patrolLastProgressAt = now;
+      this.patrolStuckRecoveryAttempts = 0;
+      return;
+    }
+    if (now - this.patrolLastProgressAt < PATROL_STUCK_TIMEOUT_MS) {
       return;
     }
 
-    const zone = zones[this.workCursor % zones.length];
-    this.workCursor += 1;
-    this.beginWorkRoute(zone, {
-      resourceId: zone.id,
-      detail: `mock patrol into ${zone.label.toLowerCase()}`
+    if (this.tryRecoverStuckPatrolRoute()) {
+      return;
+    }
+    this.recoverPrimaryAgentToSpawn('patrol stuck reset to stand-front');
+  }
+
+  private tryRecoverStuckPatrolRoute(): boolean {
+    if (!this.lobster || this.patrolStuckRecoveryAttempts >= PATROL_STUCK_MAX_RECOVERY_ATTEMPTS) {
+      return false;
+    }
+    this.patrolStuckRecoveryAttempts += 1;
+
+    const actorOrigin = this.resolvePatrolWalkableOrigin({ x: this.lobster.x, y: this.lobster.y })
+      ?? this.resolvePatrolWalkableOrigin(this.mainActorTriggerCenterPoint());
+    if (!actorOrigin) {
+      this.patrolLastProgressAt = Date.now();
+      return this.patrolStuckRecoveryAttempts < PATROL_STUCK_MAX_RECOVERY_ATTEMPTS;
+    }
+
+    if (this.patrolTargetMode?.triggerAnchor) {
+      const targetPoint = this.resolveActionAnchorPatrolTarget(this.patrolTargetMode.triggerAnchor);
+      if (targetPoint) {
+        const route = this.computeMaskRoute(actorOrigin, targetPoint);
+        if (route && route.length > 0) {
+          this.lobsterRoute = route;
+          this.notePatrolProgress();
+          return true;
+        }
+      }
+    }
+
+    const actionPlan = this.pickActionPointPatrolPlan(actorOrigin);
+    if (actionPlan) {
+      this.patrolTargetMode = actionPlan.mode;
+      this.lobsterRoute = actionPlan.route;
+      this.notePatrolProgress();
+      return true;
+    }
+
+    const hasActionModes = this.resolvePatrolActionModes().some((mode) => Boolean(mode.triggerAnchor));
+    if (!hasActionModes) {
+      const targetPoint = this.pickRandomReachablePatrolTarget(actorOrigin);
+      if (targetPoint) {
+        const route = this.computeMaskRoute(actorOrigin, targetPoint);
+        if (route && route.length > 0) {
+          this.patrolTargetMode = null;
+          this.lobsterRoute = route;
+          this.notePatrolProgress();
+          return true;
+        }
+      }
+    }
+
+    this.patrolLastProgressAt = Date.now();
+    return this.patrolStuckRecoveryAttempts < PATROL_STUCK_MAX_RECOVERY_ATTEMPTS;
+  }
+
+  private recoverPrimaryAgentToSpawn(detail: string): void {
+    if (!this.lobster) {
+      return;
+    }
+    const spawnIdleMode = this.resolveSpawnIdleMode();
+    const spawnAnchor = spawnIdleMode?.triggerAnchor
+      ? { x: Math.round(spawnIdleMode.triggerAnchor.x), y: Math.round(spawnIdleMode.triggerAnchor.y) }
+      : null;
+    const fallback = this.resolvePatrolWalkableOrigin({ x: this.lobster.x, y: this.lobster.y })
+      ?? { x: this.lobster.x, y: this.lobster.y };
+    const spawnPoint = spawnAnchor
+      ? (this.resolveRequestedWalkTarget(spawnAnchor, 260) ?? spawnAnchor)
+      : fallback;
+
+    this.lobsterRoute = [];
+    this.workMode = 'idle';
+    this.activeZoneId = null;
+    this.pendingStateProfile = null;
+    this.pendingRouteContext = null;
+    this.patrolTargetMode = null;
+    this.currentActionMode = spawnIdleMode ?? null;
+    this.clearZoneStates();
+    this.drawWorkZones();
+    this.lobster.x = Math.round(spawnPoint.x);
+    this.lobster.y = Math.round(spawnPoint.y);
+    this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+    this.lastMainVisualKey = null;
+    this.updateLobsterVisual('idle', spawnIdleMode ?? undefined);
+    this.lastOutput = this.materializeOutput(this.resolveStateProfile('idle'), {
+      resourceId: this.focusResourceId,
+      detailOverride: detail
     });
+    this.patrolCooldownUntil = Date.now() + 1200;
+    this.resetPatrolProgressTracking();
+    this.syncWorkStatus();
+  }
+
+  private sameAnchorPoint(left: Point | null, right: Point | null, tolerance = 18): boolean {
+    if (!left || !right) {
+      return false;
+    }
+    return Phaser.Math.Distance.Between(left.x, left.y, right.x, right.y) <= tolerance;
+  }
+
+  private findCapturableActionMode(
+    capturePoint: Point,
+    actionModes: ActorVariantDef['modes'][number][]
+  ): ActorVariantDef['modes'][number] | null {
+    const candidates = actionModes.filter((mode) => Boolean(mode.triggerAnchor));
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const hasAlternativeAnchor = this.lastCompletedActionAnchor
+      ? candidates.some((mode) => !this.sameAnchorPoint(mode.triggerAnchor ?? null, this.lastCompletedActionAnchor))
+      : false;
+
+    const pickNearest = (allowSameAnchor: boolean): ActorVariantDef['modes'][number] | null => {
+      let best: { mode: ActorVariantDef['modes'][number]; distance: number } | null = null;
+      for (const mode of candidates) {
+        if (!mode.triggerAnchor) {
+          continue;
+        }
+        if (
+          this.suppressedActionAnchor
+          && Date.now() < this.suppressedActionAnchorUntil
+          && this.sameAnchorPoint(mode.triggerAnchor, this.suppressedActionAnchor)
+        ) {
+          continue;
+        }
+        if (!allowSameAnchor && hasAlternativeAnchor && this.sameAnchorPoint(mode.triggerAnchor, this.lastCompletedActionAnchor)) {
+          continue;
+        }
+        const baseRadius = Math.max(32, mode.triggerRadius ?? 76);
+        const distance = Phaser.Math.Distance.Between(
+          capturePoint.x,
+          capturePoint.y,
+          mode.triggerAnchor.x,
+          mode.triggerAnchor.y
+        );
+        const captureRadius = Phaser.Math.Clamp(
+          baseRadius + 24,
+          PATROL_ACTION_CAPTURE_RADIUS_MIN,
+          PATROL_ACTION_CAPTURE_RADIUS_MAX
+        );
+        if (distance > captureRadius) {
+          continue;
+        }
+        if (!best || distance < best.distance) {
+          best = { mode, distance };
+        }
+      }
+      return best?.mode ?? null;
+    };
+
+    return pickNearest(false) ?? pickNearest(true);
+  }
+
+  private pickRandomReachablePatrolTarget(origin: Point): Point | null {
+    if (!this.walkableGrid || this.walkableGridCols <= 0 || this.walkableGridRows <= 0) {
+      return this.pickRandomWalkablePatrolTarget(origin);
+    }
+
+    this.initializeReachableWalkableGrid(origin);
+    if (!this.reachableWalkableGrid) {
+      return this.pickRandomWalkablePatrolTarget(origin);
+    }
+
+    const minDistance = 140;
+    const reachableIndices: number[] = [];
+    for (let index = 0; index < this.reachableWalkableGrid.length; index += 1) {
+      if (this.reachableWalkableGrid[index] === 1) {
+        reachableIndices.push(index);
+      }
+    }
+    if (reachableIndices.length === 0) {
+      return this.pickRandomWalkablePatrolTarget(origin);
+    }
+    let fallback: { point: Point; distance: number } | null = null;
+
+    for (let attempt = 0; attempt < 140; attempt += 1) {
+      const index = reachableIndices[Phaser.Math.Between(0, reachableIndices.length - 1)];
+      const col = index % this.walkableGridCols;
+      const row = Math.floor(index / this.walkableGridCols);
+      const point = this.gridToScenePoint(col, row);
+      const distance = Phaser.Math.Distance.Between(origin.x, origin.y, point.x, point.y);
+      if (!fallback || distance > fallback.distance) {
+        fallback = { point, distance };
+      }
+      if (distance < minDistance) {
+        continue;
+      }
+      if (this.lastCompletedActionAnchor && this.sameAnchorPoint(point, this.lastCompletedActionAnchor, 64)) {
+        continue;
+      }
+      return point;
+    }
+
+    if (fallback && fallback.distance >= 36) {
+      return fallback.point;
+    }
+    return this.pickRandomWalkablePatrolTarget(origin, 80);
+  }
+
+  private resolveActionAnchorPatrolTarget(anchor: Point): Point | null {
+    const direct = this.resolveRequestedWalkTarget(anchor, PATROL_ACTION_TARGET_MAX_OFFSET);
+    if (direct) {
+      return direct;
+    }
+    const nearest = this.findNearestWalkablePoint(anchor, PATROL_ACTION_TARGET_MAX_OFFSET);
+    if (!nearest) {
+      return null;
+    }
+    const distance = Phaser.Math.Distance.Between(anchor.x, anchor.y, nearest.x, nearest.y);
+    return distance <= PATROL_ACTION_TARGET_MAX_OFFSET ? nearest : null;
+  }
+
+  private shuffledPatrolActionModes(): ActorVariantDef['modes'][number][] {
+    const pool = this.resolvePatrolActionModes().filter((mode) => Boolean(mode.triggerAnchor));
+    for (let index = pool.length - 1; index > 0; index -= 1) {
+      const swapIndex = Phaser.Math.Between(0, index);
+      const temp = pool[index];
+      pool[index] = pool[swapIndex];
+      pool[swapIndex] = temp;
+    }
+    return pool;
+  }
+
+  private pickActionPointPatrolPlan(origin: Point): {
+    mode: ActorVariantDef['modes'][number];
+    route: Point[];
+    targetPoint: Point;
+  } | null {
+    const candidates = this.shuffledPatrolActionModes();
+    if (candidates.length === 0) {
+      return null;
+    }
+    const hasAlternativeAnchor = this.lastCompletedActionAnchor
+      ? candidates.some((mode) => !this.sameAnchorPoint(mode.triggerAnchor ?? null, this.lastCompletedActionAnchor))
+      : false;
+
+    const tryPick = (allowSameAnchor: boolean): {
+      mode: ActorVariantDef['modes'][number];
+      route: Point[];
+      targetPoint: Point;
+    } | null => {
+      for (const candidate of candidates) {
+        if (!candidate.triggerAnchor) {
+          continue;
+        }
+        if (
+          this.suppressedActionAnchor
+          && Date.now() < this.suppressedActionAnchorUntil
+          && this.sameAnchorPoint(candidate.triggerAnchor, this.suppressedActionAnchor)
+        ) {
+          continue;
+        }
+        if (!allowSameAnchor && hasAlternativeAnchor && this.sameAnchorPoint(candidate.triggerAnchor, this.lastCompletedActionAnchor)) {
+          continue;
+        }
+        const targetPoint = this.resolveActionAnchorPatrolTarget(candidate.triggerAnchor);
+        if (!targetPoint) {
+          continue;
+        }
+        const route = this.computeMaskRoute(origin, targetPoint);
+        if (!route || route.length === 0) {
+          continue;
+        }
+        return { mode: candidate, route, targetPoint };
+      }
+      return null;
+    };
+
+    return tryPick(false) ?? tryPick(true);
+  }
+
+  private scheduleDeterministicPatrol(): void {
+    const now = Date.now();
+    if (now < this.patrolCooldownUntil) {
+      return;
+    }
+
+    const actorCenter = { x: this.lobster.x, y: this.lobster.y };
+    const actorOrigin = this.resolvePatrolWalkableOrigin(actorCenter)
+      ?? this.resolvePatrolWalkableOrigin(this.mainActorTriggerCenterPoint())
+      ?? actorCenter;
+    if (!this.isWalkablePoint(actorCenter)) {
+      this.lobster.x = Math.round(actorOrigin.x);
+      this.lobster.y = Math.round(actorOrigin.y);
+      this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+    }
+    const hasActionModes = this.resolvePatrolActionModes().some((mode) => Boolean(mode.triggerAnchor));
+    const actionPlan = this.pickActionPointPatrolPlan(actorOrigin);
+    const patrolTarget = actionPlan?.targetPoint ?? (!hasActionModes ? this.pickRandomReachablePatrolTarget(actorOrigin) : null);
+    const route = actionPlan?.route ?? (patrolTarget ? this.computeMaskRoute(actorOrigin, patrolTarget) : null);
+    if (!patrolTarget || !route || route.length === 0) {
+      this.patrolCooldownUntil = now + (hasActionModes ? 560 : 1000);
+      return;
+    }
+
+    const targetRoomId = actionPlan?.mode
+      ? (this.resolvePatrolRoomId(actionPlan.mode) ?? this.findRoomByPoint(patrolTarget)?.id ?? this.focusResourceId)
+      : (this.findRoomByPoint(patrolTarget)?.id ?? this.focusResourceId);
+    this.patrolTargetMode = actionPlan?.mode ?? null;
+    this.clearZoneStates();
+    this.zoneState.set(targetRoomId, 'moving');
+    this.drawWorkZones();
+    this.activeZoneId = targetRoomId;
+    this.workMode = 'moving';
+    this.currentActionMode = null;
+    this.pendingStateProfile = this.resolveStateProfile('executing');
+    this.pendingRouteContext = {
+      resourceId: targetRoomId,
+      detail: `patrolling ${this.zoneLabel(targetRoomId)}`
+    };
+    this.lastOutput = this.materializeOutput(this.pendingStateProfile, {
+      resourceId: targetRoomId,
+      detailOverride: this.pendingRouteContext.detail
+    });
+    this.lobsterRoute = route;
+    this.notePatrolProgress();
+    this.patrolCooldownUntil = now + Phaser.Math.Between(1500, 2600);
+    this.updateLobsterVisual('moving');
+    this.syncWorkStatus();
+  }
+
+  private maybeProcessTelemetryQueue(): void {
+    if (this.workMode === 'working' || this.workMode === 'moving' || this.lobsterRoute.length > 0) {
+      return;
+    }
+    if (Date.now() < this.celebrationUntil) {
+      return;
+    }
+    if (this.workMode === 'idle' && this.activeZoneId && !this.patrolTargetMode) {
+      this.activeZoneId = null;
+    }
+    this.scheduleDeterministicPatrol();
   }
 
   private clearZoneStates(): void {
@@ -2684,22 +6038,137 @@ export class LibraryScene extends Phaser.Scene {
     });
   }
 
+  private applyActorVariant(variant: ActorVariantDef): void {
+    if (this.actorVariantId === variant.id) {
+      return;
+    }
+    this.actorVariantId = variant.id;
+    this.actorVisualSelectionByContext.clear();
+    this.lobsterRoute = [];
+    this.patrolTargetMode = null;
+    this.activeZoneId = null;
+    this.workMode = 'idle';
+    const spawnIdleMode = this.resolveSpawnIdleMode();
+    this.currentActionMode = spawnIdleMode;
+    this.lastCompletedActionAnchor = null;
+    this.suppressedActionAnchor = null;
+    this.suppressedActionAnchorUntil = 0;
+    this.lastMainVisualKey = null;
+    this.resetPatrolProgressTracking();
+    if (spawnIdleMode) {
+      this.updateLobsterVisual('idle', spawnIdleMode);
+    } else {
+      this.updateLobsterVisual('idle');
+    }
+    this.patrolCooldownUntil = Date.now() + 1800;
+  }
+
+  private normalizeGeneratedActorFolderId(value: string): string | null {
+    const text = String(value || '').trim().slice(0, 80);
+    if (!/^[a-zA-Z0-9._-]+$/.test(text)) {
+      return null;
+    }
+    return text;
+  }
+
+  private rewriteGeneratedActorPath(pathValue: string, folderId: string): string {
+    const normalizedPath = String(pathValue || '').trim();
+    if (!normalizedPath) {
+      return `/assets/generated/actors/${folderId}/sheets/stand_front-spritesheet.png`;
+    }
+    return normalizedPath.replace(/\/assets\/generated\/actors\/[^/]+\/sheets\//, `/assets/generated/actors/${folderId}/sheets/`);
+  }
+
+  private findGeneratedActorBaseVariant(): ActorVariantDef | null {
+    const actor = this.protocols.sceneArt.actor;
+    const variants = Array.isArray(actor?.variants) ? actor.variants : [];
+    return variants.find((variant) => variant.id === 'tyxt-emoji')
+      ?? variants.find((variant) => (variant.modes ?? []).some((mode) => String(mode.path || '').includes('/assets/generated/actors/tyxt-emoji-v1/')))
+      ?? variants[0]
+      ?? null;
+  }
+
+  private buildGeneratedActorVariant(folderId: string): ActorVariantDef | null {
+    const normalizedFolderId = this.normalizeGeneratedActorFolderId(folderId);
+    if (!normalizedFolderId) {
+      return null;
+    }
+    const cached = this.generatedActorVariantCache.get(normalizedFolderId);
+    if (cached) {
+      return cached;
+    }
+    const baseVariant = this.findGeneratedActorBaseVariant();
+    if (!baseVariant) {
+      return null;
+    }
+    const variant: ActorVariantDef = {
+      id: normalizedFolderId,
+      label: normalizedFolderId,
+      modes: baseVariant.modes.map((mode) => ({
+        ...mode,
+        textureKey: `${normalizedFolderId}:${mode.textureKey}`,
+        path: this.rewriteGeneratedActorPath(mode.path, normalizedFolderId),
+        stateIds: mode.stateIds ? [...mode.stateIds] : undefined,
+        directions: mode.directions ? [...mode.directions] : undefined,
+        triggerAnchor: mode.triggerAnchor ? { ...mode.triggerAnchor } : undefined,
+        displaySize: mode.displaySize ? { ...mode.displaySize } : undefined,
+        animation: mode.animation ? { ...mode.animation } : undefined
+      }))
+    };
+    this.generatedActorVariantCache.set(normalizedFolderId, variant);
+    return variant;
+  }
+
+  private actorVariantTexturesReady(variant: ActorVariantDef): boolean {
+    return (variant.modes ?? []).every((mode) => {
+      if (!mode.textureKey) {
+        return true;
+      }
+      return this.textures.exists(mode.textureKey);
+    });
+  }
+
+  private ensureActorVariantTexturesReady(variant: ActorVariantDef, onReady: () => void): void {
+    if (this.actorVariantTexturesReady(variant)) {
+      this.createActorAnimations();
+      onReady();
+      return;
+    }
+    for (const mode of variant.modes ?? []) {
+      this.loadTextureAsset(mode);
+    }
+    this.load.once('complete', () => {
+      this.createActorAnimations();
+      onReady();
+    });
+    if (!this.load.isLoading()) {
+      this.load.start();
+    }
+  }
+
   private resolveActorVariants(): ActorVariantDef[] {
     const actor = this.protocols.sceneArt.actor;
+    const generatedVariants = this.generatedActorVariantFolders
+      .map((folderId) => this.buildGeneratedActorVariant(folderId))
+      .filter((variant): variant is ActorVariantDef => variant !== null);
     if (!actor) {
-      return [];
+      return generatedVariants;
     }
     if (Array.isArray(actor.variants) && actor.variants.length > 0) {
-      return actor.variants;
+      const existingIds = new Set(actor.variants.map((variant) => variant.id));
+      return [
+        ...actor.variants,
+        ...generatedVariants.filter((variant) => !existingIds.has(variant.id))
+      ];
     }
     if (Array.isArray(actor.modes) && actor.modes.length > 0) {
       return [{
         id: actor.defaultVariantId ?? actor.id,
         label: 'Default',
         modes: actor.modes
-      }];
+      }, ...generatedVariants];
     }
-    return [];
+    return generatedVariants;
   }
 
   private resolveActorVariant(): ActorVariantDef | null {
@@ -2724,6 +6193,371 @@ export class LibraryScene extends Phaser.Scene {
     }
     this.actorVariantId = variants[0].id;
     return variants[0];
+  }
+
+  private normalizeActionAssetPath(value: string | undefined): string {
+    const raw = String(value || '').trim().replace(/\\/g, '/');
+    if (!raw) {
+      return '';
+    }
+    if (/^(data:|blob:)/i.test(raw)) {
+      return raw;
+    }
+    const publicIndex = raw.toLowerCase().lastIndexOf('/public/');
+    if (publicIndex >= 0) {
+      return raw.slice(publicIndex + '/public'.length).toLowerCase();
+    }
+    if (/^[a-zA-Z]:\//.test(raw)) {
+      const assetsIndex = raw.toLowerCase().lastIndexOf('/assets/');
+      return assetsIndex >= 0 ? raw.slice(assetsIndex).toLowerCase() : raw.toLowerCase();
+    }
+    return (raw.startsWith('/') ? raw : `/${raw}`).toLowerCase();
+  }
+
+  private actionAssetBaseName(normalizedPath: string): string {
+    const value = normalizedPath.trim().toLowerCase();
+    if (!value) {
+      return '';
+    }
+    const slashIndex = value.lastIndexOf('/');
+    return slashIndex >= 0 ? value.slice(slashIndex + 1) : value;
+  }
+
+  private findActorModeByActionAssetPath(
+    modes: ActorVariantDef['modes'][number][],
+    assetPath: string
+  ): ActorVariantDef['modes'][number] | null {
+    const normalizedAssetPath = this.normalizeActionAssetPath(assetPath);
+    if (!normalizedAssetPath) {
+      return null;
+    }
+
+    const exact = modes.find((mode) => this.normalizeActionAssetPath(mode.path) === normalizedAssetPath);
+    if (exact) {
+      return exact;
+    }
+
+    const assetName = this.actionAssetBaseName(normalizedAssetPath);
+    if (!assetName) {
+      return null;
+    }
+    return modes.find((mode) => {
+      const modePath = this.normalizeActionAssetPath(mode.path);
+      return this.actionAssetBaseName(modePath) === assetName;
+    }) ?? null;
+  }
+
+  private inlineActionAssetHash(value: string): string {
+    const cached = this.inlineActionAssetHashByValue.get(value);
+    if (cached) {
+      return cached;
+    }
+    let hash = 2166136261;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    const out = hash.toString(36);
+    if (this.inlineActionAssetHashByValue.size > 32) {
+      this.inlineActionAssetHashByValue.clear();
+    }
+    this.inlineActionAssetHashByValue.set(value, out);
+    return out;
+  }
+
+  private createActorAnimationForMode(variantId: string, mode: ActorVariantDef['modes'][number]): void {
+    if (mode.kind !== 'spritesheet' || !mode.frameCount || !this.textures.exists(mode.textureKey)) {
+      return;
+    }
+    const key = this.actorAnimationKey(variantId, mode.textureKey);
+    if (this.anims.exists(key)) {
+      return;
+    }
+    this.anims.create({
+      key,
+      frames: this.anims.generateFrameNumbers(mode.textureKey, {
+        start: 0,
+        end: mode.frameCount - 1
+      }),
+      frameRate: mode.animation?.fps ?? 10,
+      repeat: mode.animation?.repeat ?? -1
+    });
+  }
+
+  private ensureInlineActorModeTextureReady(
+    variantId: string,
+    mode: ActorVariantDef['modes'][number]
+  ): boolean {
+    if (this.textures.exists(mode.textureKey)) {
+      this.createActorAnimationForMode(variantId, mode);
+      return true;
+    }
+    if (this.queuedTextureKeys.has(mode.textureKey)) {
+      return false;
+    }
+    this.loadTextureAsset(mode);
+    this.load.once('complete', () => {
+      this.createActorAnimationForMode(variantId, mode);
+      this.lastMainVisualKey = null;
+    });
+    if (!this.load.isLoading()) {
+      this.load.start();
+    }
+    return false;
+  }
+
+  private buildInlineActorModeFromScenePoint(
+    point: SceneInteractionPoint,
+    fallbackMode: ActorVariantDef['modes'][number] | null,
+    variantId: string
+  ): ActorVariantDef['modes'][number] | null {
+    const rawSpriteKey = String(point.sprite_key || '').trim();
+    if (!/^(data:image\/|blob:)/i.test(rawSpriteKey)) {
+      return null;
+    }
+    const frameWidth = Math.max(1, Math.round(point.sprite_frame_width ?? fallbackMode?.frameWidth ?? 64));
+    const frameHeight = Math.max(1, Math.round(point.sprite_frame_height ?? fallbackMode?.frameHeight ?? 64));
+    const frameCount = Math.max(1, Math.round(point.sprite_total_frames ?? fallbackMode?.frameCount ?? 1));
+    const fps = Math.max(1, Number(point.sprite_fps ?? fallbackMode?.animation?.fps ?? 8));
+    const textureKey = [
+      'scene-action-inline',
+      this.inlineActionAssetHash(rawSpriteKey),
+      frameWidth,
+      frameHeight,
+      frameCount
+    ].join(':');
+    const mode: ActorVariantDef['modes'][number] = {
+      ...(fallbackMode ?? {
+        mode: 'working',
+        textureKey,
+        path: rawSpriteKey
+      }),
+      textureKey,
+      path: rawSpriteKey,
+      kind: 'spritesheet',
+      frameWidth,
+      frameHeight,
+      frameCount,
+      animation: {
+        fps,
+        repeat: -1
+      },
+      directions: undefined,
+      displaySize: undefined
+    };
+    return this.ensureInlineActorModeTextureReady(variantId, mode) ? mode : null;
+  }
+
+  private modeAnchorDistanceToPoint(mode: ActorVariantDef['modes'][number], point: Point): number {
+    if (!mode.triggerAnchor) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Phaser.Math.Distance.Between(
+      point.x,
+      point.y,
+      mode.triggerAnchor.x,
+      mode.triggerAnchor.y
+    );
+  }
+
+  private pickNearestAnchoredMode(
+    modes: ActorVariantDef['modes'][number][],
+    point: Point
+  ): ActorVariantDef['modes'][number] | null {
+    let best: { mode: ActorVariantDef['modes'][number]; distance: number } | null = null;
+    for (const mode of modes) {
+      if (!mode.triggerAnchor) {
+        continue;
+      }
+      const distance = this.modeAnchorDistanceToPoint(mode, point);
+      if (!best || distance < best.distance) {
+        best = { mode, distance };
+      }
+    }
+    return best?.mode ?? null;
+  }
+
+  private deterministicModeIndex(seed: string, length: number): number {
+    if (length <= 1) {
+      return 0;
+    }
+    let hash = 0;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash = ((hash * 33) + seed.charCodeAt(index)) >>> 0;
+    }
+    return hash % length;
+  }
+
+  private resolveFallbackWorkingModeForScenePoint(
+    point: SceneInteractionPoint,
+    manifestModes: ActorVariantDef['modes'][number][],
+    manifestModesByAssetPath: Map<string, ActorVariantDef['modes'][number]>
+  ): ActorVariantDef['modes'][number] | null {
+    if (manifestModes.length === 0) {
+      return null;
+    }
+
+    const pointAnchor = {
+      x: Math.round(point.anchor_x ?? point.x),
+      y: Math.round(point.anchor_y ?? point.y)
+    };
+    const spritePath = this.normalizeActionAssetPath(point.sprite_key);
+    if (spritePath) {
+      const exact = manifestModesByAssetPath.get(spritePath);
+      if (exact) {
+        return exact;
+      }
+      const spriteName = this.actionAssetBaseName(spritePath);
+      if (spriteName) {
+        const byName = manifestModes.find((mode) => {
+          const modePath = this.normalizeActionAssetPath(mode.path);
+          return this.actionAssetBaseName(modePath) === spriteName;
+        }) ?? null;
+        if (byName) {
+          return byName;
+        }
+      }
+    }
+
+    const roomId = String(point.room_id || '').trim().toLowerCase();
+    const anchoredModes = manifestModes.filter((mode) => Boolean(mode.triggerAnchor));
+    const sameRoomAnchoredModes = anchoredModes.filter((mode) => {
+      const modeRoomId = this.resolvePatrolRoomId(mode);
+      return modeRoomId && String(modeRoomId).toLowerCase() === roomId;
+    });
+
+    const nearestSameRoom = this.pickNearestAnchoredMode(sameRoomAnchoredModes, pointAnchor);
+    if (nearestSameRoom) {
+      return nearestSameRoom;
+    }
+    const nearestAnchored = this.pickNearestAnchoredMode(anchoredModes, pointAnchor);
+    if (nearestAnchored) {
+      return nearestAnchored;
+    }
+
+    const seed = `${point.id}|${point.label}|${point.room_id}|${pointAnchor.x}|${pointAnchor.y}`;
+    return manifestModes[this.deterministicModeIndex(seed, manifestModes.length)] ?? manifestModes[0];
+  }
+
+  private findSceneActionPoint(name: string): SceneInteractionPoint | null {
+    const normalizedName = name.trim().toLowerCase();
+    return this.sceneMapData.interaction_points.find((point) => {
+      const label = String(point.label || '').trim().toLowerCase();
+      const id = String(point.id || '').trim().toLowerCase();
+      return label === normalizedName || id === normalizedName;
+    }) ?? null;
+  }
+
+  private isStandFrontActionPoint(point: SceneInteractionPoint): boolean {
+    const label = String(point.label || '').trim().toLowerCase();
+    const id = String(point.id || '').trim().toLowerCase();
+    const isStandName = (value: string): boolean => (
+      value.includes('stand-front')
+      || value.includes('stand_front')
+      || value.includes('stant-front')
+      || value.includes('stant_front')
+    );
+    return isStandName(label) || isStandName(id);
+  }
+
+  private buildActorModeFromScenePoint(
+    point: SceneInteractionPoint,
+    fallbackMode: ActorVariantDef['modes'][number] | null
+  ): ActorVariantDef['modes'][number] | null {
+    const variant = this.resolveActorVariant();
+    if (!variant) {
+      return null;
+    }
+    const pointAssetPath = this.normalizeActionAssetPath(point.sprite_key);
+    const matchedBySprite = pointAssetPath
+      ? this.findActorModeByActionAssetPath(variant.modes, pointAssetPath)
+      : null;
+    const usesInlineSprite = /^(data:image\/|blob:)/i.test(String(point.sprite_key || '').trim());
+    const inlineMode = usesInlineSprite
+      ? this.buildInlineActorModeFromScenePoint(point, fallbackMode, variant.id)
+      : null;
+    const matchedMode = inlineMode
+      ?? (usesInlineSprite ? null : matchedBySprite)
+      ?? (usesInlineSprite ? null : fallbackMode);
+    if (!matchedMode) {
+      return null;
+    }
+    return {
+      ...matchedMode,
+      triggerAnchor: {
+        x: Math.round(point.anchor_x ?? point.x),
+        y: Math.round(point.anchor_y ?? point.y)
+      },
+      // Patrol uses action-point anchors; keep radius practical so "nearby absorb" can happen.
+      triggerRadius: Math.max(48, Math.min(108, matchedMode.triggerRadius ?? 76)),
+      triggerAnchorBasis: 'center'
+    };
+  }
+
+  private resolveSpawnIdleMode(): ActorVariantDef['modes'][number] | null {
+    const variant = this.resolveActorVariant();
+    if (!variant) {
+      return null;
+    }
+    const idleWithAnchor = variant.modes.filter((mode) => mode.mode === 'idle' && Boolean(mode.triggerAnchor));
+    if (idleWithAnchor.length === 0) {
+      return null;
+    }
+    const standFront = idleWithAnchor.find((mode) => {
+      const key = String(mode.textureKey || '').toLowerCase();
+      return key.includes('stand-front') || key.includes('stand_front') || key.includes('stant-front') || key.includes('stant_front');
+    });
+    const scenePoint = this.findSceneActionPoint('stand-front');
+    const fromScenePoint = scenePoint ? this.buildActorModeFromScenePoint(scenePoint, standFront ?? idleWithAnchor[0] ?? null) : null;
+    return fromScenePoint ?? standFront ?? idleWithAnchor[0] ?? null;
+  }
+
+  private resolvePatrolActionModes(): ActorVariantDef['modes'][number][] {
+    const variant = this.resolveActorVariant();
+    if (!variant) {
+      return [];
+    }
+    const manifestModes = variant.modes.filter((mode) => mode.mode === 'working');
+    if (manifestModes.length === 0) {
+      return [];
+    }
+    const manifestModesByAssetPath = new Map(
+      manifestModes
+        .map((mode) => [this.normalizeActionAssetPath(mode.path), mode] as const)
+        .filter(([path]) => Boolean(path))
+    );
+
+    const sceneModes = this.sceneMapData.interaction_points
+      .map((point) => {
+        if (this.isStandFrontActionPoint(point)) {
+          return null;
+        }
+        const fallbackMode = this.resolveFallbackWorkingModeForScenePoint(point, manifestModes, manifestModesByAssetPath);
+        if (!fallbackMode) {
+          return null;
+        }
+        const built = this.buildActorModeFromScenePoint(point, fallbackMode);
+        if (!built) {
+          return null;
+        }
+        const nextMode: ActorVariantDef['modes'][number] = {
+          ...built,
+          mode: 'working',
+          triggerRadius: Math.max(52, Math.min(112, built.triggerRadius ?? 76)),
+          triggerAnchorBasis: 'center'
+        };
+        return nextMode;
+      })
+      .filter((mode): mode is ActorVariantDef['modes'][number] => mode !== null);
+
+    return sceneModes;
+  }
+
+  private resolvePatrolRoomId(mode: ActorVariantDef['modes'][number]): ResourcePartitionId | null {
+    if (!mode.triggerAnchor) {
+      return null;
+    }
+    return this.findRoomByPoint(mode.triggerAnchor)?.id ?? null;
   }
 
   private actorAnimationKey(variantId: string, textureKey: string): string {
@@ -2895,22 +6729,7 @@ export class LibraryScene extends Phaser.Scene {
   private createActorAnimations(): void {
     for (const variant of this.resolveActorVariants()) {
       for (const mode of variant.modes ?? []) {
-        if (mode.kind !== 'spritesheet' || !mode.frameCount) {
-          continue;
-        }
-        const key = this.actorAnimationKey(variant.id, mode.textureKey);
-        if (this.anims.exists(key)) {
-          continue;
-        }
-        this.anims.create({
-          key,
-          frames: this.anims.generateFrameNumbers(mode.textureKey, {
-            start: 0,
-            end: mode.frameCount - 1
-          }),
-          frameRate: mode.animation?.fps ?? 10,
-          repeat: mode.animation?.repeat ?? -1
-        });
+        this.createActorAnimationForMode(variant.id, mode);
       }
     }
   }
@@ -2969,7 +6788,7 @@ export class LibraryScene extends Phaser.Scene {
           return null;
         }
         // Proximity trigger: near the anchor is enough (not exact-point match).
-        const radius = Math.max(220, candidate.triggerRadius ?? 240);
+        const radius = Math.max(24, candidate.triggerRadius ?? 96);
         const dist = Phaser.Math.Distance.Between(actorPoint.x, actorPoint.y, anchor.x, anchor.y);
         return { candidate, dist, radius };
       })
@@ -2992,6 +6811,30 @@ export class LibraryScene extends Phaser.Scene {
     return hits[0]?.candidate ?? null;
   }
 
+  private modeTriggerRoomId(mode: ActorVariantDef['modes'][number]): ResourcePartitionId | null {
+    if (!mode.triggerAnchor) {
+      return null;
+    }
+    return this.findRoomByPoint(mode.triggerAnchor)?.id ?? null;
+  }
+
+  private pickHighestPriorityActorMode(
+    candidates: ActorVariantDef['modes'][number][]
+  ): ActorVariantDef['modes'][number] | null {
+    if (candidates.length === 0) {
+      return null;
+    }
+    const sorted = [...candidates].sort((left, right) => {
+      const leftPriority = left.priority ?? 0;
+      const rightPriority = right.priority ?? 0;
+      if (rightPriority !== leftPriority) {
+        return rightPriority - leftPriority;
+      }
+      return left.textureKey.localeCompare(right.textureKey);
+    });
+    return sorted[0] ?? null;
+  }
+
   private isActorModeStateCompatible(
     candidate: ActorVariantDef['modes'][number],
     stateId: LobsterStateId
@@ -3005,6 +6848,7 @@ export class LibraryScene extends Phaser.Scene {
       position?: Point;
       positionCenter?: Point;
       direction?: ActorDirection;
+      resourceId?: ResourcePartitionId;
     } = {}
   ) {
     const variant = this.resolveActorVariant();
@@ -3033,6 +6877,27 @@ export class LibraryScene extends Phaser.Scene {
     }
 
     if (mode === 'working') {
+      const resourceId = options.resourceId ?? null;
+      if (resourceId) {
+        const strictByResource = usable.filter(
+          (candidate) => Boolean(candidate.triggerAnchor) && this.modeTriggerRoomId(candidate) === resourceId
+        );
+        const strictResourceMatch = this.pickHighestPriorityActorMode(strictByResource);
+        if (strictResourceMatch) {
+          return strictResourceMatch;
+        }
+        const relaxedByResource = variant.modes.filter(
+          (candidate) =>
+            candidate.mode === 'working'
+            && Boolean(candidate.triggerAnchor)
+            && this.modeTriggerRoomId(candidate) === resourceId
+        );
+        const relaxedResourceMatch = this.pickHighestPriorityActorMode(relaxedByResource);
+        if (relaxedResourceMatch) {
+          return relaxedResourceMatch;
+        }
+      }
+
       // Working visuals are hotspot-only; prefer state-compatible hotspots, then relax.
       const strictHotspotPool = variant.modes.filter(
         (candidate) =>
@@ -3047,7 +6912,12 @@ export class LibraryScene extends Phaser.Scene {
       const relaxedHotspotPool = variant.modes.filter(
         (candidate) => candidate.mode === 'working' && Boolean(candidate.triggerAnchor)
       );
-      return this.pickHotspotActorMode(relaxedHotspotPool, options.position, options.positionCenter);
+      const relaxedMatch = this.pickHotspotActorMode(relaxedHotspotPool, options.position, options.positionCenter);
+      if (relaxedMatch) {
+        return relaxedMatch;
+      }
+      const fallback = usable.find((candidate) => !candidate.directions || candidate.directions.length === 0);
+      return fallback ?? usable[0] ?? null;
     }
 
     if (mode === 'idle') {
@@ -3088,16 +6958,6 @@ export class LibraryScene extends Phaser.Scene {
       holdUntil: usable.length > 1 ? now + 60_000 : Number.POSITIVE_INFINITY
     });
     return selected;
-  }
-
-  private currentActorVisualMode(): WorkMode {
-    if (this.workMode === 'working') {
-      return 'working';
-    }
-    if (this.workMode === 'moving' || this.lobsterRoute.length > 0) {
-      return 'moving';
-    }
-    return 'idle';
   }
 
   /**
@@ -3152,21 +7012,27 @@ export class LibraryScene extends Phaser.Scene {
     this.lobsterContextBar.strokeRoundedRect(barX, barY, barWidth, barHeight, 2);
   }
 
-  private updateLobsterVisual(mode: WorkMode): void {
+  private updateLobsterVisual(mode: WorkMode, forcedMode?: ActorVariantDef['modes'][number]): void {
     const actor = this.protocols.sceneArt.actor;
     const variant = this.resolveActorVariant();
-    const actorMode = this.resolveActorMode(mode, {
-      position: this.mainActorTriggerPoint(),
-      positionCenter: this.mainActorTriggerCenterPoint(),
-      direction: this.actorFacing
-    });
+    const actorMode = forcedMode
+      ?? (mode !== 'moving' ? this.currentActionMode : null)
+      ?? this.resolveActorMode(mode, {
+        position: this.mainActorTriggerPoint(),
+        positionCenter: this.mainActorTriggerCenterPoint(),
+        direction: this.actorFacing
+      });
     if (!actor || !variant || !actorMode || !(this.lobsterBody instanceof Phaser.GameObjects.Sprite)) {
       return;
     }
 
-    if (mode !== 'moving' && actorMode.triggerAnchor) {
-      this.snapContainerToModeAnchor(this.lobster, this.lobsterBody, actorMode);
-      this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+    const visualKey = `${mode}:${actorMode.textureKey}`;
+    if (mode !== 'moving') {
+      const shouldSnapToAnchor = Boolean(forcedMode) || this.lastMainVisualKey !== visualKey;
+      if (actorMode.triggerAnchor && shouldSnapToAnchor) {
+        this.snapContainerToModeAnchor(this.lobster, this.lobsterBody, actorMode);
+        this.lobster.setDepth(this.layerToDepth('actor', this.lobster.y));
+      }
     }
 
     const modeDisplay = this.resolveModeDisplaySize(actorMode, actor.displaySize, 1.2);
@@ -3188,6 +7054,7 @@ export class LibraryScene extends Phaser.Scene {
           y: actor.anchorOffset?.y ?? 0
         });
       }
+      this.lastMainVisualKey = visualKey;
       return;
     }
 
@@ -3204,6 +7071,7 @@ export class LibraryScene extends Phaser.Scene {
         y: actor.anchorOffset?.y ?? 0
       });
     }
+    this.lastMainVisualKey = visualKey;
   }
 
   /** Apply the correct animation to a subagent actor sprite, mirroring updateLobsterVisual. */

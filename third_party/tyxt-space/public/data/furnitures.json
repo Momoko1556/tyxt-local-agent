@@ -1,0 +1,1106 @@
+[
+  {
+    "id": "bed-1776752386213-tqj5o",
+    "name": "深蓝单人床",
+    "category": "bed",
+    "imported_at": "2026-04-21T06:19:46.265Z",
+    "directions": {
+      "front": {
+        "file_name": "bed-1776752386213-tqj5o-front.png",
+        "asset_url": "assets/furnitures/bed/bed-1776752386213-tqj5o-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 32559,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "bed-1776752386213-tqj5o-left.png",
+        "asset_url": "assets/furnitures/bed/bed-1776752386213-tqj5o-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 32132,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "bed-1776752386213-tqj5o-right.png",
+        "asset_url": "assets/furnitures/bed/bed-1776752386213-tqj5o-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 31940,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "bed-1776752386213-tqj5o-back.png",
+        "asset_url": "assets/furnitures/bed/bed-1776752386213-tqj5o-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 27223,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "sofa-1776926019529-inmj7",
+    "name": "红色单人沙发右",
+    "category": "sofa",
+    "imported_at": "2026-04-23T06:33:39.593Z",
+    "directions": {
+      "front": {
+        "file_name": "sofa-1776926019529-inmj7-front.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926019529-inmj7-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 13294,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "sofa-1776926019529-inmj7-left.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926019529-inmj7-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 13294,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "sofa-1776926019529-inmj7-right.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926019529-inmj7-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 13294,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "sofa-1776926019529-inmj7-back.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926019529-inmj7-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 13294,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "sofa-1776926057548-hgrpq",
+    "name": "红色单人沙发左",
+    "category": "sofa",
+    "imported_at": "2026-04-23T06:34:17.585Z",
+    "directions": {
+      "front": {
+        "file_name": "sofa-1776926057548-hgrpq-front.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926057548-hgrpq-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14160,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "sofa-1776926057548-hgrpq-left.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926057548-hgrpq-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14160,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "sofa-1776926057548-hgrpq-right.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926057548-hgrpq-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14160,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "sofa-1776926057548-hgrpq-back.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926057548-hgrpq-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14160,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "sofa-1776926131325-pi1fl",
+    "name": "圆茶几",
+    "category": "sofa",
+    "imported_at": "2026-04-23T06:35:31.363Z",
+    "directions": {
+      "front": {
+        "file_name": "sofa-1776926131325-pi1fl-front.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926131325-pi1fl-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11648,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "sofa-1776926131325-pi1fl-left.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926131325-pi1fl-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11648,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "sofa-1776926131325-pi1fl-right.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926131325-pi1fl-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11648,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "sofa-1776926131325-pi1fl-back.png",
+        "asset_url": "assets/furnitures/sofa/sofa-1776926131325-pi1fl-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11648,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "workbench-1776926266754-w1izd",
+    "name": "工坊家具套",
+    "category": "workbench",
+    "imported_at": "2026-04-23T06:37:46.809Z",
+    "directions": {
+      "front": {
+        "file_name": "workbench-1776926266754-w1izd-front.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776926266754-w1izd-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 85421,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "workbench-1776926266754-w1izd-left.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776926266754-w1izd-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 85421,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "workbench-1776926266754-w1izd-right.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776926266754-w1izd-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 85421,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "workbench-1776926266754-w1izd-back.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776926266754-w1izd-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 85421,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "decoration-1776926690407-aesop",
+    "name": "雕塑1",
+    "category": "decoration",
+    "imported_at": "2026-04-23T06:44:50.449Z",
+    "directions": {
+      "front": {
+        "file_name": "decoration-1776926690407-aesop-front.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926690407-aesop-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11577,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "decoration-1776926690407-aesop-left.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926690407-aesop-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11577,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "decoration-1776926690407-aesop-right.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926690407-aesop-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11577,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "decoration-1776926690407-aesop-back.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926690407-aesop-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11577,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "decoration-1776926717819-yov5z",
+    "name": "雕塑2",
+    "category": "decoration",
+    "imported_at": "2026-04-23T06:45:17.847Z",
+    "directions": {
+      "front": {
+        "file_name": "decoration-1776926717819-yov5z-front.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926717819-yov5z-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11313,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "decoration-1776926717819-yov5z-left.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926717819-yov5z-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11313,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "decoration-1776926717819-yov5z-right.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926717819-yov5z-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11313,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "decoration-1776926717819-yov5z-back.png",
+        "asset_url": "assets/furnitures/decoration/decoration-1776926717819-yov5z-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 11313,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776926760685-o8qrb",
+    "name": "展台",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:46:00.724Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776926760685-o8qrb-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926760685-o8qrb-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24243,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776926760685-o8qrb-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926760685-o8qrb-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24243,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776926760685-o8qrb-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926760685-o8qrb-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24243,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776926760685-o8qrb-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926760685-o8qrb-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24243,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776926849061-c1666",
+    "name": "柜子1",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:47:29.096Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776926849061-c1666-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926849061-c1666-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 12238,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776926849061-c1666-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926849061-c1666-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 12238,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776926849061-c1666-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926849061-c1666-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 12238,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776926849061-c1666-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776926849061-c1666-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 12238,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "table-1776926942344-fkvjk",
+    "name": "餐桌",
+    "category": "table",
+    "imported_at": "2026-04-23T06:49:02.394Z",
+    "directions": {
+      "front": {
+        "file_name": "table-1776926942344-fkvjk-front.png",
+        "asset_url": "assets/furnitures/table/table-1776926942344-fkvjk-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 35128,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "table-1776926942344-fkvjk-left.png",
+        "asset_url": "assets/furnitures/table/table-1776926942344-fkvjk-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 35128,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "table-1776926942344-fkvjk-right.png",
+        "asset_url": "assets/furnitures/table/table-1776926942344-fkvjk-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 35128,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "table-1776926942344-fkvjk-back.png",
+        "asset_url": "assets/furnitures/table/table-1776926942344-fkvjk-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 35128,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "bed-1776926986712-yajoq",
+    "name": "卧室套装",
+    "category": "bed",
+    "imported_at": "2026-04-23T06:49:46.772Z",
+    "directions": {
+      "front": {
+        "file_name": "bed-1776926986712-yajoq-front.png",
+        "asset_url": "assets/furnitures/bed/bed-1776926986712-yajoq-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 70745,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "bed-1776926986712-yajoq-left.png",
+        "asset_url": "assets/furnitures/bed/bed-1776926986712-yajoq-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 70745,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "bed-1776926986712-yajoq-right.png",
+        "asset_url": "assets/furnitures/bed/bed-1776926986712-yajoq-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 70745,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "bed-1776926986712-yajoq-back.png",
+        "asset_url": "assets/furnitures/bed/bed-1776926986712-yajoq-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 70745,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927127827-vvdf1",
+    "name": "柜子2",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:52:07.865Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927127827-vvdf1-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927127827-vvdf1-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20104,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927127827-vvdf1-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927127827-vvdf1-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20104,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927127827-vvdf1-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927127827-vvdf1-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20104,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927127827-vvdf1-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927127827-vvdf1-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20104,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927138680-wkqu1",
+    "name": "柜子3",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:52:18.720Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927138680-wkqu1-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927138680-wkqu1-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14777,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927138680-wkqu1-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927138680-wkqu1-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14777,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927138680-wkqu1-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927138680-wkqu1-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14777,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927138680-wkqu1-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927138680-wkqu1-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 14777,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "table-1776927262492-njn2c",
+    "name": "桌子1",
+    "category": "table",
+    "imported_at": "2026-04-23T06:54:22.524Z",
+    "directions": {
+      "front": {
+        "file_name": "table-1776927262492-njn2c-front.png",
+        "asset_url": "assets/furnitures/table/table-1776927262492-njn2c-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 19358,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "table-1776927262492-njn2c-left.png",
+        "asset_url": "assets/furnitures/table/table-1776927262492-njn2c-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 19358,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "table-1776927262492-njn2c-right.png",
+        "asset_url": "assets/furnitures/table/table-1776927262492-njn2c-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 19358,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "table-1776927262492-njn2c-back.png",
+        "asset_url": "assets/furnitures/table/table-1776927262492-njn2c-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 19358,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "table-1776927343450-9q6yh",
+    "name": "桌子2",
+    "category": "table",
+    "imported_at": "2026-04-23T06:55:43.500Z",
+    "directions": {
+      "front": {
+        "file_name": "table-1776927343450-9q6yh-front.png",
+        "asset_url": "assets/furnitures/table/table-1776927343450-9q6yh-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28422,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "table-1776927343450-9q6yh-left.png",
+        "asset_url": "assets/furnitures/table/table-1776927343450-9q6yh-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28422,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "table-1776927343450-9q6yh-right.png",
+        "asset_url": "assets/furnitures/table/table-1776927343450-9q6yh-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28422,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "table-1776927343450-9q6yh-back.png",
+        "asset_url": "assets/furnitures/table/table-1776927343450-9q6yh-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28422,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927443407-k7rwh",
+    "name": "壁柜",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:57:23.456Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927443407-k7rwh-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927443407-k7rwh-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24439,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927443407-k7rwh-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927443407-k7rwh-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24439,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927443407-k7rwh-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927443407-k7rwh-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24439,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927443407-k7rwh-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927443407-k7rwh-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 24439,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927558561-adfuy",
+    "name": "壁柜",
+    "category": "display_case",
+    "imported_at": "2026-04-23T06:59:18.597Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927558561-adfuy-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927558561-adfuy-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 29293,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927558561-adfuy-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927558561-adfuy-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 29293,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927558561-adfuy-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927558561-adfuy-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 29293,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927558561-adfuy-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927558561-adfuy-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 29293,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927645839-i3s2d",
+    "name": "壁柜3",
+    "category": "display_case",
+    "imported_at": "2026-04-23T07:00:45.884Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927645839-i3s2d-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927645839-i3s2d-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20475,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927645839-i3s2d-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927645839-i3s2d-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20475,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927645839-i3s2d-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927645839-i3s2d-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20475,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927645839-i3s2d-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927645839-i3s2d-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 20475,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "workbench-1776927747808-zy6qe",
+    "name": "工作台",
+    "category": "workbench",
+    "imported_at": "2026-04-23T07:02:27.856Z",
+    "directions": {
+      "front": {
+        "file_name": "workbench-1776927747808-zy6qe-front.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776927747808-zy6qe-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 47490,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "workbench-1776927747808-zy6qe-left.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776927747808-zy6qe-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 47490,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "workbench-1776927747808-zy6qe-right.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776927747808-zy6qe-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 47490,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "workbench-1776927747808-zy6qe-back.png",
+        "asset_url": "assets/furnitures/workbench/workbench-1776927747808-zy6qe-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 47490,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776927962635-8p5ps",
+    "name": "宝箱",
+    "category": "display_case",
+    "imported_at": "2026-04-23T07:06:02.671Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776927962635-8p5ps-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927962635-8p5ps-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 10272,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776927962635-8p5ps-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927962635-8p5ps-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 10272,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776927962635-8p5ps-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927962635-8p5ps-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 10272,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776927962635-8p5ps-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776927962635-8p5ps-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 10272,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776928051413-wh5le",
+    "name": "壁柜4",
+    "category": "display_case",
+    "imported_at": "2026-04-23T07:07:31.465Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776928051413-wh5le-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928051413-wh5le-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28123,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776928051413-wh5le-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928051413-wh5le-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28123,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776928051413-wh5le-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928051413-wh5le-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28123,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776928051413-wh5le-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928051413-wh5le-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 28123,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "display_case-1776928152491-jb7nv",
+    "name": "壁柜5",
+    "category": "display_case",
+    "imported_at": "2026-04-23T07:09:12.541Z",
+    "directions": {
+      "front": {
+        "file_name": "display_case-1776928152491-jb7nv-front.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928152491-jb7nv-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 37594,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "display_case-1776928152491-jb7nv-left.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928152491-jb7nv-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 37594,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "display_case-1776928152491-jb7nv-right.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928152491-jb7nv-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 37594,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "display_case-1776928152491-jb7nv-back.png",
+        "asset_url": "assets/furnitures/display_case/display_case-1776928152491-jb7nv-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 37594,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  },
+  {
+    "id": "table-1776928252806-cgfj4",
+    "name": "书桌",
+    "category": "table",
+    "imported_at": "2026-04-23T07:10:52.840Z",
+    "directions": {
+      "front": {
+        "file_name": "table-1776928252806-cgfj4-front.png",
+        "asset_url": "assets/furnitures/table/table-1776928252806-cgfj4-front.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 33863,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "left": {
+        "file_name": "table-1776928252806-cgfj4-left.png",
+        "asset_url": "assets/furnitures/table/table-1776928252806-cgfj4-left.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 33863,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "right": {
+        "file_name": "table-1776928252806-cgfj4-right.png",
+        "asset_url": "assets/furnitures/table/table-1776928252806-cgfj4-right.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 33863,
+        "frame_width": 200,
+        "frame_height": 200
+      },
+      "back": {
+        "file_name": "table-1776928252806-cgfj4-back.png",
+        "asset_url": "assets/furnitures/table/table-1776928252806-cgfj4-back.png",
+        "width": 200,
+        "height": 200,
+        "format": "png",
+        "file_size": 33863,
+        "frame_width": 200,
+        "frame_height": 200
+      }
+    }
+  }
+]

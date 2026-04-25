@@ -1,6 +1,6 @@
-import re
+from pathlib import Path
 
-HTML_PATH = r'E:\Ollama memory_project\frontend\TYXT_UI.html'
+HTML_PATH = Path(__file__).resolve().parent / "frontend" / "TYXT_UI.html"
 
 JS_PATCH = """
 function renderGroupRouteMeta(routeInfo) {

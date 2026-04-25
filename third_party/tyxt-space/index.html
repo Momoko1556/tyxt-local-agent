@@ -24,6 +24,9 @@
         --gallery-unified-frame-height: 220px;
         --radius: 15px;
         --shadow: 0 12px 34px rgba(0, 0, 0, 0.36);
+        --settings-rail-height: 50px;
+        --settings-item-height: 36px;
+        --side-panel-width: 246px;
       }
 
       * {
@@ -74,7 +77,7 @@
 
       .tyxt-layout {
         display: grid;
-        grid-template-columns: 158px minmax(0, 1fr) 246px;
+        grid-template-columns: 158px minmax(0, 1fr) var(--side-panel-width);
         grid-template-rows: auto minmax(0, 1fr);
         gap: 8px;
         width: 100%;
@@ -230,6 +233,10 @@
         gap: 8px;
       }
 
+      .space-main[data-interaction-collapsed="true"] {
+        grid-template-rows: auto 0;
+      }
+
       .space-stage {
         position: relative;
         min-height: clamp(420px, 60vh, 720px);
@@ -249,6 +256,37 @@
         display: block;
         min-height: 0;
         overflow: auto;
+        transform-origin: left bottom;
+        max-height: 520px;
+        visibility: visible;
+        transition:
+          transform 240ms ease,
+          opacity 220ms ease,
+          filter 220ms ease,
+          max-height 220ms ease,
+          padding 220ms ease,
+          border-color 220ms ease,
+          visibility 0s linear 0s;
+      }
+
+      .space-interaction-panel[data-collapsed="true"] {
+        transform: translateX(-260px) scaleX(0.82);
+        opacity: 0;
+        filter: saturate(0.75);
+        max-height: 0;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-color: transparent;
+        visibility: hidden;
+        pointer-events: none;
+        transition:
+          transform 240ms ease,
+          opacity 220ms ease,
+          filter 220ms ease,
+          max-height 220ms ease,
+          padding 220ms ease,
+          border-color 220ms ease,
+          visibility 0s linear 220ms;
       }
 
       .interaction-panel-body {
@@ -737,6 +775,27 @@
         overflow: hidden;
       }
 
+      .scene-editor-hud-overlay {
+        position: absolute;
+        left: 10px;
+        bottom: 8px;
+        z-index: 60;
+        max-width: min(64%, 760px);
+        border: 1px solid rgba(120, 199, 255, 0.22);
+        border-radius: 6px;
+        background: rgba(8, 17, 28, 0.72);
+        color: #d9f0ff;
+        font-size: 16px;
+        line-height: 1.42;
+        white-space: pre-line;
+        padding: 8px 10px;
+        pointer-events: none;
+      }
+
+      .scene-editor-hud-overlay[hidden] {
+        display: none;
+      }
+
       .gallery-owner-layout .gallery-owner-photo-card .gallery-photo-stage {
         width: 100%;
         height: 100%;
@@ -874,9 +933,1091 @@
         box-shadow: var(--shadow);
         padding: 10px;
         display: grid;
-        grid-template-rows: repeat(3, minmax(0, auto));
+        grid-auto-rows: max-content;
+        align-content: start;
         gap: 8px;
         overflow: auto;
+      }
+
+      .side-panel-settings {
+        display: none;
+      }
+
+      .settings-dock {
+        position: fixed;
+        right: 8px;
+        bottom: 20px;
+        z-index: 130;
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-end;
+        gap: 8px;
+        width: max-content;
+      }
+
+      .settings-dock-rail {
+        border: 1px solid rgba(125, 153, 174, 0.28);
+        border-radius: 10px;
+        background: rgba(15, 24, 32, 0.93);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+        height: var(--settings-rail-height);
+        min-height: var(--settings-rail-height);
+        padding: calc((var(--settings-rail-height) - var(--settings-item-height)) / 2) 7px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        box-sizing: border-box;
+        flex: 0 0 auto;
+      }
+
+      .settings-dock-rail[hidden] {
+        display: none;
+      }
+
+      .settings-dock-main {
+        order: 3;
+        width: auto;
+        padding: calc((var(--settings-rail-height) - var(--settings-item-height)) / 2) 7px;
+        justify-content: flex-end;
+        flex: 0 0 auto;
+        min-width: max-content;
+      }
+
+      .settings-submenu {
+        order: 2;
+      }
+
+      .furniture-submenu {
+        order: 2;
+      }
+
+      .interaction-submenu {
+        order: 2;
+      }
+
+      .furniture-category-menu {
+        order: 1;
+      }
+
+      .wall-shape-menu {
+        order: 1;
+      }
+
+      .settings-toggle-btn {
+        width: 224px;
+        min-width: 0;
+        height: var(--settings-item-height);
+        border: 1px solid rgba(120, 199, 255, 0.38);
+        border-radius: 10px;
+        background: rgba(30, 48, 62, 0.9);
+        color: #e3f2ff;
+        font-size: 14px;
+        font-weight: 700;
+        padding: 0 14px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: nowrap;
+        flex: 0 0 auto;
+      }
+
+      .settings-toggle-btn:hover {
+        border-color: rgba(120, 199, 255, 0.6);
+        background: rgba(40, 65, 84, 0.92);
+      }
+
+      .settings-toggle-btn[aria-expanded="true"] {
+        border-color: rgba(120, 199, 255, 0.72);
+        box-shadow: inset 0 0 0 1px rgba(120, 199, 255, 0.22);
+      }
+
+      .settings-menu {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-right: 7px;
+        flex: 0 0 auto;
+      }
+
+      .settings-menu[hidden] {
+        display: none;
+      }
+
+      .settings-action-item {
+        height: var(--settings-item-height);
+        border: 1px solid rgba(125, 153, 174, 0.28);
+        border-radius: 8px;
+        background: rgba(18, 26, 33, 0.9);
+        color: #d8e7f3;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 0 11px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        white-space: nowrap;
+      }
+
+      .settings-action-item:hover {
+        border-color: rgba(120, 199, 255, 0.52);
+        background: rgba(39, 58, 73, 0.92);
+      }
+
+      .settings-action-item[data-active="true"] {
+        border-color: rgba(120, 199, 255, 0.72);
+        background: rgba(51, 76, 96, 0.94);
+        box-shadow: inset 0 0 0 1px rgba(120, 199, 255, 0.2);
+      }
+
+      .settings-submenu-action {
+        height: var(--settings-item-height);
+        border: 1px solid rgba(120, 199, 255, 0.28);
+        border-radius: 8px;
+        background: rgba(19, 29, 38, 0.9);
+        color: #d6e7f5;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 0 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+      }
+
+      .settings-submenu-action:hover {
+        border-color: rgba(120, 199, 255, 0.58);
+        background: rgba(33, 52, 66, 0.93);
+      }
+
+      .settings-submenu-action[data-active="true"] {
+        border-color: rgba(120, 199, 255, 0.72);
+        background: rgba(51, 76, 96, 0.92);
+      }
+
+      .wall-shape-item {
+        min-width: 72px;
+        height: var(--settings-item-height);
+        border: 1px solid rgba(124, 156, 180, 0.34);
+        border-radius: 8px;
+        background: rgba(17, 26, 33, 0.9);
+        color: #d8e9f6;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 0 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .wall-shape-item:hover {
+        border-color: rgba(120, 199, 255, 0.58);
+        background: rgba(35, 54, 68, 0.94);
+      }
+
+      .wall-shape-item[data-active="true"] {
+        border-color: rgba(120, 199, 255, 0.8);
+        background: rgba(55, 81, 103, 0.94);
+        box-shadow: inset 0 0 0 1px rgba(120, 199, 255, 0.24);
+      }
+
+      .wall-editor-controls {
+        position: fixed;
+        right: 272px;
+        bottom: 88px;
+        z-index: 130;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(125, 153, 174, 0.32);
+        border-radius: 12px;
+        background: rgba(13, 21, 28, 0.94);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+        padding: 8px 9px;
+      }
+
+      .wall-editor-controls[hidden] {
+        display: none;
+      }
+
+      .furniture-editor-controls {
+        position: fixed;
+        right: 272px;
+        bottom: 88px;
+        z-index: 130;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(125, 153, 174, 0.32);
+        border-radius: 12px;
+        background: rgba(13, 21, 28, 0.94);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+        padding: 8px 9px;
+      }
+
+      .furniture-editor-controls[hidden] {
+        display: none;
+      }
+
+      .interaction-editor-controls {
+        position: fixed;
+        right: 272px;
+        bottom: 88px;
+        z-index: 130;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid rgba(125, 153, 174, 0.32);
+        border-radius: 12px;
+        background: rgba(13, 21, 28, 0.94);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.34);
+        padding: 8px 9px;
+      }
+
+      .interaction-editor-controls[hidden] {
+        display: none;
+      }
+
+      .wall-editor-btn {
+        border: 1px solid rgba(120, 199, 255, 0.35);
+        border-radius: 8px;
+        background: rgba(27, 43, 56, 0.92);
+        color: #e4f1fc;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      .wall-editor-btn.exit {
+        border-color: rgba(246, 165, 130, 0.42);
+        background: rgba(56, 33, 25, 0.9);
+        color: #ffe6db;
+      }
+
+      .furniture-editor-btn {
+        border: 1px solid rgba(120, 199, 255, 0.35);
+        border-radius: 8px;
+        background: rgba(27, 43, 56, 0.92);
+        color: #e4f1fc;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      .furniture-editor-btn.exit {
+        border-color: rgba(246, 165, 130, 0.42);
+        background: rgba(56, 33, 25, 0.9);
+        color: #ffe6db;
+      }
+
+      .interaction-editor-btn {
+        border: 1px solid rgba(120, 199, 255, 0.35);
+        border-radius: 8px;
+        background: rgba(27, 43, 56, 0.92);
+        color: #e4f1fc;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+
+      .interaction-editor-btn.exit {
+        border-color: rgba(246, 165, 130, 0.42);
+        background: rgba(56, 33, 25, 0.9);
+        color: #ffe6db;
+      }
+
+      .settings-mode-panel[hidden] {
+        display: none;
+      }
+
+      .settings-mode-title {
+        margin: 0;
+        font-size: 14px;
+        color: #c8ddf0;
+      }
+
+      .settings-mode-description {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: #a6bed1;
+        line-height: 1.45;
+        white-space: pre-line;
+      }
+
+      .settings-mode-content {
+        margin-top: 10px;
+      }
+
+      .house-manager-layout {
+        display: grid;
+        gap: 10px;
+      }
+
+      .actor-settings-layout {
+        display: grid;
+        gap: 10px;
+      }
+
+      .actor-settings-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .actor-settings-head,
+      .actor-settings-row {
+        display: grid;
+        grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 112px;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .actor-settings-head {
+        color: #9fb9cc;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .actor-settings-list {
+        display: grid;
+        gap: 8px;
+        max-height: min(58vh, 560px);
+        overflow: auto;
+      }
+
+      .actor-settings-row {
+        border: 1px solid rgba(124, 156, 180, 0.24);
+        border-radius: 9px;
+        background: rgba(17, 26, 34, 0.88);
+        padding: 8px;
+      }
+
+      .actor-settings-agent-select,
+      .actor-settings-actor-select {
+        min-width: 0;
+        width: 100%;
+        height: 34px;
+        border: 1px solid rgba(123, 154, 176, 0.42);
+        border-radius: 8px;
+        background: rgba(10, 17, 23, 0.94);
+        color: #dbeaf7;
+        font-size: 13px;
+        padding: 0 8px;
+      }
+
+      .actor-settings-agent-select:disabled {
+        opacity: 0.9;
+        color: #dbeaf7;
+      }
+
+      .actor-settings-preview {
+        width: 112px;
+        height: 112px;
+        border: 1px solid rgba(112, 141, 164, 0.35);
+        border-radius: 8px;
+        background: rgba(5, 10, 15, 0.92);
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+
+      .actor-settings-preview-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+        image-rendering: pixelated;
+      }
+
+      .actor-settings-preview-empty,
+      .actor-settings-empty {
+        border: 1px dashed rgba(111, 142, 164, 0.4);
+        border-radius: 8px;
+        color: #93adbf;
+        font-size: 12px;
+        padding: 10px;
+        text-align: center;
+      }
+
+      .house-panel-block {
+        border: 1px solid rgba(120, 153, 178, 0.25);
+        border-radius: 10px;
+        background: rgba(12, 19, 26, 0.9);
+        padding: 8px;
+      }
+
+      .house-panel-block h4 {
+        margin: 0;
+        font-size: 13px;
+        color: #c2daed;
+      }
+
+      .house-panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .house-baseline-tip {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #9ab6cb;
+      }
+
+      .house-list-wrap {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .house-item-card {
+        border: 1px solid rgba(124, 156, 180, 0.24);
+        border-radius: 9px;
+        background: rgba(17, 26, 34, 0.88);
+        padding: 7px;
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        grid-template-areas:
+          "thumb body"
+          "thumb actions";
+        gap: 8px;
+      }
+
+      .house-item-card[data-current="true"] {
+        border-color: rgba(125, 202, 255, 0.54);
+        box-shadow: inset 0 0 0 1px rgba(125, 202, 255, 0.2);
+      }
+
+      .house-thumb-wrap {
+        grid-area: thumb;
+        border-radius: 8px;
+        border: 1px solid rgba(112, 141, 164, 0.35);
+        overflow: hidden;
+        height: 74px;
+        background: rgba(10, 14, 20, 0.95);
+      }
+
+      .house-thumb-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .house-item-body {
+        grid-area: body;
+        min-width: 0;
+      }
+
+      .house-item-title {
+        font-size: 13px;
+        color: #dbeaf7;
+        font-weight: 700;
+      }
+
+      .house-item-meta {
+        margin-top: 2px;
+        font-size: 12px;
+        color: #9ebbd0;
+        word-break: break-all;
+      }
+
+      .house-item-actions {
+        grid-area: actions;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .house-action-btn {
+        border: 1px solid rgba(123, 154, 176, 0.42);
+        border-radius: 8px;
+        background: rgba(25, 39, 50, 0.9);
+        color: #d9e8f4;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 9px;
+        cursor: pointer;
+      }
+
+      .house-action-btn.secondary {
+        background: rgba(17, 28, 37, 0.88);
+      }
+
+      .house-action-btn:hover:not(:disabled) {
+        border-color: rgba(120, 199, 255, 0.6);
+        background: rgba(38, 60, 77, 0.92);
+      }
+
+      .house-action-btn:disabled {
+        opacity: 0.48;
+        cursor: default;
+      }
+
+      .house-empty {
+        border: 1px dashed rgba(111, 142, 164, 0.4);
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 12px;
+        color: #95aec2;
+      }
+
+      .house-file-input {
+        display: none;
+      }
+
+      .house-toolbar {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .house-import-grid {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .furniture-import-grid {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .furniture-import-form-grid {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .furniture-import-form-grid.sprite-cell {
+        grid-template-columns: repeat(2, minmax(0, 180px));
+      }
+
+      .furniture-import-field {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        color: #9eb8cb;
+        font-size: 12px;
+      }
+
+      .furniture-import-control {
+        width: 100%;
+        max-width: 280px;
+        background: #0d1620;
+        color: #dbe7f2;
+        border: 1px solid rgba(120, 153, 174, 0.35);
+        border-radius: 6px;
+        padding: 6px 8px;
+        outline: none;
+      }
+
+      .furniture-import-control:focus {
+        border-color: rgba(120, 199, 255, 0.66);
+        box-shadow: 0 0 0 1px rgba(120, 199, 255, 0.24);
+      }
+
+      .furniture-cell-setting-tip {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #9db7ca;
+      }
+
+      .furniture-cell-setting-tip.error {
+        color: #ffb3b3;
+      }
+
+      .house-preview-box {
+        border: 1px dashed rgba(109, 139, 161, 0.42);
+        border-radius: 8px;
+        background: rgba(9, 14, 19, 0.95);
+        min-height: 130px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .furniture-direction-preview {
+        border: 1px solid rgba(112, 141, 164, 0.28);
+        border-radius: 8px;
+        background: rgba(16, 24, 32, 0.92);
+        padding: 6px 7px;
+      }
+
+      .furniture-direction-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .furniture-direction-image-wrap {
+        width: 100%;
+        height: 170px;
+        border: 1px dashed rgba(109, 139, 161, 0.42);
+        border-radius: 8px;
+        background: rgba(9, 14, 19, 0.95);
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+
+      .furniture-direction-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #94aec1;
+      }
+
+      .furniture-direction-image-wrap img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+
+      .furniture-direction-empty {
+        font-size: 12px;
+        color: #8ea8bc;
+        text-align: center;
+        line-height: 1.4;
+      }
+
+      .furniture-cell-crop-frame {
+        border: 1px solid rgba(126, 155, 176, 0.4);
+        border-radius: 8px;
+        background: rgba(4, 8, 12, 0.88);
+        overflow: hidden;
+        display: block;
+      }
+
+      .furniture-cell-crop-frame.thumb {
+        margin: 0 auto;
+      }
+
+      .furniture-cell-crop-image {
+        display: block;
+        transform-origin: top left;
+        user-select: none;
+        pointer-events: none;
+      }
+
+      .furniture-direction-status-grid {
+        border: 1px solid rgba(112, 141, 164, 0.28);
+        border-radius: 8px;
+        background: rgba(16, 24, 32, 0.92);
+        padding: 8px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .furniture-direction-status-card {
+        border: 1px solid rgba(122, 151, 172, 0.24);
+        border-radius: 8px;
+        background: rgba(8, 13, 19, 0.92);
+        padding: 6px;
+        min-height: 100px;
+      }
+
+      .furniture-direction-status-card.is-active {
+        border-color: rgba(120, 199, 255, 0.62);
+        box-shadow: inset 0 0 0 1px rgba(120, 199, 255, 0.2);
+      }
+
+      .furniture-direction-status-head {
+        font-size: 12px;
+        font-weight: 700;
+        color: #d8e9f6;
+      }
+
+      .furniture-direction-status-thumb {
+        margin-top: 6px;
+        min-height: 62px;
+        border: 1px dashed rgba(112, 141, 164, 0.36);
+        border-radius: 8px;
+        background: rgba(5, 10, 15, 0.92);
+        display: grid;
+        place-items: center;
+        padding: 4px;
+      }
+
+      .furniture-direction-status-text {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #9cb5c8;
+        line-height: 1.35;
+      }
+
+      .furniture-list-grid {
+        margin-top: 8px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 8px;
+        max-height: 320px;
+        overflow: auto;
+      }
+
+      .furniture-card-btn {
+        border: 1px solid rgba(125, 153, 174, 0.28);
+        border-radius: 10px;
+        background: rgba(16, 25, 33, 0.9);
+        color: #d7e8f5;
+        padding: 6px;
+        cursor: pointer;
+        text-align: left;
+      }
+
+      .furniture-card-btn[data-active="true"] {
+        border-color: rgba(120, 199, 255, 0.72);
+        background: rgba(44, 68, 86, 0.92);
+        box-shadow: inset 0 0 0 1px rgba(120, 199, 255, 0.2);
+      }
+
+      .furniture-card-thumb {
+        width: 100%;
+        height: 82px;
+        border-radius: 8px;
+        border: 1px solid rgba(125, 153, 174, 0.22);
+        background: rgba(6, 11, 16, 0.86);
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+
+      .furniture-card-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .furniture-card-title {
+        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .furniture-card-meta {
+        margin-top: 2px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .furniture-placement-panel {
+        position: fixed;
+        z-index: 129;
+        border: 1px solid rgba(125, 153, 174, 0.34);
+        border-radius: 12px;
+        background: rgba(11, 19, 27, 0.96);
+        box-shadow: 0 14px 30px rgba(0, 0, 0, 0.42);
+        padding: 10px;
+        max-height: min(48vh, 430px);
+        overflow: auto;
+      }
+
+      .furniture-placement-panel[hidden] {
+        display: none;
+      }
+
+      .furniture-placement-panel-head {
+        font-size: 13px;
+        color: #9eb8cb;
+        margin-bottom: 8px;
+      }
+
+      .furniture-placement-empty {
+        border: 1px dashed rgba(109, 139, 161, 0.42);
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 13px;
+        color: #9eb8cb;
+      }
+
+      .house-preview-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+      }
+
+      .house-preview-empty {
+        font-size: 12px;
+        color: #8ea8bc;
+      }
+
+      .house-file-info {
+        border: 1px solid rgba(112, 141, 164, 0.28);
+        border-radius: 8px;
+        background: rgba(16, 24, 32, 0.92);
+        padding: 6px 7px;
+      }
+
+      .house-file-info-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 12px;
+        color: #9eb8cb;
+        margin-top: 4px;
+      }
+
+      .house-file-info-row:first-child {
+        margin-top: 0;
+      }
+
+      .house-file-info-row strong {
+        color: #d6e6f3;
+        text-align: right;
+        word-break: break-all;
+      }
+
+      .house-file-info-empty {
+        font-size: 12px;
+        color: #8ea8bc;
+      }
+
+      .house-check-report {
+        margin-top: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(113, 143, 167, 0.3);
+        background: rgba(12, 20, 27, 0.88);
+        padding: 8px;
+        font-size: 12px;
+        color: #b9cfdf;
+        display: grid;
+        gap: 3px;
+      }
+
+      .house-check-report.pending {
+        color: #93adbf;
+      }
+
+      .house-check-report.pass {
+        border-color: rgba(90, 183, 132, 0.45);
+        background: rgba(13, 28, 19, 0.78);
+        color: #c3f1d0;
+      }
+
+      .house-check-report.fail {
+        border-color: rgba(211, 106, 106, 0.52);
+        background: rgba(36, 14, 18, 0.84);
+        color: #ffd2d2;
+      }
+
+      .house-message {
+        margin-top: 8px;
+        padding: 7px 8px;
+        border-radius: 7px;
+        font-size: 12px;
+        border: 1px solid rgba(110, 140, 162, 0.3);
+        background: rgba(13, 21, 28, 0.88);
+      }
+
+      .house-message.tone-ok {
+        border-color: rgba(95, 189, 137, 0.48);
+        background: rgba(13, 33, 21, 0.8);
+        color: #c9f4d9;
+      }
+
+      .house-message.tone-error {
+        border-color: rgba(223, 108, 108, 0.52);
+        background: rgba(40, 15, 20, 0.84);
+        color: #ffd6d6;
+      }
+
+      .house-message.tone-info {
+        border-color: rgba(120, 199, 255, 0.4);
+        color: #c9e6fa;
+      }
+
+      .interaction-editor-layout {
+        display: grid;
+        gap: 10px;
+      }
+
+      .interaction-editor-id {
+        margin-bottom: 8px;
+        font-size: 12px;
+        color: #9fb9cc;
+      }
+
+      .interaction-editor-empty {
+        border: 1px dashed rgba(109, 139, 161, 0.42);
+        border-radius: 8px;
+        padding: 10px;
+        color: #9eb8cb;
+        font-size: 13px;
+      }
+
+      .interaction-sprite-picker-row {
+        width: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .interaction-sprite-pick-btn {
+        min-width: 74px;
+      }
+
+      .interaction-sprite-preview-wrap {
+        margin-top: 10px;
+        border: 1px solid rgba(112, 141, 164, 0.28);
+        border-radius: 10px;
+        background: rgba(10, 18, 27, 0.9);
+        padding: 10px;
+      }
+
+      .interaction-sprite-preview-viewport {
+        border: 1px dashed rgba(122, 151, 172, 0.34);
+        border-radius: 8px;
+        background: rgba(4, 8, 12, 0.92);
+        overflow: hidden;
+        margin: 0 auto;
+        position: relative;
+      }
+
+      .interaction-sprite-preview-film {
+        position: absolute;
+        left: 0;
+        top: 0;
+        display: block;
+        transform: translateX(0);
+        transform-origin: top left;
+        image-rendering: pixelated;
+      }
+
+      .interaction-sprite-preview-empty {
+        border: 1px dashed rgba(122, 151, 172, 0.34);
+        border-radius: 8px;
+        background: rgba(4, 8, 12, 0.92);
+        min-height: 84px;
+        display: grid;
+        place-items: center;
+        color: #93adbf;
+        font-size: 13px;
+        text-align: center;
+        padding: 8px;
+      }
+
+      .interaction-sprite-preview-meta {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #a7bfd1;
+      }
+
+      .house-floating-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 120;
+        background: rgba(3, 10, 16, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .house-floating-overlay[hidden] {
+        display: none;
+      }
+
+      .house-floating-window {
+        width: min(980px, calc(100vw - 36px));
+        max-height: min(88vh, 900px);
+        border-radius: 14px;
+        border: 1px solid rgba(120, 160, 188, 0.36);
+        background: linear-gradient(180deg, rgba(10, 19, 27, 0.97), rgba(10, 18, 27, 0.95));
+        box-shadow: 0 26px 60px rgba(1, 8, 14, 0.45), 0 0 0 1px rgba(140, 195, 232, 0.14) inset;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .house-floating-window[data-floating-mode="character"] {
+        width: min(760px, calc(100vw - 36px));
+      }
+
+      .house-floating-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px 8px;
+        border-bottom: 1px solid rgba(108, 145, 170, 0.22);
+      }
+
+      .house-floating-title {
+        margin: 0;
+        font-size: 16px;
+        color: #d5e9f9;
+        font-weight: 700;
+      }
+
+      .house-floating-description {
+        margin: 0;
+        padding: 8px 14px 10px;
+        border-bottom: 1px solid rgba(108, 145, 170, 0.16);
+        font-size: 13px;
+        color: #a8c3d7;
+        line-height: 1.45;
+      }
+
+      .house-floating-body {
+        min-height: 0;
+        overflow: auto;
+        padding: 12px 14px 14px;
+      }
+
+      .house-floating-close {
+        border: 1px solid rgba(123, 156, 179, 0.42);
+        border-radius: 8px;
+        background: rgba(23, 37, 49, 0.9);
+        color: #deebf7;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+
+      .house-floating-close:hover {
+        border-color: rgba(120, 199, 255, 0.62);
+        background: rgba(37, 58, 75, 0.92);
+      }
+
+      .settings-mode-actions {
+        margin-top: 8px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      .settings-mode-close {
+        border: 1px solid rgba(125, 153, 174, 0.38);
+        border-radius: 8px;
+        background: rgba(19, 29, 37, 0.9);
+        color: #d8e7f3;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+
+      .settings-mode-close:hover {
+        border-color: rgba(120, 199, 255, 0.56);
+        background: rgba(32, 47, 60, 0.92);
       }
 
       .side-block {
@@ -1018,12 +2159,43 @@
       }
 
       @media (max-width: 1280px) {
+        :root {
+          --side-panel-width: 220px;
+        }
+
         .tyxt-layout {
-          grid-template-columns: 142px minmax(0, 1fr) 220px;
+          grid-template-columns: 142px minmax(0, 1fr) var(--side-panel-width);
+        }
+
+        .settings-dock {
+          right: 8px;
+        }
+
+        .wall-editor-controls {
+          right: 244px;
+          bottom: 84px;
+        }
+
+        .furniture-editor-controls {
+          right: 244px;
+          bottom: 84px;
+        }
+
+        .interaction-editor-controls {
+          right: 244px;
+          bottom: 84px;
+        }
+
+        .settings-toggle-btn {
+          width: 196px;
         }
       }
 
       @media (max-width: 1050px) {
+        :root {
+          --side-panel-width: calc(100vw - 16px);
+        }
+
         .tyxt-layout {
           grid-template-columns: 1fr;
           grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -1047,9 +2219,50 @@
         .quick-actions {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
+
+        .house-floating-overlay {
+          padding: 12px;
+        }
+
+        .house-floating-window {
+          width: min(980px, calc(100vw - 24px));
+          max-height: min(92vh, 940px);
+        }
+
+        .settings-dock {
+          right: 8px;
+          bottom: 14px;
+          max-width: calc(100vw - 32px);
+          width: auto;
+          overflow-x: auto;
+          padding-bottom: 2px;
+        }
+
+        .wall-editor-controls {
+          right: 14px;
+          bottom: 78px;
+        }
+
+        .furniture-editor-controls {
+          right: 14px;
+          bottom: 78px;
+        }
+
+        .interaction-editor-controls {
+          right: 14px;
+          bottom: 78px;
+        }
+
+        .settings-toggle-btn {
+          width: 168px;
+        }
       }
 
       @media (max-width: 720px) {
+        :root {
+          --side-panel-width: calc(100vw - 16px);
+        }
+
         .tyxt-layout {
           padding: 8px;
           gap: 8px;
@@ -1093,6 +2306,67 @@
         .gallery-agent-content {
           grid-template-columns: 1fr;
         }
+
+        .settings-dock {
+          right: 8px;
+          bottom: 10px;
+          width: auto;
+          gap: 6px;
+        }
+
+        .settings-dock-rail {
+          gap: 5px;
+          padding: 6px;
+        }
+
+        .settings-dock-main {
+          padding: 6px;
+        }
+
+        .settings-toggle-btn {
+          width: 132px;
+          min-width: 132px;
+          font-size: 13px;
+          padding: 8px 10px;
+        }
+
+        .wall-editor-controls {
+          right: 8px;
+          bottom: 76px;
+        }
+
+        .furniture-editor-controls {
+          right: 8px;
+          bottom: 76px;
+        }
+
+        .interaction-editor-controls {
+          right: 8px;
+          bottom: 76px;
+        }
+
+        .actor-settings-head {
+          display: none;
+        }
+
+        .actor-settings-row {
+          grid-template-columns: 1fr;
+        }
+
+        .actor-settings-preview {
+          width: min(160px, 100%);
+          height: auto;
+          aspect-ratio: 1 / 1;
+          justify-self: center;
+        }
+
+        .scene-editor-hud-overlay {
+          left: 8px;
+          bottom: 6px;
+          max-width: calc(100% - 16px);
+          font-size: 14px;
+          padding: 7px 8px;
+        }
       }
     </style>
   </head>
@@ -1117,9 +2391,10 @@
         </section>
       </aside>
 
-      <main class="space-main">
+      <main class="space-main" id="space-main">
         <section class="space-stage">
           <div id="app"></div>
+          <div class="scene-editor-hud-overlay" id="scene-editor-hud-overlay" hidden></div>
         </section>
         <section class="space-interaction-panel" id="interaction-panel">
           <div class="interaction-panel-body" id="interaction-display"></div>
@@ -1143,9 +2418,100 @@
           <div class="event-list" id="recent-events"></div>
         </section>
 
+        <section class="side-block settings-mode-panel" id="settings-mode-panel" hidden>
+          <h3 class="settings-mode-title" id="settings-mode-title">设置模式</h3>
+          <p class="settings-mode-description" id="settings-mode-description"></p>
+          <div class="settings-mode-content" id="settings-mode-content"></div>
+          <div class="settings-mode-actions">
+            <button class="settings-mode-close" id="settings-mode-close" type="button">返回普通视图</button>
+          </div>
+        </section>
 
       </aside>
       <div id="quick-actions" hidden></div>
+    </div>
+    <div class="settings-dock" id="settings-dock">
+      <div class="settings-dock-rail furniture-category-menu" id="furniture-category-menu" hidden>
+        <button class="settings-submenu-action" type="button" data-furniture-category="sofa">沙发</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="bed">床</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="table">桌子</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="chair">椅子</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="bookcase">书柜</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="display_case">展示柜</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="workbench">工作台</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="lighting">灯具</button>
+        <button class="settings-submenu-action" type="button" data-furniture-category="decoration">装饰品</button>
+      </div>
+      <div class="settings-dock-rail wall-shape-menu" id="wall-shape-menu" hidden>
+        <button class="wall-shape-item" type="button" data-wall-shape-type="square">正方形</button>
+        <button class="wall-shape-item" type="button" data-wall-shape-type="rectangle">长方形</button>
+        <button class="wall-shape-item" type="button" data-wall-shape-type="triangle">三角形</button>
+        <button class="wall-shape-item" type="button" data-wall-shape-type="circle">圆形</button>
+        <button class="wall-shape-item" type="button" data-wall-shape-type="trapezoid">梯形</button>
+      </div>
+      <div class="settings-dock-rail furniture-submenu" id="furniture-settings-menu" hidden>
+        <button class="settings-submenu-action" type="button" data-furniture-setting-action="import">导入家具</button>
+        <button class="settings-submenu-action" type="button" data-furniture-setting-action="place">摆放家具</button>
+      </div>
+      <div class="settings-dock-rail interaction-submenu" id="interaction-settings-menu" hidden>
+        <button class="settings-submenu-action" type="button" data-interaction-setting-action="action-point">动作点</button>
+        <button class="settings-submenu-action" type="button" data-interaction-setting-action="interaction-box">交互框</button>
+      </div>
+      <div class="settings-dock-rail settings-submenu" id="house-settings-menu" hidden>
+        <button class="settings-submenu-action" type="button" data-house-setting-action="import">房屋导入</button>
+        <button class="settings-submenu-action" type="button" data-house-setting-action="wall">墙壁设置</button>
+        <button class="settings-submenu-action" type="button" data-house-setting-action="label">房屋名</button>
+      </div>
+      <div class="settings-dock-rail settings-dock-main">
+        <div class="settings-menu" id="settings-menu" hidden>
+          <button class="settings-action-item" type="button" data-setting-action="house">房屋</button>
+          <button class="settings-action-item" type="button" data-setting-action="furniture">家具</button>
+          <button class="settings-action-item" type="button" data-setting-action="character">人物</button>
+          <button class="settings-action-item" type="button" data-setting-action="interaction">交互</button>
+          <button class="settings-action-item" type="button" data-setting-action="shop">商店</button>
+        </div>
+        <button
+          class="settings-toggle-btn"
+          id="settings-toggle"
+          type="button"
+          aria-expanded="false"
+          aria-controls="settings-menu"
+        >
+          设置
+        </button>
+      </div>
+    </div>
+    <div class="furniture-placement-panel" id="furniture-placement-panel" hidden></div>
+    <div class="wall-editor-controls" id="wall-editor-controls" hidden>
+      <button class="wall-editor-btn" id="wall-editor-save" type="button">保存</button>
+      <button class="wall-editor-btn exit" id="wall-editor-exit" type="button">退出</button>
+    </div>
+    <div class="wall-editor-controls" id="room-label-editor-controls" hidden>
+      <button class="wall-editor-btn" id="room-label-editor-save" type="button">保存</button>
+      <button class="wall-editor-btn exit" id="room-label-editor-exit" type="button">退出</button>
+    </div>
+    <div class="furniture-editor-controls" id="furniture-editor-controls" hidden>
+      <button class="furniture-editor-btn" id="furniture-editor-direction-left" type="button">左向</button>
+      <button class="furniture-editor-btn" id="furniture-editor-direction-right" type="button">右向</button>
+      <button class="furniture-editor-btn" id="furniture-editor-scale-down" type="button">缩小</button>
+      <button class="furniture-editor-btn" id="furniture-editor-scale-up" type="button">放大</button>
+      <button class="furniture-editor-btn" id="furniture-editor-save" type="button">保存</button>
+      <button class="furniture-editor-btn exit" id="furniture-editor-exit" type="button">退出</button>
+    </div>
+    <div class="interaction-editor-controls" id="interaction-editor-controls" hidden>
+      <button class="interaction-editor-btn" id="interaction-editor-open" type="button">编辑</button>
+      <button class="interaction-editor-btn" id="interaction-editor-save" type="button">保存</button>
+      <button class="interaction-editor-btn exit" id="interaction-editor-exit" type="button">退出</button>
+    </div>
+    <div class="house-floating-overlay" id="house-floating-overlay" hidden>
+      <section class="house-floating-window" id="house-floating-window" role="dialog" aria-modal="true" aria-labelledby="house-floating-title">
+        <header class="house-floating-head">
+          <h3 class="house-floating-title" id="house-floating-title">房屋设置</h3>
+          <button class="house-floating-close" id="house-floating-close" type="button">关闭</button>
+        </header>
+        <p class="house-floating-description" id="house-floating-description">管理房屋底板资源：查看、检查、导入并切换当前房屋。</p>
+        <div class="house-floating-body" id="house-floating-content"></div>
+      </section>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

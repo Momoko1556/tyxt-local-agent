@@ -1,0 +1,658 @@
+{
+  "id": "tyxt-space-default-map-v1",
+  "base_width": 1920,
+  "base_height": 1080,
+  "floor_regions": [
+    {
+      "id": "memory-room",
+      "polygon": [
+        {
+          "x": 231,
+          "y": 165
+        },
+        {
+          "x": 516,
+          "y": 165
+        },
+        {
+          "x": 600,
+          "y": 240
+        },
+        {
+          "x": 600,
+          "y": 420
+        },
+        {
+          "x": 549,
+          "y": 500
+        },
+        {
+          "x": 264,
+          "y": 500
+        },
+        {
+          "x": 206,
+          "y": 420
+        },
+        {
+          "x": 206,
+          "y": 240
+        }
+      ],
+      "room_id": "memory",
+      "label": "memory-room"
+    },
+    {
+      "id": "north-spine",
+      "polygon": [
+        {
+          "x": 692,
+          "y": 140
+        },
+        {
+          "x": 1605,
+          "y": 140
+        },
+        {
+          "x": 1643,
+          "y": 180
+        },
+        {
+          "x": 1589,
+          "y": 230
+        },
+        {
+          "x": 1295,
+          "y": 230
+        },
+        {
+          "x": 1253,
+          "y": 285
+        },
+        {
+          "x": 960,
+          "y": 285
+        },
+        {
+          "x": 918,
+          "y": 320
+        },
+        {
+          "x": 759,
+          "y": 320
+        },
+        {
+          "x": 692,
+          "y": 250
+        }
+      ],
+      "room_id": "gateway",
+      "label": "north-spine"
+    },
+    {
+      "id": "center-hall",
+      "polygon": [
+        {
+          "x": 591,
+          "y": 360
+        },
+        {
+          "x": 1312,
+          "y": 360
+        },
+        {
+          "x": 1379,
+          "y": 430
+        },
+        {
+          "x": 1295,
+          "y": 500
+        },
+        {
+          "x": 759,
+          "y": 500
+        },
+        {
+          "x": 675,
+          "y": 450
+        },
+        {
+          "x": 591,
+          "y": 450
+        }
+      ],
+      "room_id": "agent",
+      "label": "center-hall"
+    },
+    {
+      "id": "right-ops",
+      "polygon": [
+        {
+          "x": 1320,
+          "y": 330
+        },
+        {
+          "x": 1681,
+          "y": 330
+        },
+        {
+          "x": 1714,
+          "y": 370
+        },
+        {
+          "x": 1714,
+          "y": 470
+        },
+        {
+          "x": 1329,
+          "y": 470
+        },
+        {
+          "x": 1262,
+          "y": 410
+        }
+      ],
+      "room_id": "log",
+      "label": "right-ops"
+    },
+    {
+      "id": "left-drop",
+      "polygon": [
+        {
+          "x": 516,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 760
+        },
+        {
+          "x": 516,
+          "y": 760
+        }
+      ],
+      "room_id": "gateway",
+      "label": "left-drop"
+    },
+    {
+      "id": "center-drop",
+      "polygon": [
+        {
+          "x": 792,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 760
+        },
+        {
+          "x": 792,
+          "y": 760
+        }
+      ],
+      "room_id": "agent",
+      "label": "center-drop"
+    },
+    {
+      "id": "lower-main",
+      "polygon": [
+        {
+          "x": 541,
+          "y": 660
+        },
+        {
+          "x": 1170,
+          "y": 660
+        },
+        {
+          "x": 1203,
+          "y": 720
+        },
+        {
+          "x": 1203,
+          "y": 980
+        },
+        {
+          "x": 591,
+          "y": 980
+        },
+        {
+          "x": 516,
+          "y": 900
+        },
+        {
+          "x": 516,
+          "y": 720
+        }
+      ],
+      "room_id": "agent",
+      "label": "lower-main"
+    },
+    {
+      "id": "right-diagonal",
+      "polygon": [
+        {
+          "x": 1228,
+          "y": 620
+        },
+        {
+          "x": 1329,
+          "y": 620
+        },
+        {
+          "x": 1480,
+          "y": 790
+        },
+        {
+          "x": 1446,
+          "y": 850
+        },
+        {
+          "x": 1354,
+          "y": 850
+        },
+        {
+          "x": 1228,
+          "y": 700
+        }
+      ],
+      "room_id": "gateway",
+      "label": "right-diagonal"
+    },
+    {
+      "id": "break-room",
+      "polygon": [
+        {
+          "x": 1312,
+          "y": 760
+        },
+        {
+          "x": 1664,
+          "y": 760
+        },
+        {
+          "x": 1681,
+          "y": 790
+        },
+        {
+          "x": 1681,
+          "y": 1020
+        },
+        {
+          "x": 1371,
+          "y": 1020
+        },
+        {
+          "x": 1295,
+          "y": 930
+        },
+        {
+          "x": 1295,
+          "y": 790
+        }
+      ],
+      "room_id": "break_room",
+      "label": "break-room"
+    }
+  ],
+  "wall_blocks": [
+    {
+      "id": "gateway-front",
+      "x": 734,
+      "y": 820,
+      "width": 184,
+      "height": 24,
+      "room_id": "gateway"
+    },
+    {
+      "id": "skills-bench-front",
+      "x": 289,
+      "y": 915,
+      "width": 151,
+      "height": 20,
+      "room_id": "gateway"
+    },
+    {
+      "id": "break-bar-front",
+      "x": 1174,
+      "y": 885,
+      "width": 151,
+      "height": 22,
+      "room_id": "break_room"
+    },
+    {
+      "id": "taskq-desk-front",
+      "x": 1501,
+      "y": 885,
+      "width": 151,
+      "height": 22,
+      "room_id": "task_queues"
+    }
+  ],
+  "furnitures": [
+    {
+      "id": "document-core",
+      "type": "book",
+      "label": "document-core",
+      "room_id": "document",
+      "x": 315,
+      "y": 170,
+      "width": 100,
+      "height": 68,
+      "sprite_key": "document-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "read",
+      "z_index": 238
+    },
+    {
+      "id": "memory-core",
+      "type": "book",
+      "label": "memory-core",
+      "room_id": "memory",
+      "x": 315,
+      "y": 440,
+      "width": 100,
+      "height": 68,
+      "sprite_key": "memory-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "read",
+      "z_index": 508
+    },
+    {
+      "id": "mcp-core",
+      "type": "tool",
+      "label": "mcp-core",
+      "room_id": "mcp",
+      "x": 817,
+      "y": 154,
+      "width": 110,
+      "height": 68,
+      "sprite_key": "mcp-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 222
+    },
+    {
+      "id": "images-core",
+      "type": "art",
+      "label": "images-core",
+      "room_id": "images",
+      "x": 1402,
+      "y": 138,
+      "width": 105,
+      "height": 70,
+      "sprite_key": "images-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "view",
+      "z_index": 208
+    },
+    {
+      "id": "log-core",
+      "type": "marker",
+      "label": "log-core",
+      "room_id": "log",
+      "x": 1437,
+      "y": 382,
+      "width": 102,
+      "height": 64,
+      "sprite_key": "log-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 446
+    },
+    {
+      "id": "schedule-core",
+      "type": "marker",
+      "label": "schedule-core",
+      "room_id": "schedule",
+      "x": 1444,
+      "y": 542,
+      "width": 105,
+      "height": 70,
+      "sprite_key": "schedule-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 612
+    },
+    {
+      "id": "skills-core",
+      "type": "tool",
+      "label": "skills-core",
+      "room_id": "skills",
+      "x": 310,
+      "y": 802,
+      "width": 110,
+      "height": 72,
+      "sprite_key": "skills-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 874
+    },
+    {
+      "id": "gateway-core",
+      "type": "tool",
+      "label": "gateway-core",
+      "room_id": "gateway",
+      "x": 759,
+      "y": 710,
+      "width": 117,
+      "height": 74,
+      "sprite_key": "gateway-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 784
+    },
+    {
+      "id": "agent-core",
+      "type": "marker",
+      "label": "agent-core",
+      "room_id": "agent",
+      "x": 1095,
+      "y": 710,
+      "width": 99,
+      "height": 66,
+      "sprite_key": "agent-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 776
+    },
+    {
+      "id": "breakroom-core",
+      "type": "marker",
+      "label": "breakroom-core",
+      "room_id": "break_room",
+      "x": 1209,
+      "y": 894,
+      "width": 122,
+      "height": 76,
+      "sprite_key": "breakroom-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 970
+    },
+    {
+      "id": "taskq-core",
+      "type": "tool",
+      "label": "taskq-core",
+      "room_id": "task_queues",
+      "x": 1525,
+      "y": 866,
+      "width": 111,
+      "height": 72,
+      "sprite_key": "taskq-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 938
+    },
+    {
+      "id": "alarm-core",
+      "type": "marker",
+      "label": "alarm-core",
+      "room_id": "alarm",
+      "x": 1480,
+      "y": 140,
+      "width": 100,
+      "height": 66,
+      "sprite_key": "alarm-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 206
+    }
+  ],
+  "room_label_anchors": {},
+  "interaction_points": [
+    {
+      "id": "document-interaction-1",
+      "type": "work_zone",
+      "label": "卧室",
+      "room_id": "document",
+      "x": 342,
+      "y": 901,
+      "anchor_x": 342,
+      "anchor_y": 901,
+      "interaction_type": "status"
+    },
+    {
+      "id": "memory-interaction-2",
+      "type": "work_zone",
+      "label": "工坊",
+      "room_id": "memory",
+      "x": 547,
+      "y": 241,
+      "anchor_x": 547,
+      "anchor_y": 241,
+      "interaction_type": "status"
+    },
+    {
+      "id": "mcp-interaction-3",
+      "type": "work_zone",
+      "label": "展厅",
+      "room_id": "mcp",
+      "x": 911,
+      "y": 240,
+      "anchor_x": 911,
+      "anchor_y": 240,
+      "interaction_type": "status"
+    },
+    {
+      "id": "images-interaction-4",
+      "type": "work_zone",
+      "label": "剧场",
+      "room_id": "images",
+      "x": 1346,
+      "y": 225,
+      "anchor_x": 1346,
+      "anchor_y": 225,
+      "interaction_type": "status"
+    },
+    {
+      "id": "log-interaction-5",
+      "type": "work_zone",
+      "label": "档案室",
+      "room_id": "log",
+      "x": 1223,
+      "y": 502,
+      "anchor_x": 1223,
+      "anchor_y": 502,
+      "interaction_type": "status"
+    },
+    {
+      "id": "schedule-interaction-6",
+      "type": "work_zone",
+      "label": "档案室",
+      "room_id": "schedule",
+      "x": 1499,
+      "y": 516,
+      "anchor_x": 1499,
+      "anchor_y": 516,
+      "interaction_type": "status"
+    },
+    {
+      "id": "skills-interaction-7",
+      "type": "work_zone",
+      "label": "休息室",
+      "room_id": "skills",
+      "x": 489,
+      "y": 541,
+      "anchor_x": 489,
+      "anchor_y": 541,
+      "interaction_type": "status"
+    },
+    {
+      "id": "gateway-interaction-8",
+      "type": "work_zone",
+      "label": "客厅",
+      "room_id": "gateway",
+      "x": 967,
+      "y": 602,
+      "anchor_x": 967,
+      "anchor_y": 602,
+      "interaction_type": "status"
+    },
+    {
+      "id": "agent-interaction-9",
+      "type": "work_zone",
+      "label": "主厅",
+      "room_id": "agent",
+      "x": 1041,
+      "y": 858,
+      "anchor_x": 1041,
+      "anchor_y": 858,
+      "interaction_type": "status"
+    },
+    {
+      "id": "break_room-interaction-10",
+      "type": "work_zone",
+      "label": "书房",
+      "room_id": "break_room",
+      "x": 1447,
+      "y": 856,
+      "anchor_x": 1447,
+      "anchor_y": 856,
+      "interaction_type": "status"
+    },
+    {
+      "id": "task_queues-interaction-11",
+      "type": "work_zone",
+      "label": "客厅",
+      "room_id": "task_queues",
+      "x": 967,
+      "y": 602,
+      "anchor_x": 967,
+      "anchor_y": 602,
+      "interaction_type": "status"
+    },
+    {
+      "id": "alarm-interaction-12",
+      "type": "work_zone",
+      "label": "剧场",
+      "room_id": "alarm",
+      "x": 1509,
+      "y": 208,
+      "anchor_x": 1509,
+      "anchor_y": 208,
+      "interaction_type": "status"
+    }
+  ],
+  "interaction_boxes": []
+}

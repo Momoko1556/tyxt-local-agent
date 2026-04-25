@@ -1,107 +1,95 @@
-﻿# TYXT Space
+# TYXT Space v1.5.0
 
 - [中文说明 / README_cn.md](./README_cn.md)
 
-TYXT Space is a 2D pixel-style control interface for local TYXT agent workflows.
+TYXT Space is the visual home for TYXT Local Agent. It presents the agent system as an editable 2D space where houses, furniture, characters, room labels, walls, and interaction areas can be managed from the frontend UI.
 
-It turns OpenClaw's generated assets, runtime activity, and assets related working state into a visual library interface that can be browsed, previewed, and monitored in real time.
+This release focuses on making the visual space data-driven and editable without relying on the old asset-pack/remap workflow.
 
-Overall, it aims to feel more like a living pixel archive than a plain folder tree.
+## v1.5.0 Highlights
 
-![ClawLibrary preview screenshot](./public/ClawLibrary_preview.jpg)
+- House images now come from `public/assets/houses`.
+- Furniture sprites now come from `public/assets/furnitures`.
+- Scene data is stored in `public/data`, including house catalog, furniture catalog, scene config, scene map, and actor mapping.
+- Room labels are positioned by dragging them in the frontend UI.
+- Wall blocks are edited in the frontend UI and are used to subtract non-walkable areas from the main house image.
+- Movement range is calculated as: visible main house image area minus wall blocks.
+- Character selection is driven by `public/data/agent-actors.json` and `src/data/scene-art.manifest.json`.
+- The old `public/assets/packs` and `remap.html` workflow has been removed.
+- The Shop entry is reserved for future use. Shop editing is not implemented in v1.5.0.
 
-## Highlights
+## Main Concepts
 
-- classify, index, and manage many different asset types produced by OpenClaw
-- open and preview those assets directly inside the interface
-- see what OpenClaw is currently accessing, using, or processing
-- connect runtime behavior to concrete asset rooms instead of raw folders
-- present the whole workflow in a more approachable 2D pixel-game UI
-- keep the art layer replaceable so visuals can evolve independently from the logic layer
+### Houses
 
-## What It Does
+House images are the main visual background of the space.
 
-TYXT Space maps resources into visual rooms such as:
-
-- document archive
-- image atelier
-- memory vault
-- skill forge
-- interface gateway
-- code lab
-- scheduler
-- alarm board
-- runtime monitor
-- queue hub
-- break room
-
-The interface is mainly designed to answer two questions:
-
-1. What assets already exist?
-2. What is OpenClaw doing with them right now?
-
-![ClawLibrary preview animation](./public/ClawLibrary_preview-6s.gif)
-
-## Core Features
-
-- room routing driven by live OpenClaw activity
-- asset partitions aligned to OpenClaw resource types
-- direct in-panel asset browsing and preview
-- actor movement linked to room state
-- debug overlays for mapping and route inspection
-- replaceable pixel-art scene assets
-
-## Installation
-
-### Easiest Setup: Send the Repo to OpenClaw
-
-If the other person already has OpenClaw installed, the easiest path is to send the repository URL to their OpenClaw and let it install and launch the project automatically.
-
-You can send a prompt like this:
+Runtime location:
 
 ```text
-Please install and launch this repository: clone https://github.com/shengyu-meng/ClawLibrary, enter the project folder, run npm install, npm run validate, then start the dev server and tell me the final URL.
+public/assets/houses/
+public/data/houses.json
+public/data/scene-config.json
 ```
 
-If you need LAN access, add a note asking OpenClaw to enable LAN access and report the LAN URL.
+House images should be PNG or WebP. The current import checks expect a large enough image and a consistent aspect ratio with the baseline house.
 
-### Standard Local Setup
+### Furniture
 
-```bash
-git clone https://github.com/shengyu-meng/ClawLibrary tyxt-space
-cd tyxt-space
-npm install
-npm run validate
-npm run dev
+Furniture is stored as directional sprites and placed inside the scene through the visual editor.
+
+Runtime location:
+
+```text
+public/assets/furnitures/
+public/data/furnitures.json
+public/data/scene-map.json
 ```
 
-Then open:
+Furniture entries can include front, left, right, and back sprites. Placement, direction, size, collision behavior, and interaction metadata are persisted into the scene map.
 
-- local only: `http://127.0.0.1:5173/`
-- LAN mode if enabled: `http://<your-ip>:5173/`
+### Characters
 
-If your OpenClaw installation is not under the default path, the recommended way is to edit:
+Character visuals are separated from house and furniture data.
 
-- `clawlibrary.config.json`
+Runtime location:
 
-If you prefer environment-variable overrides, copy and fill:
-
-```bash
-cp .env.example .env
+```text
+public/assets/generated/actors/
+public/data/agent-actors.json
+src/data/scene-art.manifest.json
 ```
 
-and set:
+The default actor variant is `tyxt-emoji`. Older capy/cat variants are no longer part of the runtime chain.
 
-- `OPENCLAW_HOME`
-- `OPENCLAW_WORKSPACE`
+### Walls And Movement
+
+Walking no longer depends on `reference-walkable.png`.
+
+The current movement rule is:
+
+```text
+walkable area = visible main house image area - wall blocks
+```
+
+Wall blocks are edited in the frontend UI. They act as blocking geometry for movement and path recovery.
+
+### Room Labels
+
+Room name positions are controlled by frontend dragging. The saved positions live with scene map data instead of the removed remap workbench.
+
+### Shop
+
+The Shop button/entry is reserved for later product logic. It is intentionally not editable in v1.5.0.
 
 ## Development Commands
 
 ```bash
-npm run dev
+npm install
 npm run validate
 npm run typecheck
 npm run build
+npm run dev
 ```
 
 Optional QA commands:
@@ -112,93 +100,41 @@ npm run qa:visual:baseline
 npm run qa:visual
 ```
 
-These QA commands generate local temporary artifacts. They currently write into `tmp/qa/` and are not meant to be part of the public repository.
-
-## Runtime Model
-
-ClawLibrary is driven by protocol-style data plus live telemetry:
-
-- `src/data/map.logic.json` — room layout, anchors, walk graph, work zones
-- `src/data/asset.manifest.json` — logical asset definitions
-- `src/data/scene-art.manifest.json` — actor and scene art bindings
-- `src/data/work-output.protocol.json` — work-state mapping and output semantics
-- `scripts/openclaw-telemetry.mjs` — bridge from OpenClaw state into live museum signals
+QA output is local-only and should not be committed.
 
 ## Configuration
 
-ClawLibrary now uses `clawlibrary.config.json` at the repository root as the public-facing config entry point.
+The public config entry is:
 
-Current config surface includes:
+```text
+clawlibrary.config.json
+```
 
-- `debug` — whether to show room anchors, route circles, and other debug overlays
-- `host` — `127.0.0.1` for local-only access, `0.0.0.0` for LAN access
-- `port` — dev server port
-- `locale` — `en` or `zh`
-- `defaultActorVariant` — choose the default actor skin
-
-Default config file:
+Default actor configuration:
 
 ```json
 {
-  "openclaw": {
-    "home": "",
-    "workspace": ""
-  },
-  "server": {
-    "host": "127.0.0.1",
-    "port": 5173
-  },
-  "ui": {
-    "defaultLocale": "en",
-    "showDebugToggle": false,
-    "defaultDebugVisible": false,
-    "showInfoToggle": true,
-    "defaultInfoPanelVisible": true,
-    "showThemeToggle": false
-  },
   "actor": {
-    "defaultVariantId": "capy-claw-emoji"
-  },
-  "telemetry": {
-    "pollMs": 2500
+    "defaultVariantId": "tyxt-emoji"
   }
 }
 ```
 
-Supporting files:
+Environment overrides may be placed in `.env`, which is ignored by Git.
 
-- `.env.example` — optional environment-variable override example
-- `scripts/clawlibrary-config.mjs` — shared config loader for config file + env overrides
+## Public Data Files
 
-## OpenClaw Path Discovery
+```text
+public/data/houses.json        House catalog
+public/data/furnitures.json    Furniture catalog
+public/data/scene-config.json  Current/baseline house selection
+public/data/scene-map.json     Walls, labels, furniture, interaction data
+public/data/agent-actors.json  Agent-to-actor variant mapping
+```
 
-ClawLibrary does not hardcode a single machine path.
+## Privacy Notes
 
-Current lookup strategy:
-
-- read `clawlibrary.config.json` first
-- override with `OPENCLAW_HOME` if provided
-- override with `OPENCLAW_WORKSPACE` if provided
-- if neither config nor env is set, fall back to the standard OpenClaw layout:
-  - `~/.openclaw`
-  - `~/.openclaw/workspace`
-
-That means:
-
-- standard OpenClaw installations should work out of the box
-- custom installations can be supported through config or environment-variable overrides
-
-## Open-Source Repository Guidance
-
-A public release should mainly keep:
-
-- runtime code
-- required public assets
-- installation commands
-- configuration docs
-- a few polished preview assets
-
-Internal QA captures, prompt drafts, and iteration logs are usually better removed from the public release.
+Do not commit local runtime data, generated logs, `.env`, or local machine configuration. The root repository `.gitignore` and this package `.gitignore` exclude those by default.
 
 ## License
 
@@ -211,14 +147,4 @@ Assets are licensed under CC BY-NC-SA 4.0:
 - `/LICENSE-ASSETS.md`
 - Non-commercial sharing, adaptation, and redistribution are allowed with attribution.
 - If you redistribute adapted assets, you must keep them under the same license.
-- For commercial use of this project, replace the included art assets with your own, or obtain separate permission.
-
-## Acknowledgements
-
-- This project is inspired by [Star-Office-UI](https://github.com/ringhyacinth/Star-Office-UI).
-- Special thanks to [@simonxxooxxoo](https://github.com/simonxxooxxoo) and [@ringhyacinth](https://github.com/ringhyacinth).
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=shengyu-meng/ClawLibrary&type=Date)](https://www.star-history.com/#shengyu-meng/ClawLibrary&Date)
-
+- For commercial use, replace the included art assets with your own or obtain separate permission.

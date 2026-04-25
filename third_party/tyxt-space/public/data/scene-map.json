@@ -1,0 +1,1449 @@
+{
+  "id": "tyxt-space-default-map-v1",
+  "base_width": 1920,
+  "base_height": 1080,
+  "floor_regions": [
+    {
+      "id": "memory-room",
+      "polygon": [
+        {
+          "x": 231,
+          "y": 165
+        },
+        {
+          "x": 516,
+          "y": 165
+        },
+        {
+          "x": 600,
+          "y": 240
+        },
+        {
+          "x": 600,
+          "y": 420
+        },
+        {
+          "x": 549,
+          "y": 500
+        },
+        {
+          "x": 264,
+          "y": 500
+        },
+        {
+          "x": 206,
+          "y": 420
+        },
+        {
+          "x": 206,
+          "y": 240
+        }
+      ],
+      "room_id": "memory",
+      "label": "memory-room"
+    },
+    {
+      "id": "north-spine",
+      "polygon": [
+        {
+          "x": 692,
+          "y": 140
+        },
+        {
+          "x": 1605,
+          "y": 140
+        },
+        {
+          "x": 1643,
+          "y": 180
+        },
+        {
+          "x": 1589,
+          "y": 230
+        },
+        {
+          "x": 1295,
+          "y": 230
+        },
+        {
+          "x": 1253,
+          "y": 285
+        },
+        {
+          "x": 960,
+          "y": 285
+        },
+        {
+          "x": 918,
+          "y": 320
+        },
+        {
+          "x": 759,
+          "y": 320
+        },
+        {
+          "x": 692,
+          "y": 250
+        }
+      ],
+      "room_id": "gateway",
+      "label": "north-spine"
+    },
+    {
+      "id": "center-hall",
+      "polygon": [
+        {
+          "x": 591,
+          "y": 360
+        },
+        {
+          "x": 1312,
+          "y": 360
+        },
+        {
+          "x": 1379,
+          "y": 430
+        },
+        {
+          "x": 1295,
+          "y": 500
+        },
+        {
+          "x": 759,
+          "y": 500
+        },
+        {
+          "x": 675,
+          "y": 450
+        },
+        {
+          "x": 591,
+          "y": 450
+        }
+      ],
+      "room_id": "agent",
+      "label": "center-hall"
+    },
+    {
+      "id": "right-ops",
+      "polygon": [
+        {
+          "x": 1320,
+          "y": 330
+        },
+        {
+          "x": 1681,
+          "y": 330
+        },
+        {
+          "x": 1714,
+          "y": 370
+        },
+        {
+          "x": 1714,
+          "y": 470
+        },
+        {
+          "x": 1329,
+          "y": 470
+        },
+        {
+          "x": 1262,
+          "y": 410
+        }
+      ],
+      "room_id": "log",
+      "label": "right-ops"
+    },
+    {
+      "id": "left-drop",
+      "polygon": [
+        {
+          "x": 516,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 350
+        },
+        {
+          "x": 675,
+          "y": 760
+        },
+        {
+          "x": 516,
+          "y": 760
+        }
+      ],
+      "room_id": "gateway",
+      "label": "left-drop"
+    },
+    {
+      "id": "center-drop",
+      "polygon": [
+        {
+          "x": 792,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 420
+        },
+        {
+          "x": 901,
+          "y": 760
+        },
+        {
+          "x": 792,
+          "y": 760
+        }
+      ],
+      "room_id": "agent",
+      "label": "center-drop"
+    },
+    {
+      "id": "lower-main",
+      "polygon": [
+        {
+          "x": 541,
+          "y": 660
+        },
+        {
+          "x": 1170,
+          "y": 660
+        },
+        {
+          "x": 1203,
+          "y": 720
+        },
+        {
+          "x": 1203,
+          "y": 980
+        },
+        {
+          "x": 591,
+          "y": 980
+        },
+        {
+          "x": 516,
+          "y": 900
+        },
+        {
+          "x": 516,
+          "y": 720
+        }
+      ],
+      "room_id": "agent",
+      "label": "lower-main"
+    },
+    {
+      "id": "right-diagonal",
+      "polygon": [
+        {
+          "x": 1228,
+          "y": 620
+        },
+        {
+          "x": 1329,
+          "y": 620
+        },
+        {
+          "x": 1480,
+          "y": 790
+        },
+        {
+          "x": 1446,
+          "y": 850
+        },
+        {
+          "x": 1354,
+          "y": 850
+        },
+        {
+          "x": 1228,
+          "y": 700
+        }
+      ],
+      "room_id": "gateway",
+      "label": "right-diagonal"
+    },
+    {
+      "id": "break-room",
+      "polygon": [
+        {
+          "x": 1312,
+          "y": 760
+        },
+        {
+          "x": 1664,
+          "y": 760
+        },
+        {
+          "x": 1681,
+          "y": 790
+        },
+        {
+          "x": 1681,
+          "y": 1020
+        },
+        {
+          "x": 1371,
+          "y": 1020
+        },
+        {
+          "x": 1295,
+          "y": 930
+        },
+        {
+          "x": 1295,
+          "y": 790
+        }
+      ],
+      "room_id": "break_room",
+      "label": "break-room"
+    }
+  ],
+  "wall_blocks": [
+    {
+      "id": "gateway-front",
+      "x": 642,
+      "y": 781,
+      "width": 27,
+      "height": 168,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-1",
+      "x": 225,
+      "y": 622,
+      "width": 180,
+      "height": 186,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-2",
+      "x": 481,
+      "y": 626,
+      "width": 396,
+      "height": 165,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-3",
+      "x": 1223,
+      "y": 797,
+      "width": 20,
+      "height": 151,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-5",
+      "x": 1120,
+      "y": 349,
+      "width": 193,
+      "height": 135,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-6",
+      "x": 275,
+      "y": 52,
+      "width": 1344,
+      "height": 122,
+      "room_id": "skills",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-7",
+      "x": 233,
+      "y": 354,
+      "width": 324,
+      "height": 139,
+      "room_id": "memory",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-12",
+      "x": 226,
+      "y": 954,
+      "width": 1427,
+      "height": 44,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-15",
+      "x": 1613,
+      "y": 59,
+      "width": 42,
+      "height": 901,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-18",
+      "x": 226,
+      "y": 364,
+      "width": 25,
+      "height": 590,
+      "room_id": "document",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-4",
+      "x": 1498,
+      "y": 630,
+      "width": 144,
+      "height": 156,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-8",
+      "x": 1082,
+      "y": 123,
+      "width": 18,
+      "height": 185,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-9",
+      "x": 663,
+      "y": 168,
+      "width": 22,
+      "height": 192,
+      "room_id": "skills",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-10",
+      "x": 1111,
+      "y": 361,
+      "width": 24,
+      "height": 164,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-11",
+      "x": 634,
+      "y": 354,
+      "width": 53,
+      "height": 158,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-13",
+      "x": 263,
+      "y": 177,
+      "width": 19,
+      "height": 196,
+      "room_id": "memory",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-14",
+      "x": 991,
+      "y": 622,
+      "width": 413,
+      "height": 173,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-16",
+      "x": 619,
+      "y": 589,
+      "width": 77,
+      "height": 78,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-17",
+      "x": 680,
+      "y": 288,
+      "width": 155,
+      "height": 107,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-19",
+      "x": 989,
+      "y": 291,
+      "width": 141,
+      "height": 94,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-20",
+      "x": 1414,
+      "y": 349,
+      "width": 205,
+      "height": 126,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-21",
+      "x": 1582,
+      "y": 476,
+      "width": 28,
+      "height": 152,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    },
+    {
+      "id": "wall-22",
+      "x": 1107,
+      "y": 583,
+      "width": 89,
+      "height": 80,
+      "room_id": "gateway",
+      "shape": "rectangle",
+      "rotation": 0
+    }
+  ],
+  "furnitures": [
+    {
+      "id": "document-core",
+      "type": "book",
+      "label": "document-core",
+      "room_id": "document",
+      "x": 315,
+      "y": 170,
+      "width": 100,
+      "height": 68,
+      "sprite_key": "document-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "read",
+      "z_index": 238,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "memory-core",
+      "type": "book",
+      "label": "memory-core",
+      "room_id": "memory",
+      "x": 315,
+      "y": 440,
+      "width": 100,
+      "height": 68,
+      "sprite_key": "memory-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "read",
+      "z_index": 508,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "mcp-core",
+      "type": "tool",
+      "label": "mcp-core",
+      "room_id": "mcp",
+      "x": 817,
+      "y": 154,
+      "width": 110,
+      "height": 68,
+      "sprite_key": "mcp-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 222,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "images-core",
+      "type": "art",
+      "label": "images-core",
+      "room_id": "images",
+      "x": 1402,
+      "y": 138,
+      "width": 105,
+      "height": 70,
+      "sprite_key": "images-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "view",
+      "z_index": 208,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "log-core",
+      "type": "marker",
+      "label": "log-core",
+      "room_id": "log",
+      "x": 1437,
+      "y": 382,
+      "width": 102,
+      "height": 64,
+      "sprite_key": "log-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 446,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "schedule-core",
+      "type": "marker",
+      "label": "schedule-core",
+      "room_id": "schedule",
+      "x": 1444,
+      "y": 542,
+      "width": 105,
+      "height": 70,
+      "sprite_key": "schedule-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 612,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "skills-core",
+      "type": "tool",
+      "label": "skills-core",
+      "room_id": "skills",
+      "x": 310,
+      "y": 802,
+      "width": 110,
+      "height": 72,
+      "sprite_key": "skills-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 874,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "gateway-core",
+      "type": "tool",
+      "label": "gateway-core",
+      "room_id": "gateway",
+      "x": 759,
+      "y": 710,
+      "width": 117,
+      "height": 74,
+      "sprite_key": "gateway-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 784,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "agent-core",
+      "type": "marker",
+      "label": "agent-core",
+      "room_id": "agent",
+      "x": 1095,
+      "y": 710,
+      "width": 99,
+      "height": 66,
+      "sprite_key": "agent-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 776,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "breakroom-core",
+      "type": "marker",
+      "label": "breakroom-core",
+      "room_id": "break_room",
+      "x": 1209,
+      "y": 894,
+      "width": 122,
+      "height": 76,
+      "sprite_key": "breakroom-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 970,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "taskq-core",
+      "type": "tool",
+      "label": "taskq-core",
+      "room_id": "task_queues",
+      "x": 1525,
+      "y": 866,
+      "width": 111,
+      "height": 72,
+      "sprite_key": "taskq-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "use",
+      "z_index": 938,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "alarm-core",
+      "type": "marker",
+      "label": "alarm-core",
+      "room_id": "alarm",
+      "x": 1480,
+      "y": 140,
+      "width": 100,
+      "height": 66,
+      "sprite_key": "alarm-core",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 206,
+      "asset_id": "",
+      "category": ""
+    },
+    {
+      "id": "furniture-2",
+      "type": "sofa",
+      "label": "红色单人沙发右",
+      "room_id": "gateway",
+      "x": 404,
+      "y": 449,
+      "width": 200,
+      "height": 200,
+      "sprite_key": "/assets/furnitures/sofa/sofa-1776926019529-inmj7-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 649,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/sofa/sofa-1776926019529-inmj7-front.png",
+        "left": "/assets/furnitures/sofa/sofa-1776926019529-inmj7-left.png",
+        "right": "/assets/furnitures/sofa/sofa-1776926019529-inmj7-right.png",
+        "back": "/assets/furnitures/sofa/sofa-1776926019529-inmj7-back.png"
+      },
+      "asset_id": "sofa-1776926019529-inmj7",
+      "category": "sofa"
+    },
+    {
+      "id": "furniture-1",
+      "type": "sofa",
+      "label": "红色单人沙发左",
+      "room_id": "gateway",
+      "x": 234,
+      "y": 453,
+      "width": 200,
+      "height": 200,
+      "sprite_key": "/assets/furnitures/sofa/sofa-1776926057548-hgrpq-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 653,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/sofa/sofa-1776926057548-hgrpq-front.png",
+        "left": "/assets/furnitures/sofa/sofa-1776926057548-hgrpq-left.png",
+        "right": "/assets/furnitures/sofa/sofa-1776926057548-hgrpq-right.png",
+        "back": "/assets/furnitures/sofa/sofa-1776926057548-hgrpq-back.png"
+      },
+      "asset_id": "sofa-1776926057548-hgrpq",
+      "category": "sofa"
+    },
+    {
+      "id": "furniture-3",
+      "type": "sofa",
+      "label": "圆茶几",
+      "room_id": "document",
+      "x": 318,
+      "y": 464,
+      "width": 200,
+      "height": 200,
+      "sprite_key": "/assets/furnitures/sofa/sofa-1776926131325-pi1fl-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 664,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/sofa/sofa-1776926131325-pi1fl-front.png",
+        "left": "/assets/furnitures/sofa/sofa-1776926131325-pi1fl-left.png",
+        "right": "/assets/furnitures/sofa/sofa-1776926131325-pi1fl-right.png",
+        "back": "/assets/furnitures/sofa/sofa-1776926131325-pi1fl-back.png"
+      },
+      "asset_id": "sofa-1776926131325-pi1fl",
+      "category": "sofa"
+    },
+    {
+      "id": "furniture-4",
+      "type": "workbench",
+      "label": "工坊家具套",
+      "room_id": "memory",
+      "x": 286,
+      "y": 88,
+      "width": 239,
+      "height": 239,
+      "sprite_key": "/assets/furnitures/workbench/workbench-1776926266754-w1izd-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 327,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/workbench/workbench-1776926266754-w1izd-front.png",
+        "left": "/assets/furnitures/workbench/workbench-1776926266754-w1izd-left.png",
+        "right": "/assets/furnitures/workbench/workbench-1776926266754-w1izd-right.png",
+        "back": "/assets/furnitures/workbench/workbench-1776926266754-w1izd-back.png"
+      },
+      "asset_id": "workbench-1776926266754-w1izd",
+      "category": "workbench"
+    },
+    {
+      "id": "furniture-5",
+      "type": "decoration",
+      "label": "雕塑1",
+      "room_id": "skills",
+      "x": 580,
+      "y": 52,
+      "width": 266,
+      "height": 266,
+      "sprite_key": "/assets/furnitures/decoration/decoration-1776926690407-aesop-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 318,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/decoration/decoration-1776926690407-aesop-front.png",
+        "left": "/assets/furnitures/decoration/decoration-1776926690407-aesop-left.png",
+        "right": "/assets/furnitures/decoration/decoration-1776926690407-aesop-right.png",
+        "back": "/assets/furnitures/decoration/decoration-1776926690407-aesop-back.png"
+      },
+      "asset_id": "decoration-1776926690407-aesop",
+      "category": "decoration"
+    },
+    {
+      "id": "furniture-6",
+      "type": "decoration",
+      "label": "雕塑2",
+      "room_id": "mcp",
+      "x": 921,
+      "y": 67,
+      "width": 266,
+      "height": 266,
+      "sprite_key": "/assets/furnitures/decoration/decoration-1776926717819-yov5z-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 333,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/decoration/decoration-1776926717819-yov5z-front.png",
+        "left": "/assets/furnitures/decoration/decoration-1776926717819-yov5z-left.png",
+        "right": "/assets/furnitures/decoration/decoration-1776926717819-yov5z-right.png",
+        "back": "/assets/furnitures/decoration/decoration-1776926717819-yov5z-back.png"
+      },
+      "asset_id": "decoration-1776926717819-yov5z",
+      "category": "decoration"
+    },
+    {
+      "id": "furniture-7",
+      "type": "display_case",
+      "label": "展台",
+      "room_id": "skills",
+      "x": 751,
+      "y": 59,
+      "width": 293,
+      "height": 293,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776926760685-o8qrb-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 352,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776926760685-o8qrb-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776926760685-o8qrb-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776926760685-o8qrb-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776926760685-o8qrb-back.png"
+      },
+      "asset_id": "display_case-1776926760685-o8qrb",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-8",
+      "type": "display_case",
+      "label": "柜子1",
+      "room_id": "gateway",
+      "x": 593,
+      "y": 274,
+      "width": 266,
+      "height": 266,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776926849061-c1666-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 540,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776926849061-c1666-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776926849061-c1666-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776926849061-c1666-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776926849061-c1666-back.png"
+      },
+      "asset_id": "display_case-1776926849061-c1666",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-9",
+      "type": "table",
+      "label": "餐桌",
+      "room_id": "gateway",
+      "x": 775,
+      "y": 382,
+      "width": 266,
+      "height": 266,
+      "sprite_key": "/assets/furnitures/table/table-1776926942344-fkvjk-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 648,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/table/table-1776926942344-fkvjk-front.png",
+        "left": "/assets/furnitures/table/table-1776926942344-fkvjk-left.png",
+        "right": "/assets/furnitures/table/table-1776926942344-fkvjk-right.png",
+        "back": "/assets/furnitures/table/table-1776926942344-fkvjk-back.png"
+      },
+      "asset_id": "table-1776926942344-fkvjk",
+      "category": "table"
+    },
+    {
+      "id": "furniture-10",
+      "type": "bed",
+      "label": "卧室套装",
+      "room_id": "document",
+      "x": 251,
+      "y": 710,
+      "width": 239,
+      "height": 239,
+      "sprite_key": "/assets/furnitures/bed/bed-1776926986712-yajoq-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 949,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/bed/bed-1776926986712-yajoq-front.png",
+        "left": "/assets/furnitures/bed/bed-1776926986712-yajoq-left.png",
+        "right": "/assets/furnitures/bed/bed-1776926986712-yajoq-right.png",
+        "back": "/assets/furnitures/bed/bed-1776926986712-yajoq-back.png"
+      },
+      "asset_id": "bed-1776926986712-yajoq",
+      "category": "bed"
+    },
+    {
+      "id": "furniture-11",
+      "type": "display_case",
+      "label": "柜子2",
+      "room_id": "gateway",
+      "x": 472,
+      "y": 693,
+      "width": 293,
+      "height": 293,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776927127827-vvdf1-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 986,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776927127827-vvdf1-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776927127827-vvdf1-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776927127827-vvdf1-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776927127827-vvdf1-back.png"
+      },
+      "asset_id": "display_case-1776927127827-vvdf1",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-12",
+      "type": "table",
+      "label": "桌子1",
+      "room_id": "gateway",
+      "x": 657,
+      "y": 627,
+      "width": 266,
+      "height": 266,
+      "sprite_key": "/assets/furnitures/table/table-1776927262492-njn2c-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 893,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/table/table-1776927262492-njn2c-front.png",
+        "left": "/assets/furnitures/table/table-1776927262492-njn2c-left.png",
+        "right": "/assets/furnitures/table/table-1776927262492-njn2c-right.png",
+        "back": "/assets/furnitures/table/table-1776927262492-njn2c-back.png"
+      },
+      "asset_id": "table-1776927262492-njn2c",
+      "category": "table"
+    },
+    {
+      "id": "furniture-13",
+      "type": "table",
+      "label": "桌子2",
+      "room_id": "agent",
+      "x": 786,
+      "y": 723,
+      "width": 290,
+      "height": 290,
+      "sprite_key": "/assets/furnitures/table/table-1776927343450-9q6yh-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 1013,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/table/table-1776927343450-9q6yh-front.png",
+        "left": "/assets/furnitures/table/table-1776927343450-9q6yh-left.png",
+        "right": "/assets/furnitures/table/table-1776927343450-9q6yh-right.png",
+        "back": "/assets/furnitures/table/table-1776927343450-9q6yh-back.png"
+      },
+      "asset_id": "table-1776927343450-9q6yh",
+      "category": "table"
+    },
+    {
+      "id": "furniture-14",
+      "type": "display_case",
+      "label": "壁柜",
+      "room_id": "agent",
+      "x": 956,
+      "y": 649,
+      "width": 239,
+      "height": 239,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776927443407-k7rwh-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 888,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776927443407-k7rwh-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776927443407-k7rwh-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776927443407-k7rwh-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776927443407-k7rwh-back.png"
+      },
+      "asset_id": "display_case-1776927443407-k7rwh",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-15",
+      "type": "display_case",
+      "label": "壁柜",
+      "room_id": "gateway",
+      "x": 1094,
+      "y": 325,
+      "width": 242,
+      "height": 242,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776927558561-adfuy-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 567,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776927558561-adfuy-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776927558561-adfuy-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776927558561-adfuy-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776927558561-adfuy-back.png"
+      },
+      "asset_id": "display_case-1776927558561-adfuy",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-16",
+      "type": "display_case",
+      "label": "壁柜3",
+      "room_id": "break_room",
+      "x": 1417,
+      "y": 362,
+      "width": 218,
+      "height": 218,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776927645839-i3s2d-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 580,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776927645839-i3s2d-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776927645839-i3s2d-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776927645839-i3s2d-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776927645839-i3s2d-back.png"
+      },
+      "asset_id": "display_case-1776927645839-i3s2d",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-17",
+      "type": "workbench",
+      "label": "工作台",
+      "room_id": "break_room",
+      "x": 1246,
+      "y": 433,
+      "width": 218,
+      "height": 218,
+      "sprite_key": "/assets/furnitures/workbench/workbench-1776927747808-zy6qe-left.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 651,
+      "direction": "left",
+      "sprite_directions": {
+        "front": "/assets/furnitures/workbench/workbench-1776927747808-zy6qe-front.png",
+        "left": "/assets/furnitures/workbench/workbench-1776927747808-zy6qe-left.png",
+        "right": "/assets/furnitures/workbench/workbench-1776927747808-zy6qe-right.png",
+        "back": "/assets/furnitures/workbench/workbench-1776927747808-zy6qe-back.png"
+      },
+      "asset_id": "workbench-1776927747808-zy6qe",
+      "category": "workbench"
+    },
+    {
+      "id": "furniture-18",
+      "type": "display_case",
+      "label": "宝箱",
+      "room_id": "break_room",
+      "x": 1427,
+      "y": 462,
+      "width": 242,
+      "height": 242,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776927962635-8p5ps-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 704,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776927962635-8p5ps-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776927962635-8p5ps-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776927962635-8p5ps-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776927962635-8p5ps-back.png"
+      },
+      "asset_id": "display_case-1776927962635-8p5ps",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-19",
+      "type": "display_case",
+      "label": "壁柜4",
+      "room_id": "break_room",
+      "x": 1191,
+      "y": 657,
+      "width": 240,
+      "height": 240,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776928051413-wh5le-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 897,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776928051413-wh5le-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776928051413-wh5le-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776928051413-wh5le-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776928051413-wh5le-back.png"
+      },
+      "asset_id": "display_case-1776928051413-wh5le",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-20",
+      "type": "display_case",
+      "label": "壁柜5",
+      "room_id": "break_room",
+      "x": 1466,
+      "y": 671,
+      "width": 213,
+      "height": 213,
+      "sprite_key": "/assets/furnitures/display_case/display_case-1776928152491-jb7nv-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 884,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/display_case/display_case-1776928152491-jb7nv-front.png",
+        "left": "/assets/furnitures/display_case/display_case-1776928152491-jb7nv-left.png",
+        "right": "/assets/furnitures/display_case/display_case-1776928152491-jb7nv-right.png",
+        "back": "/assets/furnitures/display_case/display_case-1776928152491-jb7nv-back.png"
+      },
+      "asset_id": "display_case-1776928152491-jb7nv",
+      "category": "display_case"
+    },
+    {
+      "id": "furniture-21",
+      "type": "table",
+      "label": "书桌",
+      "room_id": "break_room",
+      "x": 1336,
+      "y": 759,
+      "width": 239,
+      "height": 239,
+      "sprite_key": "/assets/furnitures/table/table-1776928252806-cgfj4-front.png",
+      "blocking": true,
+      "interactive": true,
+      "interaction_type": "inspect",
+      "z_index": 998,
+      "direction": "front",
+      "sprite_directions": {
+        "front": "/assets/furnitures/table/table-1776928252806-cgfj4-front.png",
+        "left": "/assets/furnitures/table/table-1776928252806-cgfj4-left.png",
+        "right": "/assets/furnitures/table/table-1776928252806-cgfj4-right.png",
+        "back": "/assets/furnitures/table/table-1776928252806-cgfj4-back.png"
+      },
+      "asset_id": "table-1776928252806-cgfj4",
+      "category": "table"
+    }
+  ],
+  "room_label_anchors": {
+    "agent": {
+      "x": 909,
+      "y": 512
+    },
+    "gateway": {
+      "x": 780,
+      "y": 852
+    },
+    "memory": {
+      "x": 590,
+      "y": 81
+    },
+    "skills": {
+      "x": 317,
+      "y": 394
+    },
+    "document": {
+      "x": 545,
+      "y": 712
+    },
+    "break_room": {
+      "x": 1328,
+      "y": 862
+    },
+    "log": {
+      "x": 1511,
+      "y": 390
+    },
+    "images": {
+      "x": 1359,
+      "y": 82
+    },
+    "mcp": {
+      "x": 889,
+      "y": 83
+    }
+  },
+  "interaction_points": [
+    {
+      "id": "document-interaction-1",
+      "type": "work_zone",
+      "label": "卧室",
+      "room_id": "document",
+      "x": 347,
+      "y": 918,
+      "anchor_x": 347,
+      "anchor_y": 915,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/sleep-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 250,
+      "sprite_frame_height": 128,
+      "sprite_fps": 6
+    },
+    {
+      "id": "memory-interaction-2",
+      "type": "work_zone",
+      "label": "工坊",
+      "room_id": "memory",
+      "x": 578,
+      "y": 255,
+      "anchor_x": 578,
+      "anchor_y": 255,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/error-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 8
+    },
+    {
+      "id": "mcp-interaction-3",
+      "type": "work_zone",
+      "label": "展厅",
+      "room_id": "mcp",
+      "x": 900,
+      "y": 284,
+      "anchor_x": 900,
+      "anchor_y": 284,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/stand_back-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 6
+    },
+    {
+      "id": "images-interaction-4",
+      "type": "work_zone",
+      "label": "剧场",
+      "room_id": "images",
+      "x": 1364,
+      "y": 173,
+      "anchor_x": 1364,
+      "anchor_y": 182,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/theater-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 4
+    },
+    {
+      "id": "log-interaction-5",
+      "type": "work_zone",
+      "label": "档案室",
+      "room_id": "log",
+      "x": 1218,
+      "y": 527,
+      "anchor_x": 1218,
+      "anchor_y": 527,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/memo-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 8
+    },
+    {
+      "id": "schedule-interaction-6",
+      "type": "work_zone",
+      "label": "档案室",
+      "room_id": "schedule",
+      "x": 1485,
+      "y": 524,
+      "anchor_x": 1485,
+      "anchor_y": 524,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/think-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 8
+    },
+    {
+      "id": "skills-interaction-7",
+      "type": "work_zone",
+      "label": "休息室",
+      "room_id": "skills",
+      "x": 498,
+      "y": 542,
+      "anchor_x": 498,
+      "anchor_y": 542,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/drink-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 8
+    },
+    {
+      "id": "agent-interaction-9",
+      "type": "work_zone",
+      "label": "主厅",
+      "room_id": "agent",
+      "x": 913,
+      "y": 508,
+      "anchor_x": 913,
+      "anchor_y": 499,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/sit-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 250,
+      "sprite_frame_height": 250,
+      "sprite_fps": 8
+    },
+    {
+      "id": "break_room-interaction-10",
+      "type": "work_zone",
+      "label": "书房",
+      "room_id": "break_room",
+      "x": 1448,
+      "y": 868,
+      "anchor_x": 1448,
+      "anchor_y": 868,
+      "interaction_type": "status",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/work-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 250,
+      "sprite_frame_height": 250,
+      "sprite_fps": 5
+    },
+    {
+      "id": "interaction-1",
+      "type": "custom",
+      "label": "stand-front",
+      "room_id": "gateway",
+      "x": 934,
+      "y": 739,
+      "anchor_x": 934,
+      "anchor_y": 739,
+      "interaction_type": "inspect",
+      "sprite_key": "/assets/generated/actors/tyxt-emoji-v1/sheets/stand_front-spritesheet.png",
+      "sprite_total_frames": 10,
+      "sprite_frame_width": 128,
+      "sprite_frame_height": 128,
+      "sprite_fps": 10
+    }
+  ],
+  "interaction_boxes": []
+}

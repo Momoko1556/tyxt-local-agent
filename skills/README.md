@@ -5,7 +5,7 @@ This folder contains local TYXT skills.
 A **skill** is a plugin folder with:
 
 - `skill.json` (manifest)
-- `handler.py` (runtime entry)
+- `handler.py` (runtime entry for Python skills only)
 
 The backend discovers skills from this directory, applies safety checks, and exposes them through `/tools/skills/*` APIs.
 
@@ -27,10 +27,8 @@ skills/
   mcp/
     mcp_web_search/
       skill.json
-      handler.py
     your_mcp_skill_id/
       skill.json
-      handler.py
 ```
 
 ## Manifest Spec (`skill.json`)
@@ -72,10 +70,10 @@ Validation rules in current implementation:
 
 - `id` is required and must match: `[a-z0-9_]+`
 - `version` must be semantic version format (for example `0.1.0`)
-- `entry.type` must be `"python"`
+- `entry.type` may be `"python"` or `"mcp"`
 - missing `permissions` fields default to `false`
 
-## Handler Contract (`handler.py`)
+## Python Handler Contract (`handler.py`)
 
 Your skill entry function:
 
@@ -147,7 +145,7 @@ If a skill requests a permission that is globally disabled, execution is rejecte
 
 ## MCP Bridge (Phase X PoC)
 
-TYXT can map MCP tools as runtime skills (`type: "mcp"`), without writing them to disk.
+TYXT can map MCP tools as runtime skills (`type: "mcp"`). MCP skill folders only need `skill.json`; calls are dispatched by the unified MCP runner.
 
 Environment flags:
 
@@ -192,7 +190,7 @@ Useful MCP admin APIs:
 ## How to Add a Skill
 
 1. Create a new folder under `skills/local/` or `skills/mcp/`, for example `skills/local/my_tool/`.
-2. Add `skill.json` and `handler.py`.
+2. Add `skill.json`. For Python skills, also add `handler.py`.
 3. In TYXT UI, open **Tools Settings** and click **Rescan**.
 4. Enable the skill (admin only).
 5. Run via API:

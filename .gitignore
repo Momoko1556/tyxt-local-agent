@@ -11,6 +11,7 @@ __pycache__/
 .venv/
 .vscode/
 .claude/
+AGENTS.md
 CLAUDE.md
 __ui.diff
 .env

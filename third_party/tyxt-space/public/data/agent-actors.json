@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "assignments": {
+    "default_agent": "tyxt-emoji-v1",
+    "sample_agent_a": "tyxt-emoji-v2",
+    "sample_agent_b": "tyxt-emoji-v1"
+  },
+  "updated_at": "2026-04-25T00:00:00.000Z"
+}
