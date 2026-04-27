@@ -132,6 +132,14 @@ public/data/scene-map.json     Walls, labels, furniture, interaction data
 public/data/agent-actors.json  Agent-to-actor variant mapping
 ```
 
+User-specific character assignments are written to:
+
+```text
+public/data/agent-actors.local.json
+```
+
+That local override file is ignored by Git, so changing character assignments in the UI does not create a source-control change.
+
 ## Privacy Notes
 
 Do not commit local runtime data, generated logs, `.env`, or local machine configuration. The root repository `.gitignore` and this package `.gitignore` exclude those by default.

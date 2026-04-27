@@ -132,6 +132,14 @@ public/data/scene-map.json     墙壁、房名、家具和交互数据
 public/data/agent-actors.json  Agent 到人物变体的映射
 ```
 
+用户自己的角色绑定会写入：
+
+```text
+public/data/agent-actors.local.json
+```
+
+这个本地覆盖文件已被 Git 忽略，所以在 UI 里调整人物绑定不会再产生源代码管理改动。
+
 ## 隐私说明
 
 不要提交本地运行数据、生成日志、`.env` 或本机配置。根仓库 `.gitignore` 与当前包 `.gitignore` 已默认排除这些内容。

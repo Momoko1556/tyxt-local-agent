@@ -38,6 +38,7 @@ house_dropbox/*
 public/assets/generated/actors/**/source/
 public/assets/generated/actors/**/sheets/*-poster.png
 public/assets/generated/skills-room-concept-v1.png
+public/data/*.local.json
 scripts/build-capi-claw-emoji-actor.py
 scripts/build-claw-crew-animations.py
 scripts/prepare-actor-sprite.mjs

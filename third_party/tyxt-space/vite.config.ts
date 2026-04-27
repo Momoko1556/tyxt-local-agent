@@ -43,6 +43,7 @@ const TYXT_FURNITURE_ROOT = path.join(TYXT_SPACE_PUBLIC_ROOT, 'assets', 'furnitu
 const TYXT_FURNITURE_INDEX_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'furnitures.json');
 const TYXT_GENERATED_ACTORS_ROOT = path.join(TYXT_SPACE_PUBLIC_ROOT, 'assets', 'generated', 'actors');
 const TYXT_AGENT_ACTORS_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'agent-actors.json');
+const TYXT_AGENT_ACTORS_LOCAL_PATH = path.join(TYXT_SPACE_PUBLIC_ROOT, 'data', 'agent-actors.local.json');
 const TYXT_SHARED_ROOT = path.join(TYXT_PROJECT_ROOT, 'Ollama_agent_shared');
 const TYXT_RUNTIME_PRIVATE_ROOT = path.join(TYXT_SHARED_ROOT, 'runtime_logs', 'private');
 const TYXT_SHARED_DOCUMENTS_ROOT = path.join(TYXT_SHARED_ROOT, 'documents');
@@ -678,13 +679,17 @@ function normalizeAgentActorAssignments(
 }
 
 async function readTyxtAgentActorAssignments(validActorIds: Set<string>): Promise<Record<string, string>> {
-  const payload = asRecord(await readJsonFileSafe(TYXT_AGENT_ACTORS_PATH));
+  const payload = asRecord(
+    await readJsonFileSafe(await fileExists(TYXT_AGENT_ACTORS_LOCAL_PATH)
+      ? TYXT_AGENT_ACTORS_LOCAL_PATH
+      : TYXT_AGENT_ACTORS_PATH)
+  );
   return normalizeAgentActorAssignments(payload.assignments, validActorIds);
 }
 
 async function writeTyxtAgentActorAssignments(assignments: Record<string, string>): Promise<void> {
-  await fs.mkdir(path.dirname(TYXT_AGENT_ACTORS_PATH), { recursive: true });
-  await fs.writeFile(TYXT_AGENT_ACTORS_PATH, `${JSON.stringify({
+  await fs.mkdir(path.dirname(TYXT_AGENT_ACTORS_LOCAL_PATH), { recursive: true });
+  await fs.writeFile(TYXT_AGENT_ACTORS_LOCAL_PATH, `${JSON.stringify({
     version: 1,
     assignments,
     updated_at: new Date().toISOString()
@@ -736,7 +741,8 @@ async function buildTyxtActorSettingsResponse(): Promise<Record<string, unknown>
     actors,
     assignments,
     default_actor_id: actors[0]?.id ?? '',
-    config_path: TYXT_AGENT_ACTORS_PATH
+    config_path: TYXT_AGENT_ACTORS_LOCAL_PATH,
+    default_config_path: TYXT_AGENT_ACTORS_PATH
   };
 }
 
@@ -2670,7 +2676,8 @@ function telemetryMiddleware() {
           actors,
           assignments,
           default_actor_id: actors[0]?.id ?? '',
-          config_path: TYXT_AGENT_ACTORS_PATH
+          config_path: TYXT_AGENT_ACTORS_LOCAL_PATH,
+          default_config_path: TYXT_AGENT_ACTORS_PATH
         }));
       } catch (error) {
         res.statusCode = 500;
